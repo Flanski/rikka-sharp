@@ -1,7 +1,16 @@
 diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
-index 81b0ce0..4d7e9e4 100644
+index 81b0ce0..b77baa6 100644
 --- a/.github/workflows/build.yml
 +++ b/.github/workflows/build.yml
+@@ -2,7 +2,7 @@ name: Build APK
+ 
+ on:
+   push:
+-    branches: [ master, mingli, mingli2 ]
++    branches: [ main, master ]
+   workflow_dispatch:
+ 
+ jobs:
 @@ -21,486 +21,6 @@ jobs:
            python-version: '3.12'
        - name: Upgrade pip & setuptools (required for git+ packages)
@@ -1341,6 +1350,28 @@ index 3d07c97..e3f2b54 100644
 -}
 -tasks.named("preBuild") { dependsOn("checkJsEngines") }
 +// (JS 引擎检查任务已移除：命理引擎不再随包提供)
+diff --git a/app/google-services.json b/app/google-services.json
+index d910308..3b0b591 100644
+--- a/app/google-services.json
++++ b/app/google-services.json
+@@ -9,7 +9,7 @@
+       "client_info": {
+         "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+         "android_client_info": {
+-          "package_name": "me.rerere.rikkahub"
++          "package_name": "me.rerere.rikkasharp"
+         }
+       },
+       "oauth_client": [],
+@@ -28,7 +28,7 @@
+       "client_info": {
+         "mobilesdk_app_id": "1:000000000000:android:0000000000000001",
+         "android_client_info": {
+-          "package_name": "me.rerere.rikkahub.debug"
++          "package_name": "me.rerere.rikkasharp.debug"
+         }
+       },
+       "oauth_client": [],
 diff --git "a/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md" "b/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md"
 deleted file mode 100644
 index 20f5f82..0000000
