@@ -15128,10 +15128,10 @@ index d899540..abd5e4f 100644
  
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt
 new file mode 100644
-index 0000000..fc6c9dd
+index 0000000..6bccb56
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt
-@@ -0,0 +1,416 @@
+@@ -0,0 +1,417 @@
 +package me.rerere.rikkahub.ui.pages.setting
 +
 +import androidx.compose.foundation.layout.Arrangement
@@ -15173,6 +15173,7 @@ index 0000000..fc6c9dd
 +import kotlinx.coroutines.launch
 +import kotlinx.coroutines.withContext
 +import me.rerere.hugeicons.HugeIcons
++import me.rerere.hugeicons.stroke.Add01
 +import me.rerere.rikkahub.data.model.SshAuthType
 +import me.rerere.rikkahub.data.model.SshHost
 +import me.rerere.rikkahub.data.repository.SshHostRepository
