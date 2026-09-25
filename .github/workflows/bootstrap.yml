@@ -1,0 +1,117 @@
+name: Bootstrap Rikka#
+
+# 一次性初始化：在 GitHub 服务器上克隆 Rikka+ 基线、应用 patch/01_rikkasharp_all.patch、
+# 然后以「单一根提交」推回本仓库（历史干净）。
+#
+# 注意：GITHUB_TOKEN 是 GitHub App 令牌，**没有 workflows 权限**，
+# 无法推送对 .github/workflows/ 下文件的创建/修改。因此本工作流：
+#   - 推送的树里【不包含】build.yml / build-original.yml（由 PAT 通过 Contents API 另行补上）
+#   - 保留 bootstrap.yml 自身（内容不变 → 不产生 workflow diff），以便将来重复执行升级基线
+#
+# 也正因如此，本仓库的 .github/workflows/build.yml 缺失属正常状态，
+# 补上之后即可正常编译。
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Rikka+ 的分支名（基线）'
+        required: false
+        default: 'mingli2'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Rikka+ baseline
+        env:
+          REF: ${{ github.event.inputs.upstream_ref || 'mingli2' }}
+        run: |
+          set -e
+          git clone --depth 1 --branch "$REF" \
+            https://github.com/heikeyangle-code/rikkahub-plus.git /tmp/src
+          cd /tmp/src
+          echo "基线 commit: $(git rev-parse HEAD)"
+          # 命理专用二进制包不在 patch 内（体积大），直接删除
+          rm -rf app/offline_pkgs
+          echo "已删除 app/offline_pkgs"
+
+      - name: Apply Rikka# patch
+        run: |
+          set -e
+          cd /tmp/src
+          git apply --whitespace=nowarn "$GITHUB_WORKSPACE/patch/01_rikkasharp_all.patch"
+
+          echo "=== 复核 ==="
+          fail=0
+          chk() {
+            n=$(grep -rl "$2" --include="$3" . 2>/dev/null | wc -l)
+            if [ "$n" -ne 0 ]; then echo "  [!!] $1: $n 个文件仍命中"; fail=1; else echo "  [ok] $1"; fi
+          }
+          chk "命理 Kotlin 引用" "MingliTool|createMingliTool|enableMingliTools" "*.kt"
+          chk "命理 Python 引用" "mingli_router|bazi_china|ziwei_paipan" "*.py"
+          grep -q "createFetchUrlTool" app/src/main/java/me/rerere/rikkahub/service/ChatService.kt && echo "  [ok] 搜索工具已注册" || { echo "  [!!] 搜索工具未注册"; fail=1; }
+          grep -q "createSshTools" app/src/main/java/me/rerere/rikkahub/service/ChatService.kt && echo "  [ok] SSH 工具已注册" || { echo "  [!!] SSH 工具未注册"; fail=1; }
+          grep -q 'applicationId = "me.rerere.rikkasharp"' app/build.gradle.kts && echo "  [ok] 应用 ID = me.rerere.rikkasharp" || { echo "  [!!] 应用 ID 未改"; fail=1; }
+          grep -q 'RIKKA #' app/src/main/res/values/strings.xml && echo "  [ok] 显示名 = RIKKA #" || { echo "  [!!] 显示名未改"; fail=1; }
+          [ -f app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt ] && echo "  [ok] SSH 客户端页面存在" || { echo "  [!!] SSH 页面缺失"; fail=1; }
+          [ "$fail" -ne 0 ] && { echo "复核未通过"; exit 1; }
+          echo "✅ patch 应用与复核全部通过"
+
+          # 关键：从推送树中剔除 workflow 文件（GITHUB_TOKEN 无 workflows 权限）
+          rm -f .github/workflows/build.yml .github/workflows/build-original.yml
+          echo "已剔除 build.yml / build-original.yml（稍后由 PAT 补上）"
+
+          # 保留溯源material，并保留 bootstrap.yml 自身（内容不变 → 不产生 workflow diff）
+          mkdir -p patch
+          cp "$GITHUB_WORKSPACE/patch/01_rikkasharp_all.patch" patch/ 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/patch/apply_rikkasharp.sh" patch/ 2>/dev/null || true
+          cp "$GITHUB_WORKSPACE/.github/workflows/bootstrap.yml" .github/workflows/
+
+          rm -rf /tmp/src/.git
+          echo "工作树文件数: $(find . -type f | wc -l)"
+
+      - name: Replace content with a single clean root commit
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          cd "$GITHUB_WORKSPACE"
+
+          # 清空工作树（含 .git，随后重建为单一根提交）
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
+          # 铺入处理后的源码
+          cp -a /tmp/src/. .
+
+          git init -q -b main
+          git config user.name "rikka-sharp bootstrap"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Rikka# 0.1.0 — 基于 Rikka+ 2.4.6（移除命理；新增网络检索工具与 SSH 客户端）" \
+                           -m "面向 AI Agent 软件开发与剧情 AI 文字游戏两个方向。" \
+                           -m "基线: heikeyangle-code/rikkahub-plus (${{ github.event.inputs.upstream_ref || 'mingli2' }})"
+          echo "提交: $(git rev-parse --short HEAD)  文件数: $(git ls-files | wc -l)"
+
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -f origin main
+          echo "✅ 已推送到 ${GITHUB_REPOSITORY} 的 main 分支"
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "## Bootstrap 完成"
+            echo ""
+            echo "Rikka# 源码已落地到本仓库 \`main\` 分支（单一根提交，历史干净）。"
+            echo ""
+            echo "**下一步（必需）**：补上 \`.github/workflows/build.yml\`，否则无法编译。"
+          } >> "$GITHUB_STEP_SUMMARY"
