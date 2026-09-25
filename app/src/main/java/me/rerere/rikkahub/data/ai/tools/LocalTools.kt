@@ -119,6 +119,9 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("calendar")
     data object Calendar : LocalToolOption()
+
+    @SerialName("ssh_client")
+    data object SshClient : LocalToolOption()
 }
 
 class LocalTools(

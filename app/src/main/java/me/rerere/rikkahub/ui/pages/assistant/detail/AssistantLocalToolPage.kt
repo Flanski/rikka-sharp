@@ -341,6 +341,16 @@ private fun AssistantLocalToolContent(
                 }
             )
             item(
+                headlineContent = { Text("SSH 客户端") },
+                supportingContent = { Text("允许 AI 通过 SSH 操作你配置的远程主机（主机与密钥在「设置 → SSH 客户端」中管理）") },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.SshClient),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.SshClient, it) }
+                    )
+                }
+            )
+            item(
                 headlineContent = { Text("数据库查询") },
                 supportingContent = { Text("允许 AI 查询本地数据库（对话记录/设置）") },
                 trailingContent = {

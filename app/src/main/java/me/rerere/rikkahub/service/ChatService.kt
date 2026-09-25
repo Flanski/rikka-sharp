@@ -1144,7 +1144,9 @@ class ChatService(
                     add(createFetchUrlTool())
                     add(createGithubSearchTool())
                     add(createWikipediaSearchTool())
-                    addAll(createSshTools(sshHostRepository))
+                    if (assistant.localTools.contains(LocalToolOption.SshClient)) {
+                        addAll(createSshTools(sshHostRepository))
+                    }
                     if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                         addAll(createTaskTools())
                     }
@@ -1524,7 +1526,9 @@ class ChatService(
                 add(createFetchUrlTool())
                 add(createGithubSearchTool())
                 add(createWikipediaSearchTool())
-                addAll(createSshTools(sshHostRepository))
+                if (assistant.localTools.contains(LocalToolOption.SshClient)) {
+                    addAll(createSshTools(sshHostRepository))
+                }
                 if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                     addAll(createTaskTools())
                 }

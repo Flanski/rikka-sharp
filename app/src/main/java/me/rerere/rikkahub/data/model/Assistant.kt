@@ -47,6 +47,7 @@ data class Assistant(
         LocalToolOption.TimeInfo,
         LocalToolOption.FileTools,
         LocalToolOption.ShellTools,
+        LocalToolOption.SshClient,
         LocalToolOption.TaskTools,
         LocalToolOption.Calculator,
         LocalToolOption.AskUser,
