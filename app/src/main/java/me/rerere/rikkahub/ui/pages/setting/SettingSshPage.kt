@@ -39,6 +39,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
 import me.rerere.rikkahub.data.model.SshAuthType
 import me.rerere.rikkahub.data.model.SshHost
 import me.rerere.rikkahub.data.repository.SshHostRepository
