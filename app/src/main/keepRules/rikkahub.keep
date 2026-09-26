@@ -28,13 +28,18 @@
 -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
 -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
 
-# ── JSch 的 Ed25519 实现 ─────────────────────────────────────────
-# JSch 在类初始化时按 JavaVersion.getVersion() 选择 Ed25519 实现：
-#   >=15 → com.jcraft.jsch.jce.*   (Android 上不存在，Android 无 Java15 EdDSA API)
-#   < 15 → com.jcraft.jsch.bc.*    (Android 走这条，需要 BouncyCastle)
-# 该选择是通过**配置字符串 + 动态类加载**完成的，R8 静态分析看不到引用，
-# 因此必须显式 keep，否则会被裁掉 → 运行期 "invalid privatekey"。
--keep class com.jcraft.jsch.bc.** { *; }
+# ── JSch（SSH 客户端）─────────────────────────────────────────────
+# JSch 把**所有算法实现类的名字放在配置字符串里**（例如
+#   config.put("random",                "com.jcraft.jsch.jce.Random")
+#   config.put("ssh-ed25519",           "com.jcraft.jsch.bc.SignatureEd25519")
+#   config.put("kex",                   "com.jcraft.jsch.DHG14")  ...）
+# 再按运行时条件（JavaVersion、可用性）动态加载。R8 做静态引用分析时
+# **看不到这些字符串与类之间的关联**，会把它们整体裁掉，运行期就报
+#   ClassNotFoundException: com.jcraft.jsch.jce.Random      （random / 各种算法）
+#   JavaCipher … invalid privatekey                          （bc 实现缺失）
+# JSch.class 里共有 69 个这样的类名（jce 34 个、bc 9 个、jbcrypt 1 个、顶层 DH 24 个）。
+# 逐个列举容易漏，且 JSch 以后新增算法也会漏 —— 直接整体 keep。
+-keep class com.jcraft.jsch.** { *; }
 
 # BouncyCastle 内部大量使用反射/可选 API，放宽警告
 -dontwarn org.bouncycastle.**
