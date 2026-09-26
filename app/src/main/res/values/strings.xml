@@ -1838,4 +1838,6 @@
   <string name="sensor_page_title">Device sensors</string>
   <string name="sensor_page_hint">Only sensors actually present on this device are listed. The AI can enable the whole group, or only the sensors you allow here.</string>
   <string name="sensor_permission_required">Permission required to read this sensor</string>
+
+  <string name="search_picker_model_need_responses_api">This needs "Responses API" enabled in the provider settings. Tap to configure.</string>
 </resources>

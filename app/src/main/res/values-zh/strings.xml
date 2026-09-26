@@ -1838,4 +1838,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="sensor_page_title">设备传感器</string>
   <string name="sensor_page_hint">只列出本机真实存在的传感器。AI 可获取整组的开关状态，而你在此页决定具体放行哪些。</string>
   <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
+
+  <string name="search_picker_model_need_responses_api">需先在提供商设置中启用「Responses API」。点击前往配置。</string>
 </resources>

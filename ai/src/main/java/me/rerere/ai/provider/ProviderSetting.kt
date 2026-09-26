@@ -257,10 +257,17 @@ sealed class ProviderSetting {
  * - [ProviderSetting.OpenAI]  → 仅 useResponseApi=true 时 ResponseAPI 发 web_search
  *   （chat/completions 路径**完全不处理**内置工具，声明会被静默丢弃）
  *
- * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略**
- * web_search（例如 DeepSeek 官方文档明确写 /responses 的 web_search 为 Ignored）。
+ * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略** web_search。
  * 客户端无法可靠探测这一点，因此调用方不应把这个判定当作「服务端一定会搜」的保证，
  * 更不应据此抑制本地搜索工具。
+ *
+ * 实测更正（2026-09-27）：DeepSeek 的 /v1/responses **确实支持** web_search ——
+ * 官方文档 Tools 表把它标为 "Ignored"，与实测结果不符，属文档过时。
+ * 因此不要依据该文档判断某个网关是否支持，应实际发一次请求验证。
+ * DeepSeek 确认可用的两条路径：
+ *   1) OpenAI 类型 + useResponseApi=true  → 发送 {"type":"web_search"}
+ *   2) Claude 类型 + baseUrl .../anthropic/v1 → 发送 web_search_20250305
+ * 而 /chat/completions 没有任何服务端搜索能力。
  */
 val ProviderSetting.supportsBuiltInSearch: Boolean
     get() = when (this) {

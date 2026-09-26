@@ -115,6 +115,11 @@ val DEFAULT_PROVIDERS = listOf(
         baseUrl = "https://api.deepseek.com/v1",
         apiKey = "",
         builtIn = true,
+        // 实测（2026-09-27）：DeepSeek 的 /v1/responses **确实支持**服务端 web_search
+        // （官方文档 Tools 表把 web_search 标为 Ignored，与实测不符，文档过时）。
+        // 走 chat/completions 则完全没有服务端搜索能力。
+        // 因此默认开启 Responses API，让「模型内置搜索」开箱可用。
+        useResponseApi = true,
         balanceOption = BalanceOption(
             enabled = true,
             apiPath = "/user/balance",
@@ -269,6 +274,18 @@ val DEFAULT_PROVIDERS = listOf(
                 text = "Claude、Codex、Gemini 等中继服务，1:1 充值"
             )
         },
+    ),
+    // DeepSeek 的 Anthropic 兼容端点：官方明确支持 Web Search（实测通过）。
+    // 作为 Responses 之外的备选路径 —— Anthropic 路径的搜索由服务端直接执行，
+    // 且会在 UI 上渲染成搜索卡片。
+    ProviderSetting.Claude(
+        id = Uuid.parse("7c1f5a20-9d3e-4b88-a1c4-2f6e8b0d5a37"),
+        name = "DeepSeek (Anthropic)",
+        // 注意：ClaudeProvider 请求 `${baseUrl}/messages`，故此处必须带 /v1
+        baseUrl = "https://api.deepseek.com/anthropic/v1",
+        apiKey = "",
+        enabled = false,
+        builtIn = true,
     ),
     ProviderSetting.Claude(
         id = Uuid.parse("b4deabea-20fb-4101-a74c-65679c7e4754"),

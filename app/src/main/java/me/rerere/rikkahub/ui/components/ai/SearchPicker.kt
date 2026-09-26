@@ -54,6 +54,7 @@ import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.supportsBuiltInSearch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
+import com.dokar.sonner.ToastType
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.AiSearch02
 import me.rerere.hugeicons.stroke.ArrowLeft01
@@ -70,6 +71,7 @@ import me.rerere.rikkahub.data.datastore.findProvider
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
 import me.rerere.rikkahub.ui.components.ui.ToggleSurface
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.pages.setting.SearchAbilityTagLine
 
 enum class SearchMode {
@@ -180,16 +182,23 @@ private fun SearchPicker(
     onDismiss: () -> Unit,
 ) {
     val navBackStack = LocalNavController.current
-
+    val toaster = LocalToaster.current
+    val needResponsesApiToast = stringResource(R.string.search_picker_model_need_responses_api)
     val provider = model?.findProvider(settings.providers)
     // 统一判定：Google / Claude / (OpenAI 且启用 Responses API) 才会真正发送服务端搜索工具。
     // 原实现漏掉了 Claude —— 而 ClaudeProvider 明确会发送 web_search_20250305，
     // 导致「能力支持但界面上根本找不到开关」。
     val supportsBuiltInSearch = provider?.supportsBuiltInSearch == true
+    // OpenAI 兼容类型但**未启用 Responses API** 时，chat/completions 路径完全不会发送
+    // 服务端搜索。此时仍要显示卡片并引导用户去启用开关 —— 否则用户永远发现不了这个功能
+    //（这正是「模型说自己没有搜索工具」的一个成因）。
+    val needsResponsesApi = provider is ProviderSetting.OpenAI && !provider.useResponseApi
     // 模型是否已开启内置搜索（可能是不支持的模型残留的孤儿状态）
     val hasBuiltInSearchEnabled = model?.tools?.contains(BuiltInTools.Search) == true
-    // 模型支持内置搜索，或已开启内置搜索（后者保证残留状态也能被关闭）时显示模型搜索卡片
-    val showModelSearch = model != null && (supportsBuiltInSearch || hasBuiltInSearchEnabled)
+    // 模型支持内置搜索、需要先启用 Responses API、或已开启内置搜索（后者保证残留状态也能被关闭）
+    // 时，显示模型搜索卡片
+    val showModelSearch = model != null &&
+        (supportsBuiltInSearch || needsResponsesApi || hasBuiltInSearchEnabled)
     val isLocalSearchSelected = enableSearch && !hasBuiltInSearchEnabled
 
     Column(
@@ -244,13 +253,28 @@ private fun SearchPicker(
             if (showModelSearch) {
                 SearchModeCard(
                     title = stringResource(R.string.search_picker_model_title),
-                    description = stringResource(R.string.search_picker_model_description),
+                    description = if (needsResponsesApi) {
+                        stringResource(R.string.search_picker_model_need_responses_api)
+                    } else {
+                        stringResource(R.string.search_picker_model_description)
+                    },
                     icon = HugeIcons.AiSearch02,
                     selected = hasBuiltInSearchEnabled,
                     onClick = {
-                        onUpdateSearchMode(
-                            if (hasBuiltInSearchEnabled) SearchMode.OFF else SearchMode.BUILT_IN
-                        )
+                        if (needsResponsesApi) {
+                            // 当前 API 路径不会发送服务端搜索，直接勾选只会让人以为「已经开了」
+                            // 却没有效果。改为明确引导用户去启用 Responses API。
+                            toaster.show(
+                                message = needResponsesApiToast,
+                                type = ToastType.Warning,
+                            )
+                            onDismiss()
+                            navBackStack.navigate(Screen.SettingProvider)
+                        } else {
+                            onUpdateSearchMode(
+                                if (hasBuiltInSearchEnabled) SearchMode.OFF else SearchMode.BUILT_IN
+                            )
+                        }
                     },
                     modifier = Modifier
                         .weight(1f)

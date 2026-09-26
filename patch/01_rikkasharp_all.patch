@@ -1251,10 +1251,10 @@ index b2990b5..e787b05 100644
 \ No newline at end of file
 +Distributed under AGPL-3.0.
 diff --git a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt b/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
-index c36df35..e70d474 100644
+index c36df35..e278ffa 100644
 --- a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
 +++ b/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
-@@ -247,3 +247,24 @@ sealed class ProviderSetting {
+@@ -247,3 +247,31 @@ sealed class ProviderSetting {
          }
      }
  }
@@ -1268,10 +1268,17 @@ index c36df35..e70d474 100644
 + * - [ProviderSetting.OpenAI]  → 仅 useResponseApi=true 时 ResponseAPI 发 web_search
 + *   （chat/completions 路径**完全不处理**内置工具，声明会被静默丢弃）
 + *
-+ * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略**
-+ * web_search（例如 DeepSeek 官方文档明确写 /responses 的 web_search 为 Ignored）。
++ * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略** web_search。
 + * 客户端无法可靠探测这一点，因此调用方不应把这个判定当作「服务端一定会搜」的保证，
 + * 更不应据此抑制本地搜索工具。
++ *
++ * 实测更正（2026-09-27）：DeepSeek 的 /v1/responses **确实支持** web_search ——
++ * 官方文档 Tools 表把它标为 "Ignored"，与实测结果不符，属文档过时。
++ * 因此不要依据该文档判断某个网关是否支持，应实际发一次请求验证。
++ * DeepSeek 确认可用的两条路径：
++ *   1) OpenAI 类型 + useResponseApi=true  → 发送 {"type":"web_search"}
++ *   2) Claude 类型 + baseUrl .../anthropic/v1 → 发送 web_search_20250305
++ * 而 /chat/completions 没有任何服务端搜索能力。
 + */
 +val ProviderSetting.supportsBuiltInSearch: Boolean
 +    get() = when (this) {
@@ -14940,6 +14947,41 @@ index 0000000..8a335a4
 +        listOf(UIMessagePart.Text(payload.toString()))
 +    },
 +)
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt b/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt
+index cb055d0..b6645db 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt
+@@ -115,6 +115,11 @@ val DEFAULT_PROVIDERS = listOf(
+         baseUrl = "https://api.deepseek.com/v1",
+         apiKey = "",
+         builtIn = true,
++        // 实测（2026-09-27）：DeepSeek 的 /v1/responses **确实支持**服务端 web_search
++        // （官方文档 Tools 表把 web_search 标为 Ignored，与实测不符，文档过时）。
++        // 走 chat/completions 则完全没有服务端搜索能力。
++        // 因此默认开启 Responses API，让「模型内置搜索」开箱可用。
++        useResponseApi = true,
+         balanceOption = BalanceOption(
+             enabled = true,
+             apiPath = "/user/balance",
+@@ -270,6 +275,18 @@ val DEFAULT_PROVIDERS = listOf(
+             )
+         },
+     ),
++    // DeepSeek 的 Anthropic 兼容端点：官方明确支持 Web Search（实测通过）。
++    // 作为 Responses 之外的备选路径 —— Anthropic 路径的搜索由服务端直接执行，
++    // 且会在 UI 上渲染成搜索卡片。
++    ProviderSetting.Claude(
++        id = Uuid.parse("7c1f5a20-9d3e-4b88-a1c4-2f6e8b0d5a37"),
++        name = "DeepSeek (Anthropic)",
++        // 注意：ClaudeProvider 请求 `${baseUrl}/messages`，故此处必须带 /v1
++        baseUrl = "https://api.deepseek.com/anthropic/v1",
++        apiKey = "",
++        enabled = false,
++        builtIn = true,
++    ),
+     ProviderSetting.Claude(
+         id = Uuid.parse("b4deabea-20fb-4101-a74c-65679c7e4754"),
+         name = "MiniMax",
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 index 422028c..8a767ad 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
@@ -15737,20 +15779,35 @@ index 00e409b..09f789e 100644
  
      // endregion
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt b/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
-index e2f1a20..1afaeef 100644
+index e2f1a20..61380f0 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
-@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
+@@ -51,8 +51,10 @@ import androidx.compose.ui.text.font.FontWeight
  import androidx.compose.ui.text.style.TextOverflow
  import androidx.compose.ui.unit.dp
  import me.rerere.ai.provider.BuiltInTools
 +import me.rerere.ai.provider.supportsBuiltInSearch
  import me.rerere.ai.provider.Model
  import me.rerere.ai.provider.ProviderSetting
++import com.dokar.sonner.ToastType
  import me.rerere.hugeicons.HugeIcons
-@@ -181,9 +182,10 @@ private fun SearchPicker(
-     val navBackStack = LocalNavController.current
+ import me.rerere.hugeicons.stroke.AiSearch02
+ import me.rerere.hugeicons.stroke.ArrowLeft01
+@@ -69,6 +71,7 @@ import me.rerere.rikkahub.data.datastore.findProvider
+ import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
+ import me.rerere.rikkahub.ui.components.ui.ToggleSurface
+ import me.rerere.rikkahub.ui.context.LocalNavController
++import me.rerere.rikkahub.ui.context.LocalToaster
+ import me.rerere.rikkahub.ui.pages.setting.SearchAbilityTagLine
  
+ enum class SearchMode {
+@@ -179,15 +182,23 @@ private fun SearchPicker(
+     onDismiss: () -> Unit,
+ ) {
+     val navBackStack = LocalNavController.current
+-
++    val toaster = LocalToaster.current
++    val needResponsesApiToast = stringResource(R.string.search_picker_model_need_responses_api)
      val provider = model?.findProvider(settings.providers)
 -    // Google 和使用 Responses API 的 OpenAI Provider 支持内置搜索
 -    val supportsBuiltInSearch = provider is ProviderSetting.Google ||
@@ -15759,9 +15816,54 @@ index e2f1a20..1afaeef 100644
 +    // 原实现漏掉了 Claude —— 而 ClaudeProvider 明确会发送 web_search_20250305，
 +    // 导致「能力支持但界面上根本找不到开关」。
 +    val supportsBuiltInSearch = provider?.supportsBuiltInSearch == true
++    // OpenAI 兼容类型但**未启用 Responses API** 时，chat/completions 路径完全不会发送
++    // 服务端搜索。此时仍要显示卡片并引导用户去启用开关 —— 否则用户永远发现不了这个功能
++    //（这正是「模型说自己没有搜索工具」的一个成因）。
++    val needsResponsesApi = provider is ProviderSetting.OpenAI && !provider.useResponseApi
      // 模型是否已开启内置搜索（可能是不支持的模型残留的孤儿状态）
      val hasBuiltInSearchEnabled = model?.tools?.contains(BuiltInTools.Search) == true
-     // 模型支持内置搜索，或已开启内置搜索（后者保证残留状态也能被关闭）时显示模型搜索卡片
+-    // 模型支持内置搜索，或已开启内置搜索（后者保证残留状态也能被关闭）时显示模型搜索卡片
+-    val showModelSearch = model != null && (supportsBuiltInSearch || hasBuiltInSearchEnabled)
++    // 模型支持内置搜索、需要先启用 Responses API、或已开启内置搜索（后者保证残留状态也能被关闭）
++    // 时，显示模型搜索卡片
++    val showModelSearch = model != null &&
++        (supportsBuiltInSearch || needsResponsesApi || hasBuiltInSearchEnabled)
+     val isLocalSearchSelected = enableSearch && !hasBuiltInSearchEnabled
+ 
+     Column(
+@@ -242,13 +253,28 @@ private fun SearchPicker(
+             if (showModelSearch) {
+                 SearchModeCard(
+                     title = stringResource(R.string.search_picker_model_title),
+-                    description = stringResource(R.string.search_picker_model_description),
++                    description = if (needsResponsesApi) {
++                        stringResource(R.string.search_picker_model_need_responses_api)
++                    } else {
++                        stringResource(R.string.search_picker_model_description)
++                    },
+                     icon = HugeIcons.AiSearch02,
+                     selected = hasBuiltInSearchEnabled,
+                     onClick = {
+-                        onUpdateSearchMode(
+-                            if (hasBuiltInSearchEnabled) SearchMode.OFF else SearchMode.BUILT_IN
+-                        )
++                        if (needsResponsesApi) {
++                            // 当前 API 路径不会发送服务端搜索，直接勾选只会让人以为「已经开了」
++                            // 却没有效果。改为明确引导用户去启用 Responses API。
++                            toaster.show(
++                                message = needResponsesApiToast,
++                                type = ToastType.Warning,
++                            )
++                            onDismiss()
++                            navBackStack.navigate(Screen.SettingProvider)
++                        } else {
++                            onUpdateSearchMode(
++                                if (hasBuiltInSearchEnabled) SearchMode.OFF else SearchMode.BUILT_IN
++                            )
++                        }
+                     },
+                     modifier = Modifier
+                         .weight(1f)
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 index 2eeb597..b798048 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
@@ -34609,7 +34711,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..fd35fab 100644
+index 8cb3cf1..c9d2bb7 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -34621,7 +34723,7 @@ index 8cb3cf1..fd35fab 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,25 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,27 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -34646,9 +34748,11 @@ index 8cb3cf1..fd35fab 100644
 +  <string name="sensor_page_title">设备传感器</string>
 +  <string name="sensor_page_hint">只列出本机真实存在的传感器。AI 可获取整组的开关状态，而你在此页决定具体放行哪些。</string>
 +  <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
++
++  <string name="search_picker_model_need_responses_api">需先在提供商设置中启用「Responses API」。点击前往配置。</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..f7432a4 100644
+index 47ddab2..64fbd4f 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -34662,7 +34766,7 @@ index 47ddab2..f7432a4 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,25 @@
+@@ -1815,4 +1817,27 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -34687,6 +34791,8 @@ index 47ddab2..f7432a4 100644
 +  <string name="sensor_page_title">Device sensors</string>
 +  <string name="sensor_page_hint">Only sensors actually present on this device are listed. The AI can enable the whole group, or only the sensors you allow here.</string>
 +  <string name="sensor_permission_required">Permission required to read this sensor</string>
++
++  <string name="search_picker_model_need_responses_api">This needs "Responses API" enabled in the provider settings. Tap to configure.</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
