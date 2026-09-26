@@ -12844,20 +12844,21 @@ index 8abf47c..0c75ff0 100644
  
      fun evalJavascript(library: String, code: String): String = runBlocking {
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-index dc0ab1a..56c431c 100644
+index dc0ab1a..c763e27 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-@@ -119,6 +119,9 @@ sealed class LocalToolOption {
+@@ -119,6 +119,10 @@ sealed class LocalToolOption {
      @Serializable
      @SerialName("calendar")
      data object Calendar : LocalToolOption()
 +
++    @Serializable
 +    @SerialName("ssh_client")
 +    data object SshClient : LocalToolOption()
  }
  
  class LocalTools(
-@@ -201,18 +204,12 @@ class LocalTools(
+@@ -201,18 +205,12 @@ class LocalTools(
                  "The JS context persists between calls — libraries loaded via action='load' stay available.\n" +
                  "⚠️ NOTE: Eval runs in a block scope — `const`/`let` are local to each call (no redeclaration errors).\n" +
                  "Use `var` for variables that need to persist across multiple calls.\n\n" +
@@ -12879,7 +12880,7 @@ index dc0ab1a..56c431c 100644
  
                  "- action: 'eval' (default) | 'load' | 'reset'\n" +
                  "- library: asset filename without .js (for action='load') — loads once, cached\n" +
-@@ -284,12 +281,6 @@ class LocalTools(
+@@ -284,12 +282,6 @@ class LocalTools(
                                  val lib = library ?: throw IllegalArgumentException("library is required for action='load'")
                                  val ctx = getOrCreateJSContext()
                                  if (lib !in loadedLibraries) {
