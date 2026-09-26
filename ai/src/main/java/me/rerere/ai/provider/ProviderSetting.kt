@@ -247,3 +247,24 @@ sealed class ProviderSetting {
         }
     }
 }
+
+/**
+ * 该 Provider 的当前 API 路径**是否真的会发送服务端内置搜索工具**。
+ *
+ * 只有为 true 时，给模型声明 [BuiltInTools.Search] 才有意义：
+ * - [ProviderSetting.Google]  → GoogleProvider 发 google_search
+ * - [ProviderSetting.Claude]  → ClaudeProvider 发 web_search_20250305
+ * - [ProviderSetting.OpenAI]  → 仅 useResponseApi=true 时 ResponseAPI 发 web_search
+ *   （chat/completions 路径**完全不处理**内置工具，声明会被静默丢弃）
+ *
+ * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略**
+ * web_search（例如 DeepSeek 官方文档明确写 /responses 的 web_search 为 Ignored）。
+ * 客户端无法可靠探测这一点，因此调用方不应把这个判定当作「服务端一定会搜」的保证，
+ * 更不应据此抑制本地搜索工具。
+ */
+val ProviderSetting.supportsBuiltInSearch: Boolean
+    get() = when (this) {
+        is ProviderSetting.Google -> true
+        is ProviderSetting.Claude -> true
+        is ProviderSetting.OpenAI -> useResponseApi
+    }

@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import me.rerere.ai.provider.BuiltInTools
+import me.rerere.ai.provider.supportsBuiltInSearch
 import me.rerere.ai.provider.Model
 import me.rerere.ai.provider.ProviderSetting
 import me.rerere.hugeicons.HugeIcons
@@ -181,9 +182,10 @@ private fun SearchPicker(
     val navBackStack = LocalNavController.current
 
     val provider = model?.findProvider(settings.providers)
-    // Google 和使用 Responses API 的 OpenAI Provider 支持内置搜索
-    val supportsBuiltInSearch = provider is ProviderSetting.Google ||
-        provider is ProviderSetting.OpenAI && provider.useResponseApi
+    // 统一判定：Google / Claude / (OpenAI 且启用 Responses API) 才会真正发送服务端搜索工具。
+    // 原实现漏掉了 Claude —— 而 ClaudeProvider 明确会发送 web_search_20250305，
+    // 导致「能力支持但界面上根本找不到开关」。
+    val supportsBuiltInSearch = provider?.supportsBuiltInSearch == true
     // 模型是否已开启内置搜索（可能是不支持的模型残留的孤儿状态）
     val hasBuiltInSearchEnabled = model?.tools?.contains(BuiltInTools.Search) == true
     // 模型支持内置搜索，或已开启内置搜索（后者保证残留状态也能被关闭）时显示模型搜索卡片

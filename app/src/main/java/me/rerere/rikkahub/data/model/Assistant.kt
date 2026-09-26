@@ -53,6 +53,8 @@ data class Assistant(
         LocalToolOption.AskUser,
         LocalToolOption.Clipboard,
     ),
+    // 已启用的设备传感器（key 见 SensorCatalog；空集 = 全部未启用）
+    val enabledSensors: Set<String> = emptySet(),
     val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
     val workspaceId: Uuid? = null,
     val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景

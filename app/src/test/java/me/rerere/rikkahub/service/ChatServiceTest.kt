@@ -2,7 +2,6 @@ package me.rerere.rikkahub.service
 
 import kotlinx.serialization.json.JsonPrimitive
 import me.rerere.ai.core.ReasoningLevel
-import me.rerere.ai.provider.BuiltInTools
 import me.rerere.ai.provider.CustomBody
 import me.rerere.ai.provider.CustomHeader
 import me.rerere.ai.provider.Model
@@ -34,40 +33,35 @@ class ChatServiceTest {
     @Test
     fun `external web search is disabled when assistant preference is disabled`() {
         val assistant = Assistant(enableWebSearch = false)
-        val model = Model()
 
-        assertFalse(shouldUseExternalWebSearch(assistant, model))
+        assertFalse(shouldUseExternalWebSearch(assistant))
     }
 
     @Test
     fun `external web search is enabled when assistant preference is enabled`() {
         val assistant = Assistant(enableWebSearch = true)
-        val model = Model()
 
-        assertTrue(shouldUseExternalWebSearch(assistant, model))
+        assertTrue(shouldUseExternalWebSearch(assistant))
     }
 
+    /**
+     * 回归测试：内置搜索声明**不得**再抑制本地搜索工具。
+     *
+     * `BuiltInTools.Search` 只是声明，服务端是否真的执行取决于 provider 的 API 路径
+     * （OpenAI 兼容网关走 /chat/completions、DeepSeek 的 /responses 都会忽略它）。
+     * 旧实现「声明存在即抑制本地」会导致模型手里一个搜索工具都没有。
+     */
     @Test
-    fun `built-in search suppresses enabled external web search`() {
+    fun `built-in search declaration no longer suppresses external web search`() {
         val assistant = Assistant(enableWebSearch = true)
-        val model = Model(tools = setOf(BuiltInTools.Search))
 
-        assertFalse(shouldUseExternalWebSearch(assistant, model))
+        assertTrue(shouldUseExternalWebSearch(assistant))
     }
 
     @Test
-    fun `built-in search remains exclusive when external web search is disabled`() {
+    fun `built-in search declaration without preference stays off`() {
         val assistant = Assistant(enableWebSearch = false)
-        val model = Model(tools = setOf(BuiltInTools.Search))
 
-        assertFalse(shouldUseExternalWebSearch(assistant, model))
-    }
-
-    @Test
-    fun `unrelated built-in tools do not suppress external web search`() {
-        val assistant = Assistant(enableWebSearch = true)
-        val model = Model(tools = setOf(BuiltInTools.UrlContext))
-
-        assertTrue(shouldUseExternalWebSearch(assistant, model))
+        assertFalse(shouldUseExternalWebSearch(assistant))
     }
 }

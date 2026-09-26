@@ -1817,4 +1817,25 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
   <string name="setting_update_reminder_pause_days">%1$d 天</string>
   <string name="setting_update_reminder_resume_now">立即恢复</string>
+
+  <!-- 设备传感器 -->
+  <string name="assistant_page_local_tools_sensors">设备传感器</string>
+  <string name="assistant_page_local_tools_sensors_desc">允许 AI 获取设备上的传感器数据。</string>
+  <string name="sensor_name_accelerometer">加速度传感器</string>
+  <string name="sensor_name_magnetic_field">磁力传感器（罗盘）</string>
+  <string name="sensor_name_orientation">方向传感器</string>
+  <string name="sensor_name_gravity">重力传感器</string>
+  <string name="sensor_name_gyroscope">陀螺仪</string>
+  <string name="sensor_name_linear_acceleration">线性加速度</string>
+  <string name="sensor_name_rotation_vector">旋转矢量</string>
+  <string name="sensor_name_step_counter">计步传感器</string>
+  <string name="sensor_name_pressure">气压传感器</string>
+  <string name="sensor_name_location">定位（GPS）</string>
+  <string name="sensor_permission_location">位置信息</string>
+  <string name="sensor_permission_location_desc">读取设备位置需要此权限</string>
+  <string name="sensor_permission_activity_recognition">身体活动</string>
+  <string name="sensor_permission_activity_recognition_desc">读取计步传感器需要此权限</string>
+  <string name="sensor_page_title">设备传感器</string>
+  <string name="sensor_page_hint">只列出本机真实存在的传感器。AI 可获取整组的开关状态，而你在此页决定具体放行哪些。</string>
+  <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
 </resources>

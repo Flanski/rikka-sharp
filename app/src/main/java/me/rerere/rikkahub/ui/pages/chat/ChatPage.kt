@@ -416,7 +416,9 @@ private fun ChatPageContent(
                             setting.copy(
                                 assistants = setting.assistants.map { assistant ->
                                     if (assistant.id == current.id) {
-                                        assistant.copy(enableWebSearch = mode == SearchMode.LOCAL)
+                                        // 选「内置」时也保留本地搜索作为兜底：
+                                        // 服务端若忽略内置声明，至少还有本地搜索可用。
+                                        assistant.copy(enableWebSearch = mode != SearchMode.OFF)
                                     } else {
                                         assistant
                                     }

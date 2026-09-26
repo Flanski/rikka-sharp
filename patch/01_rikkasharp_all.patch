@@ -1250,6 +1250,79 @@ index b2990b5..e787b05 100644
 -If this fork is useful to you, please leave a ⭐ Star — it keeps the project alive ✨
 \ No newline at end of file
 +Distributed under AGPL-3.0.
+diff --git a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt b/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
+index c36df35..e70d474 100644
+--- a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
++++ b/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
+@@ -247,3 +247,24 @@ sealed class ProviderSetting {
+         }
+     }
+ }
++
++/**
++ * 该 Provider 的当前 API 路径**是否真的会发送服务端内置搜索工具**。
++ *
++ * 只有为 true 时，给模型声明 [BuiltInTools.Search] 才有意义：
++ * - [ProviderSetting.Google]  → GoogleProvider 发 google_search
++ * - [ProviderSetting.Claude]  → ClaudeProvider 发 web_search_20250305
++ * - [ProviderSetting.OpenAI]  → 仅 useResponseApi=true 时 ResponseAPI 发 web_search
++ *   （chat/completions 路径**完全不处理**内置工具，声明会被静默丢弃）
++ *
++ * 注意：第三方 OpenAI 兼容网关即使开了 Responses API，也可能在服务端**忽略**
++ * web_search（例如 DeepSeek 官方文档明确写 /responses 的 web_search 为 Ignored）。
++ * 客户端无法可靠探测这一点，因此调用方不应把这个判定当作「服务端一定会搜」的保证，
++ * 更不应据此抑制本地搜索工具。
++ */
++val ProviderSetting.supportsBuiltInSearch: Boolean
++    get() = when (this) {
++        is ProviderSetting.Google -> true
++        is ProviderSetting.Claude -> true
++        is ProviderSetting.OpenAI -> useResponseApi
++    }
+diff --git a/ai/src/test/java/me/rerere/ai/provider/ProviderSettingBuiltInSearchTest.kt b/ai/src/test/java/me/rerere/ai/provider/ProviderSettingBuiltInSearchTest.kt
+new file mode 100644
+index 0000000..93056ec
+--- /dev/null
++++ b/ai/src/test/java/me/rerere/ai/provider/ProviderSettingBuiltInSearchTest.kt
+@@ -0,0 +1,38 @@
++package me.rerere.ai.provider
++
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Test
++
++/**
++ * [supportsBuiltInSearch] 的回归测试。
++ *
++ * 背景：原实现在 UI 层写死了白名单
++ * `provider is Google || (provider is OpenAI && provider.useResponseApi)`，
++ * **漏掉了 Claude 类型** —— 而 ClaudeProvider 明确会发送 `web_search_20250305`，
++ * 导致「provider 有能力、界面上却找不到开关」。
++ */
++class ProviderSettingBuiltInSearchTest {
++
++    @Test
++    fun `google supports built-in search`() {
++        assertTrue(ProviderSetting.Google().supportsBuiltInSearch)
++    }
++
++    /** 本次修复的核心：Claude 类型必须被识别为支持。 */
++    @Test
++    fun `claude supports built-in search`() {
++        assertTrue(ProviderSetting.Claude().supportsBuiltInSearch)
++    }
++
++    @Test
++    fun `openai with responses api supports built-in search`() {
++        assertTrue(ProviderSetting.OpenAI(useResponseApi = true).supportsBuiltInSearch)
++    }
++
++    /** chat/completions 路径完全不处理内置工具，声明会被静默丢弃。 */
++    @Test
++    fun `openai with chat completions does not support built-in search`() {
++        assertFalse(ProviderSetting.OpenAI(useResponseApi = false).supportsBuiltInSearch)
++    }
++}
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
 index 3d07c97..326af27 100644
 --- a/app/build.gradle.kts
@@ -1374,6 +1447,21 @@ index d910308..3b0b591 100644
          }
        },
        "oauth_client": [],
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 51e0037..803e02c 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -11,6 +11,10 @@
+   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+   <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
++  <!-- 设备传感器工具：定位需要位置权限；计步传感器在 Android 10+ 需要活动识别权限 -->
++  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
++  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
++  <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+   <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 diff --git "a/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md" "b/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md"
 deleted file mode 100644
 index 20f5f82..0000000
@@ -12743,10 +12831,18 @@ index 1054dcd..0000000
 -⑦ Greer: 每张牌都是故事的一个角色/事件,
 -  功能含义优先于象征含义
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-index eecc60c..2835c40 100644
+index eecc60c..ecdda3d 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-@@ -121,6 +121,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
+@@ -79,6 +79,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
++import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
+ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
+@@ -121,6 +122,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
@@ -12754,7 +12850,18 @@ index eecc60c..2835c40 100644
  import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
  import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
  import me.rerere.rikkahub.ui.pages.stats.StatsPage
-@@ -483,6 +484,10 @@ class RouteActivity : ComponentActivity() {
+@@ -389,6 +391,10 @@ class RouteActivity : ComponentActivity() {
+                                 AssistantLocalToolPage(key.id)
+                             }
+ 
++                            entry<Screen.AssistantSensors> { key ->
++                                AssistantSensorsPage(key.id)
++                            }
++
+                             entry<Screen.AssistantInjections> { key ->
+                                 AssistantExtensionsPage(key.id)
+                             }
+@@ -483,6 +489,10 @@ class RouteActivity : ComponentActivity() {
                                  SettingWebPage()
                              }
  
@@ -12765,7 +12872,17 @@ index eecc60c..2835c40 100644
  
                              entry<Screen.Debug> {
                                  DebugPage()
-@@ -705,6 +710,9 @@ sealed interface Screen : NavKey {
+@@ -648,6 +658,9 @@ sealed interface Screen : NavKey {
+     @Serializable
+     data class AssistantLocalTool(val id: String) : Screen
+ 
++    @Serializable
++    data class AssistantSensors(val id: String) : Screen
++
+     @Serializable
+     data class AssistantInjections(val id: String) : Screen
+ 
+@@ -705,6 +718,9 @@ sealed interface Screen : NavKey {
      @Serializable
      data object SettingSpeech : Screen
  
@@ -12855,10 +12972,10 @@ index 8abf47c..0c75ff0 100644
  
      fun evalJavascript(library: String, code: String): String = runBlocking {
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-index dc0ab1a..c763e27 100644
+index dc0ab1a..ce4e746 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-@@ -119,6 +119,10 @@ sealed class LocalToolOption {
+@@ -119,6 +119,14 @@ sealed class LocalToolOption {
      @Serializable
      @SerialName("calendar")
      data object Calendar : LocalToolOption()
@@ -12866,10 +12983,14 @@ index dc0ab1a..c763e27 100644
 +    @Serializable
 +    @SerialName("ssh_client")
 +    data object SshClient : LocalToolOption()
++
++    @Serializable
++    @SerialName("sensors")
++    data object Sensors : LocalToolOption()
  }
  
  class LocalTools(
-@@ -201,18 +205,12 @@ class LocalTools(
+@@ -201,18 +209,12 @@ class LocalTools(
                  "The JS context persists between calls — libraries loaded via action='load' stay available.\n" +
                  "⚠️ NOTE: Eval runs in a block scope — `const`/`let` are local to each call (no redeclaration errors).\n" +
                  "Use `var` for variables that need to persist across multiple calls.\n\n" +
@@ -12891,7 +13012,7 @@ index dc0ab1a..c763e27 100644
  
                  "- action: 'eval' (default) | 'load' | 'reset'\n" +
                  "- library: asset filename without .js (for action='load') — loads once, cached\n" +
-@@ -284,12 +282,6 @@ class LocalTools(
+@@ -284,12 +286,6 @@ class LocalTools(
                                  val lib = library ?: throw IllegalArgumentException("library is required for action='load'")
                                  val ctx = getOrCreateJSContext()
                                  if (lib !in loadedLibraries) {
@@ -14436,11 +14557,394 @@ index 99f3d3f..0000000
 -        listOf(UIMessagePart.Text(rawResult))
 -    }
 -)
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt
+new file mode 100644
+index 0000000..8a335a4
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt
+@@ -0,0 +1,377 @@
++package me.rerere.rikkahub.data.ai.tools.local
++
++import android.Manifest
++import android.content.Context
++import android.content.pm.PackageManager
++import android.hardware.Sensor
++import android.hardware.SensorEvent
++import android.hardware.SensorEventListener
++import android.hardware.SensorManager
++import android.location.LocationManager
++import android.os.Build
++import androidx.annotation.StringRes
++import androidx.core.content.ContextCompat
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.suspendCancellableCoroutine
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.add
++import kotlinx.serialization.json.addJsonObject
++import kotlinx.serialization.json.buildJsonArray
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.intOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.put
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++import me.rerere.rikkahub.R
++import kotlin.coroutines.resume
++
++/**
++ * 设备传感器工具。
++ *
++ * 设计要点：
++ * 1. **只暴露本机真实存在的传感器** —— [SensorCatalog.available] 用 SensorManager 实际探测，
++ *    避免在有/无某硬件的机型上出现无效开关。
++ * 2. **开关状态按助手存** —— [me.rerere.rikkahub.data.model.Assistant.enabledSensors] 存 key 集合，
++ *    只有被放行的传感器才会被读取（隐私最小化）。
++ * 3. 需要运行时权限的传感器（定位 / 计步）在未授权时返回明确错误，而不是空值。
++ */
++object SensorCatalog {
++
++    /** 定位不是 SensorManager 的传感器，单独给一个 key。 */
++    const val LOCATION_KEY = "location"
++
++    enum class Kind { ANDROID_SENSOR, LOCATION }
++
++    data class Entry(
++        /** 稳定标识：`sensor:<type int>` 或 [LOCATION_KEY]。用 type 而非名字，跨设备一致。 */
++        val key: String,
++        @StringRes val nameRes: Int,
++        val kind: Kind,
++        val sensorType: Int = -1,
++        /** 需要授予的运行时权限（null = 不需要） */
++        val permission: String? = null,
++        /** SensorManager 里的传感器对象名（用于 UI 展示实际驱动名） */
++        val hardwareName: String? = null,
++    )
++
++    private val STEP_PERMISSION: String? =
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Manifest.permission.ACTIVITY_RECOGNITION else null
++
++    /** 候选清单。用户需求指定：加速度/磁力(罗盘)/方向/重力/陀螺/计步 + 气压 + GPS；
++     *  另含线性加速度与旋转矢量（融合传感器，对方向类推理很有用）。不含光线、接近。 */
++    @Suppress("DEPRECATION")
++    val ALL: List<Entry> = listOf(
++        Entry("sensor:${Sensor.TYPE_ACCELEROMETER}", R.string.sensor_name_accelerometer,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_ACCELEROMETER),
++        Entry("sensor:${Sensor.TYPE_MAGNETIC_FIELD}", R.string.sensor_name_magnetic_field,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_MAGNETIC_FIELD),
++        Entry("sensor:${Sensor.TYPE_ORIENTATION}", R.string.sensor_name_orientation,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_ORIENTATION),
++        Entry("sensor:${Sensor.TYPE_GRAVITY}", R.string.sensor_name_gravity,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_GRAVITY),
++        Entry("sensor:${Sensor.TYPE_GYROSCOPE}", R.string.sensor_name_gyroscope,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_GYROSCOPE),
++        Entry("sensor:${Sensor.TYPE_LINEAR_ACCELERATION}", R.string.sensor_name_linear_acceleration,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_LINEAR_ACCELERATION),
++        Entry("sensor:${Sensor.TYPE_ROTATION_VECTOR}", R.string.sensor_name_rotation_vector,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_ROTATION_VECTOR),
++        Entry("sensor:${Sensor.TYPE_STEP_COUNTER}", R.string.sensor_name_step_counter,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_STEP_COUNTER, STEP_PERMISSION),
++        Entry("sensor:${Sensor.TYPE_PRESSURE}", R.string.sensor_name_pressure,
++            Kind.ANDROID_SENSOR, Sensor.TYPE_PRESSURE),
++        Entry(LOCATION_KEY, R.string.sensor_name_location, Kind.LOCATION,
++            permission = Manifest.permission.ACCESS_FINE_LOCATION),
++    )
++
++    /** 本机真实存在的传感器（含 SensorManager 里的硬件名） */
++    fun available(context: Context): List<Entry> {
++        val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
++            ?: return emptyList()
++        return ALL.mapNotNull { entry ->
++            when (entry.kind) {
++                Kind.ANDROID_SENSOR -> {
++                    val s = runCatching { sm.getDefaultSensor(entry.sensorType) }.getOrNull()
++                    if (s == null) null else entry.copy(hardwareName = s.name)
++                }
++
++                Kind.LOCATION -> {
++                    val hasGps = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LOCATION_GPS)
++                    val hasAny = context.packageManager.hasSystemFeature(PackageManager.FEATURE_LOCATION)
++                    if (hasGps || hasAny) entry else null
++                }
++            }
++        }
++    }
++
++    fun find(key: String): Entry? = ALL.firstOrNull { it.key == key }
++
++    fun hasPermission(context: Context, entry: Entry): Boolean {
++        val p = entry.permission ?: return true
++        return ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
++    }
++}
++
++/** 一条传感器读数 */
++private data class Reading(
++    val key: String,
++    val name: String,
++    val type: String,
++    val values: List<Double>,
++    val unit: String,
++    val accuracy: Int? = null,
++    /** 定位专有：数据距今多少秒（越大越不可信） */
++    val ageSeconds: Double? = null,
++    val provider: String? = null,
++)
++
++private fun round(v: Float, digits: Int = 4): Double {
++    val f = Math.pow(10.0, digits.toDouble())
++    return Math.round(v.toDouble() * f) / f
++}
++
++/** 读一次 Android 传感器（首个回调），带超时 */
++private suspend fun readAndroidSensor(
++    context: Context,
++    entry: SensorCatalog.Entry,
++    timeoutMs: Long,
++): Reading? = withContext(Dispatchers.Main) {
++    val sm = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return@withContext null
++    val sensor = runCatching { sm.getDefaultSensor(entry.sensorType) }.getOrNull() ?: return@withContext null
++    withTimeoutOrNull(timeoutMs) {
++        suspendCancellableCoroutine { cont ->
++            val listener = object : SensorEventListener {
++                override fun onSensorChanged(event: SensorEvent) {
++                    runCatching { sm.unregisterListener(this) }
++                    if (cont.isActive) {
++                        cont.resume(
++                            Reading(
++                                key = entry.key,
++                                name = context.getString(entry.nameRes),
++                                type = runCatching { sensor.stringType }.getOrNull()
++                                    ?: "android.sensor.type_${sensor.type}",
++                                values = event.values.map { round(it) },
++                                unit = sensorUnit(sensor.type),
++                                accuracy = event.accuracy,
++                            )
++                        )
++                    }
++                }
++
++                override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
++            }
++            cont.invokeOnCancellation { runCatching { sm.unregisterListener(listener) } }
++            val ok = runCatching {
++                sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_UI)
++            }.getOrDefault(false)
++            if (!ok && cont.isActive) cont.resume(null)
++        }
++    }
++}
++
++/** 读定位：取所有 provider 中最近一次的已知位置（不做耗时的主动定位） */
++private fun readLocation(context: Context, entry: SensorCatalog.Entry): Reading? {
++    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
++    val providers = listOf(
++        LocationManager.GPS_PROVIDER,
++        LocationManager.NETWORK_PROVIDER,
++        LocationManager.PASSIVE_PROVIDER,
++    )
++    val best = providers
++        .mapNotNull { p ->
++            runCatching { lm.getLastKnownLocation(p) }.getOrNull()?.let { p to it }
++        }
++        .maxByOrNull { it.second.time }
++        ?: return null
++    val (provider, loc) = best
++    val ageSec = (System.currentTimeMillis() - loc.time) / 1000.0
++    return Reading(
++        key = entry.key,
++        name = context.getString(entry.nameRes),
++        type = "location",
++        values = listOf(round(loc.latitude.toFloat(), 6), round(loc.longitude.toFloat(), 6))
++            .plus(if (loc.hasAltitude()) listOf(round(loc.altitude.toFloat(), 2)) else emptyList()),
++        unit = if (loc.hasAltitude()) "lat,lon,altitude_m" else "lat,lon",
++        ageSeconds = round(ageSec.toFloat(), 1),
++        provider = provider,
++    )
++}
++
++private fun sensorUnit(type: Int): String = when (type) {
++    Sensor.TYPE_ACCELEROMETER,
++    Sensor.TYPE_GRAVITY,
++    Sensor.TYPE_LINEAR_ACCELERATION -> "m/s^2"
++
++    Sensor.TYPE_GYROSCOPE -> "rad/s"
++    Sensor.TYPE_MAGNETIC_FIELD -> "uT"
++    Sensor.TYPE_PRESSURE -> "hPa"
++    Sensor.TYPE_LIGHT -> "lx"
++    Sensor.TYPE_PROXIMITY -> "cm"
++    Sensor.TYPE_RELATIVE_HUMIDITY -> "%"
++    Sensor.TYPE_AMBIENT_TEMPERATURE -> "degC"
++    else -> ""
++}
++
++/**
++ * 设备传感器工具。只返回 [enabledKeys] 里放行的传感器。
++ */
++fun createSensorTool(context: Context, enabledKeys: Set<String>): Tool = Tool(
++    name = "get_sensors",
++    description = """
++        Read the device's physical sensors. Only sensors the user has allowed are readable.
++
++        Available kinds (when present on the device and enabled by the user):
++        accelerometer, magnetometer (compass), orientation, gravity, gyroscope,
++        linear acceleration, rotation vector, step counter, barometer, location (GPS).
++
++        Args:
++        - sensors: optional array of keys to read (e.g. ["sensor:1","location"]).
++          Omit to read every enabled sensor.
++        - timeout: per-sensor wait in seconds, default 2, max 10. Sensors that do not
++          deliver a sample within the timeout are reported in `errors`.
++
++        Response (JSON):
++        - timestamp, count
++        - sensors: one entry per sensor, with
++            key, name, type, values, unit, accuracy (android sensors) or
++            ageSeconds + provider (location)
++        - errors: sensors that could not be read, with a reason
++          (e.g. permission not granted, timed out, no reading yet)
++        - available_but_disabled: sensors present on the device but not enabled by the user;
++          if the request needs one of those, ask the user to enable it in
++          Settings -> assistant -> Local tools -> Device sensors.
++
++        Notes:
++        - Location returns the most recent cached fix and its age; it is not a live GPS fix.
++        - Rotation vector / orientation describe device attitude; use them for compass-like questions.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("sensors", buildJsonObject {
++                    put("type", "array")
++                    put("description", "Optional list of sensor keys to read, e.g. [\"sensor:1\",\"location\"]")
++                    put("items", buildJsonObject { put("type", "string") })
++                })
++                put("timeout", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "Per-sensor wait in seconds (default 2, max 10)")
++                })
++            },
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val timeoutSec = (obj["timeout"]?.jsonPrimitive?.intOrNull ?: 2).coerceIn(1, 10)
++        val requested: List<String>? = obj["sensors"]?.let { el ->
++            runCatching {
++                (el as kotlinx.serialization.json.JsonArray)
++                    .mapNotNull { it.jsonPrimitive.contentOrNull }
++            }.getOrNull()
++        }
++
++        val present = SensorCatalog.available(context)
++        val presentKeys = present.map { it.key }.toSet()
++        // 目标 = 请求的 ∩ (本机存在 ∩ 已放行)；未指定则 = 已放行的全部
++        val targets = if (requested.isNullOrEmpty()) {
++            present.filter { it.key in enabledKeys }
++        } else {
++            requested.mapNotNull { SensorCatalog.find(it) }.filter { it.key in presentKeys && it.key in enabledKeys }
++        }
++
++        val readings = mutableListOf<Reading>()
++        val errors = mutableListOf<Triple<String, String, String>>()   // key, name, reason
++
++        for (entry in targets) {
++            if (!SensorCatalog.hasPermission(context, entry)) {
++                errors.add(Triple(entry.key, context.getString(entry.nameRes), "permission_not_granted"))
++                continue
++            }
++            val r = when (entry.kind) {
++                SensorCatalog.Kind.ANDROID_SENSOR -> readAndroidSensor(context, entry, timeoutSec * 1000L)
++                SensorCatalog.Kind.LOCATION -> withContext(Dispatchers.IO) { readLocation(context, entry) }
++            }
++            if (r == null) {
++                errors.add(
++                    Triple(
++                        entry.key, context.getString(entry.nameRes),
++                        if (entry.kind == SensorCatalog.Kind.LOCATION) "no_cached_location_yet" else "no_sample_within_timeout"
++                    )
++                )
++            } else {
++                readings.add(r)
++            }
++        }
++
++        // 请求了但未放行 / 本机不存在的
++        val notEnabled = mutableListOf<Triple<String, String, String>>()
++        if (!requested.isNullOrEmpty()) {
++            for (key in requested) {
++                if (key in enabledKeys) continue
++                val e = SensorCatalog.find(key)
++                if (e != null && e.key in presentKeys) {
++                    notEnabled.add(Triple(e.key, context.getString(e.nameRes), "disabled_by_user"))
++                }
++            }
++        }
++
++        val payload = buildJsonObject {
++            put("timestamp", JsonPrimitive(System.currentTimeMillis()))
++            put("count", JsonPrimitive(readings.size))
++            put("sensors", buildJsonArray {
++                readings.forEach { r ->
++                    addJsonObject {
++                        put("key", JsonPrimitive(r.key))
++                        put("name", JsonPrimitive(r.name))
++                        put("type", JsonPrimitive(r.type))
++                        put("values", buildJsonArray { r.values.forEach { add(JsonPrimitive(it)) } })
++                        put("unit", JsonPrimitive(r.unit))
++                        r.accuracy?.let { put("accuracy", JsonPrimitive(it)) }
++                        r.ageSeconds?.let { put("ageSeconds", JsonPrimitive(it)) }
++                        r.provider?.let { put("provider", JsonPrimitive(it)) }
++                    }
++                }
++            })
++            if (errors.isNotEmpty()) {
++                put("errors", buildJsonArray {
++                    errors.forEach { (k, n, why) ->
++                        addJsonObject {
++                            put("key", JsonPrimitive(k)); put("name", JsonPrimitive(n)); put("reason", JsonPrimitive(why))
++                        }
++                    }
++                })
++            }
++            if (notEnabled.isNotEmpty()) {
++                put("requested_but_disabled", buildJsonArray {
++                    notEnabled.forEach { (k, n, why) ->
++                        addJsonObject {
++                            put("key", JsonPrimitive(k)); put("name", JsonPrimitive(n)); put("reason", JsonPrimitive(why))
++                        }
++                    }
++                })
++            }
++            val disabledButPresent = present.filter { it.key !in enabledKeys }.map { it.key }
++            if (disabledButPresent.isNotEmpty()) {
++                put("available_but_disabled", buildJsonArray { disabledButPresent.forEach { add(JsonPrimitive(it)) } })
++            }
++            if (readings.isEmpty() && errors.isEmpty() && targets.isEmpty()) {
++                put(
++                    "hint",
++                    JsonPrimitive(
++                        if (enabledKeys.isEmpty())
++                            "No sensor is enabled for this assistant. Ask the user to enable some in " +
++                                "Settings -> assistant -> Local tools -> Device sensors."
++                        else "None of the enabled sensors exist on this device."
++                    )
++                )
++            }
++        }
++        listOf(UIMessagePart.Text(payload.toString()))
++    },
++)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
-index 422028c..e87ce67 100644
+index 422028c..8a767ad 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
-@@ -47,13 +47,12 @@ data class Assistant(
+@@ -47,13 +47,14 @@ data class Assistant(
          LocalToolOption.TimeInfo,
          LocalToolOption.FileTools,
          LocalToolOption.ShellTools,
@@ -14452,6 +14956,8 @@ index 422028c..e87ce67 100644
      ),
 -    // 命理工具总开关（mingli + mingli_guide），默认开启保持存量行为
 -    val enableMingliTools: Boolean = true,
++    // 已启用的设备传感器（key 见 SensorCatalog；空集 = 全部未启用）
++    val enabledSensors: Set<String> = emptySet(),
      val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
      val workspaceId: Uuid? = null,
      val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景
@@ -15060,10 +15566,10 @@ index 76f057e..9bb5538 100644
          GenMediaRepository(get())
      }
 diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-index 00e409b..194eb5b 100644
+index 00e409b..09f789e 100644
 --- a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-@@ -79,10 +79,12 @@ import me.rerere.rikkahub.data.ai.tools.createPythonTool
+@@ -79,10 +79,13 @@ import me.rerere.rikkahub.data.ai.tools.createPythonTool
  import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
  import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
  import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
@@ -15071,6 +15577,7 @@ index 00e409b..194eb5b 100644
 +import me.rerere.rikkahub.data.ai.tools.createGithubSearchTool
 +import me.rerere.rikkahub.data.ai.tools.createWikipediaSearchTool
 +import me.rerere.rikkahub.data.ai.tools.createSshTools
++import me.rerere.rikkahub.data.ai.tools.local.createSensorTool
  import me.rerere.rikkahub.data.ai.tools.createTaskTools
  import me.rerere.rikkahub.data.ai.tools.createConversationTools
 -import me.rerere.rikkahub.data.ai.tools.local.createMingliTool
@@ -15078,7 +15585,7 @@ index 00e409b..194eb5b 100644
  import me.rerere.rikkahub.data.files.SkillManager
  import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
  import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
-@@ -112,6 +114,7 @@ import me.rerere.rikkahub.data.model.GenerationType
+@@ -112,6 +115,7 @@ import me.rerere.rikkahub.data.model.GenerationType
  import me.rerere.rikkahub.data.model.toMessageNode
  import me.rerere.rikkahub.data.repository.ConversationRepository
  import me.rerere.rikkahub.data.repository.MemoryRepository
@@ -15086,7 +15593,32 @@ index 00e409b..194eb5b 100644
  import me.rerere.rikkahub.data.repository.WorkspaceRepository
  import me.rerere.rikkahub.web.BadRequestException
  import me.rerere.rikkahub.web.NotFoundException
-@@ -200,6 +203,11 @@ class ChatService(
+@@ -136,8 +140,22 @@ internal fun backgroundTextGenerationParams(
+ 
+ private const val TAG = "ChatService"
+ 
+-internal fun shouldUseExternalWebSearch(assistant: Assistant, model: Model): Boolean {
+-    return assistant.enableWebSearch && BuiltInTools.Search !in model.tools
++/**
++ * 是否注册「本地搜索工具」（search_web / scrape_web）。
++ *
++ * 原实现：`assistant.enableWebSearch && BuiltInTools.Search !in model.tools`
++ * —— 即「模型勾了内置搜索就不再注册本地搜索」。
++ *
++ * 这导致了实测中的最坏情况：`BuiltInTools.Search` 只是一个**声明**，服务端是否真的执行
++ * 取决于 provider 的 API 路径；一旦服务端忽略它（例如 OpenAI 兼容网关走
++ * /chat/completions，或 DeepSeek 的 /responses 按官方文档 Ignored），模型手里既没有
++ * 服务端搜索、本地搜索又已被抑制 → 只能回答「我没有联网搜索工具」。
++ *
++ * 现改为：只要助手开启了搜索，就始终注册本地工具作为**兜底**。
++ * 服务端内置搜索可用时，模型会自行优先使用它；不可用时则由本地工具接管。
++ */
++internal fun shouldUseExternalWebSearch(assistant: Assistant): Boolean {
++    return assistant.enableWebSearch
+ }
+ 
+ data class ChatError(
+@@ -200,6 +218,11 @@ class ChatService(
          KoinJavaComponent.get<AppDatabase>(AppDatabase::class.java)
      }
  
@@ -15098,7 +15630,16 @@ index 00e409b..194eb5b 100644
      // 错误状态
      private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
      val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
-@@ -1125,11 +1133,6 @@ class ChatService(
+@@ -1031,7 +1054,7 @@ class ChatService(
+         } else {
+             model.displayName
+         }
+-        val useExternalWebSearch = shouldUseExternalWebSearch(assistant, model)
++        val useExternalWebSearch = shouldUseExternalWebSearch(assistant)
+ 
+         runCatching {
+ 
+@@ -1125,11 +1148,6 @@ class ChatService(
                      if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
                          add(createPythonTool(context, assistant.toolExecTimeout))
                      }
@@ -15110,7 +15651,7 @@ index 00e409b..194eb5b 100644
                      if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                          add(createDatabaseQueryTool(database))
                      }
-@@ -1137,6 +1140,13 @@ class ChatService(
+@@ -1137,6 +1155,16 @@ class ChatService(
                          add(createCalculatorTool(context))
                      }
                      add(createWebFetchTool())
@@ -15121,10 +15662,13 @@ index 00e409b..194eb5b 100644
 +                    if (assistant.localTools.contains(LocalToolOption.SshClient)) {
 +                        addAll(createSshTools(sshHostRepository))
 +                    }
++                    if (assistant.localTools.contains(LocalToolOption.Sensors)) {
++                        add(createSensorTool(context, assistant.enabledSensors))
++                    }
                      if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                          addAll(createTaskTools())
                      }
-@@ -1512,6 +1522,13 @@ class ChatService(
+@@ -1512,6 +1540,16 @@ class ChatService(
                      add(createCalculatorTool(context))
                  }
                  add(createWebFetchTool())
@@ -15135,10 +15679,13 @@ index 00e409b..194eb5b 100644
 +                if (assistant.localTools.contains(LocalToolOption.SshClient)) {
 +                    addAll(createSshTools(sshHostRepository))
 +                }
++                if (assistant.localTools.contains(LocalToolOption.Sensors)) {
++                    add(createSensorTool(context, assistant.enabledSensors))
++                }
                  if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                      addAll(createTaskTools())
                  }
-@@ -1670,11 +1687,16 @@ class ChatService(
+@@ -1670,11 +1708,16 @@ class ChatService(
              putExtra(GenerationForegroundService.EXTRA_TITLE, title)
              putExtra(GenerationForegroundService.EXTRA_CONVERSATION_ID, conversationId)
          }
@@ -15160,7 +15707,7 @@ index 00e409b..194eb5b 100644
      }
  
      private fun updateGenerationForeground(text: String) {
-@@ -1682,14 +1704,26 @@ class ChatService(
+@@ -1682,14 +1725,26 @@ class ChatService(
              action = GenerationForegroundService.ACTION_UPDATE
              putExtra(GenerationForegroundService.EXTRA_TEXT, text.take(200))
          }
@@ -15189,11 +15736,88 @@ index 00e409b..194eb5b 100644
      }
  
      // endregion
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt b/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
+index e2f1a20..1afaeef 100644
+--- a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
++++ b/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
+@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.dp
+ import me.rerere.ai.provider.BuiltInTools
++import me.rerere.ai.provider.supportsBuiltInSearch
+ import me.rerere.ai.provider.Model
+ import me.rerere.ai.provider.ProviderSetting
+ import me.rerere.hugeicons.HugeIcons
+@@ -181,9 +182,10 @@ private fun SearchPicker(
+     val navBackStack = LocalNavController.current
+ 
+     val provider = model?.findProvider(settings.providers)
+-    // Google 和使用 Responses API 的 OpenAI Provider 支持内置搜索
+-    val supportsBuiltInSearch = provider is ProviderSetting.Google ||
+-        provider is ProviderSetting.OpenAI && provider.useResponseApi
++    // 统一判定：Google / Claude / (OpenAI 且启用 Responses API) 才会真正发送服务端搜索工具。
++    // 原实现漏掉了 Claude —— 而 ClaudeProvider 明确会发送 web_search_20250305，
++    // 导致「能力支持但界面上根本找不到开关」。
++    val supportsBuiltInSearch = provider?.supportsBuiltInSearch == true
+     // 模型是否已开启内置搜索（可能是不支持的模型残留的孤儿状态）
+     val hasBuiltInSearchEnabled = model?.tools?.contains(BuiltInTools.Search) == true
+     // 模型支持内置搜索，或已开启内置搜索（后者保证残留状态也能被关闭）时显示模型搜索卡片
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
-index 2eeb597..67c8bc7 100644
+index 2eeb597..b798048 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
-@@ -331,22 +331,22 @@ private fun AssistantLocalToolContent(
+@@ -4,6 +4,7 @@ import android.Manifest
+ import androidx.compose.animation.AnimatedVisibility
+ import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.PaddingValues
+ import androidx.compose.foundation.layout.fillMaxSize
+ import androidx.compose.foundation.layout.imePadding
+@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.width
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.Icon
+ import androidx.compose.material3.LargeFlexibleTopAppBar
+ import androidx.compose.material3.Scaffold
+ import androidx.compose.material3.Switch
+@@ -19,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
+ import androidx.compose.material3.TopAppBarDefaults
+ import androidx.compose.material3.MaterialTheme
+ import androidx.compose.runtime.*
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.input.nestedscroll.nestedScroll
+ import androidx.compose.ui.platform.LocalContext
+@@ -30,7 +33,10 @@ import androidx.compose.ui.unit.dp
+ import androidx.lifecycle.compose.collectAsStateWithLifecycle
+ import com.dokar.sonner.ToastType
+ import kotlinx.coroutines.launch
++import me.rerere.hugeicons.HugeIcons
++import me.rerere.hugeicons.stroke.ArrowRight01
+ import me.rerere.rikkahub.R
++import me.rerere.rikkahub.Screen
+ import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+ import me.rerere.rikkahub.data.datastore.Settings
+ import me.rerere.rikkahub.data.model.Assistant
+@@ -41,6 +47,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
+ import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
+ import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
+ import me.rerere.rikkahub.ui.theme.CustomColors
++import me.rerere.rikkahub.ui.context.LocalNavController
+ import me.rerere.rikkahub.ui.context.LocalToaster
+ import me.rerere.rikkahub.utils.hasUsageStatsPermission
+ import me.rerere.rikkahub.utils.openUsageAccessSettings
+@@ -96,6 +103,7 @@ private fun AssistantLocalToolContent(
+ ) {
+     val context = LocalContext.current
+     val toaster = LocalToaster.current
++    val nav = LocalNavController.current
+     val permissionRequiredText =
+         stringResource(R.string.assistant_page_local_tools_screen_time_permission_required)
+ 
+@@ -331,22 +339,22 @@ private fun AssistantLocalToolContent(
                  }
              )
              item(
@@ -15224,6 +15848,231 @@ index 2eeb597..67c8bc7 100644
                      )
                  }
              )
+@@ -388,6 +396,28 @@ private fun AssistantLocalToolContent(
+                     )
+                 }
+             )
++            // 设备传感器：左侧总开关控制该能力，点行尾箭头进入明细页逐个放行
++            item(
++                onClick = { nav.navigate(Screen.AssistantSensors(assistant.id.toString())) },
++                headlineContent = {
++                    Text(stringResource(R.string.assistant_page_local_tools_sensors))
++                },
++                supportingContent = {
++                    Text(stringResource(R.string.assistant_page_local_tools_sensors_desc))
++                },
++                trailingContent = {
++                    Row(
++                        verticalAlignment = Alignment.CenterVertically,
++                        horizontalArrangement = Arrangement.spacedBy(4.dp),
++                    ) {
++                        Switch(
++                            checked = assistant.localTools.contains(LocalToolOption.Sensors),
++                            onCheckedChange = { toggleLocalTool(LocalToolOption.Sensors, it) }
++                        )
++                        Icon(HugeIcons.ArrowRight01, contentDescription = null)
++                    }
++                }
++            )
+         }
+     }
+ }
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt
+new file mode 100644
+index 0000000..1eaaef6
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt
+@@ -0,0 +1,175 @@
++package me.rerere.rikkahub.ui.pages.assistant.detail
++
++import android.Manifest
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.imePadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.LargeFlexibleTopAppBar
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Scaffold
++import androidx.compose.material3.Switch
++import androidx.compose.material3.Text
++import androidx.compose.material3.TopAppBarDefaults
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.input.nestedscroll.nestedScroll
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.unit.dp
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import me.rerere.rikkahub.R
++import me.rerere.rikkahub.data.ai.tools.local.SensorCatalog
++import me.rerere.rikkahub.ui.components.nav.BackButton
++import me.rerere.rikkahub.ui.components.ui.CardGroup
++import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
++import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
++import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
++import me.rerere.rikkahub.ui.theme.CustomColors
++import org.koin.androidx.compose.koinViewModel
++import org.koin.core.parameter.parametersOf
++
++/**
++ * 设备传感器明细页：**一个传感器一个 list item**，可逐个放行。
++ *
++ * 只列出本机真实存在的传感器（[SensorCatalog.available] 用 SensorManager 实测），
++ * 因此没有对应硬件的机型不会出现无效开关。
++ *
++ * 需要运行时权限的传感器（定位、计步）在打开开关时走与「日历」一致的权限流程：
++ * 先弹说明对话框 → 系统授权 → 若被永久拒绝则引导到应用设置页。
++ */
++@Composable
++fun AssistantSensorsPage(id: String) {
++    val vm: AssistantDetailVM = koinViewModel(
++        parameters = { parametersOf(id) }
++    )
++    val assistant by vm.assistant.collectAsStateWithLifecycle()
++    val context = LocalContext.current
++    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
++
++    // 本机实际存在的传感器（设备硬件不会变，remember 一次即可）
++    val entries = remember(context) { SensorCatalog.available(context) }
++
++    val locationPermission = rememberPermissionState(
++        permissions = setOf(
++            PermissionInfo(
++                permission = Manifest.permission.ACCESS_FINE_LOCATION,
++                displayName = { Text(stringResource(R.string.sensor_permission_location)) },
++                usage = { Text(stringResource(R.string.sensor_permission_location_desc)) },
++                required = true,
++            ),
++            PermissionInfo(
++                permission = Manifest.permission.ACCESS_COARSE_LOCATION,
++                displayName = { Text(stringResource(R.string.sensor_permission_location)) },
++                usage = { Text(stringResource(R.string.sensor_permission_location_desc)) },
++                required = true,
++            ),
++        )
++    )
++    PermissionManager(permissionState = locationPermission)
++
++    // 计步传感器在 Android 10+ 需要 ACTIVITY_RECOGNITION
++    val activityPermission = rememberPermissionState(
++        permissions = setOf(
++            PermissionInfo(
++                permission = Manifest.permission.ACTIVITY_RECOGNITION,
++                displayName = { Text(stringResource(R.string.sensor_permission_activity_recognition)) },
++                usage = { Text(stringResource(R.string.sensor_permission_activity_recognition_desc)) },
++                required = true,
++            ),
++        )
++    )
++    PermissionManager(permissionState = activityPermission)
++
++    Scaffold(
++        topBar = {
++            LargeFlexibleTopAppBar(
++                title = { Text(stringResource(R.string.sensor_page_title)) },
++                navigationIcon = { BackButton() },
++                scrollBehavior = scrollBehavior,
++                colors = CustomColors.topBarColors,
++            )
++        },
++        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
++        containerColor = CustomColors.topBarColors.containerColor,
++    ) { innerPadding ->
++        Column(
++            modifier = Modifier
++                .fillMaxSize()
++                .verticalScroll(rememberScrollState())
++                .padding(innerPadding)
++                .padding(horizontal = 16.dp)
++                .imePadding(),
++            verticalArrangement = Arrangement.spacedBy(8.dp),
++        ) {
++            Text(
++                text = stringResource(R.string.sensor_page_hint),
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++                modifier = Modifier.padding(vertical = 8.dp),
++            )
++
++            if (entries.isEmpty()) {
++                Text(
++                    text = stringResource(R.string.sensor_page_hint),
++                    style = MaterialTheme.typography.bodyMedium,
++                    color = MaterialTheme.colorScheme.error,
++                )
++            } else {
++                CardGroup {
++                    entries.forEach { entry ->
++                        // 权限是否已授予（读取 Compose 状态，权限变化后会自动重组）
++                        val granted = when (entry.permission) {
++                            null -> true
++                            Manifest.permission.ACCESS_FINE_LOCATION -> locationPermission.allPermissionsGranted
++                            Manifest.permission.ACTIVITY_RECOGNITION -> activityPermission.allPermissionsGranted
++                            else -> SensorCatalog.hasPermission(context, entry)
++                        }
++                        val info = buildList {
++                            entry.hardwareName?.takeIf { it.isNotBlank() }?.let { add(it) }
++                            if (!granted) add(stringResource(R.string.sensor_permission_required))
++                        }.joinToString(" · ")
++
++                        item(
++                            headlineContent = { Text(stringResource(entry.nameRes)) },
++                            // 始终提供 supporting 槽，内部按需渲染（避免条件式 composable lambda 的类型推断问题）
++                            supportingContent = {
++                                if (info.isNotEmpty()) Text(info)
++                            },
++                            trailingContent = {
++                                Switch(
++                                    checked = entry.key in assistant.enabledSensors,
++                                    onCheckedChange = { enabled ->
++                                        val needLocation = enabled &&
++                                            entry.permission == Manifest.permission.ACCESS_FINE_LOCATION &&
++                                            !locationPermission.allPermissionsGranted
++                                        val needActivity = enabled &&
++                                            entry.permission == Manifest.permission.ACTIVITY_RECOGNITION &&
++                                            !activityPermission.allPermissionsGranted
++                                        when {
++                                            needLocation -> locationPermission.requestPermissions()
++                                            needActivity -> activityPermission.requestPermissions()
++                                            else -> {
++                                                val next = if (enabled) {
++                                                    assistant.enabledSensors + entry.key
++                                                } else {
++                                                    assistant.enabledSensors - entry.key
++                                                }
++                                                vm.update(assistant.copy(enabledSensors = next))
++                                            }
++                                        }
++                                    }
++                                )
++                            }
++                        )
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
+index 6fc0a4c..ae9160b 100644
+--- a/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
+@@ -416,7 +416,9 @@ private fun ChatPageContent(
+                             setting.copy(
+                                 assistants = setting.assistants.map { assistant ->
+                                     if (assistant.id == current.id) {
+-                                        assistant.copy(enableWebSearch = mode == SearchMode.LOCAL)
++                                        // 选「内置」时也保留本地搜索作为兜底：
++                                        // 服务端若忽略内置声明，至少还有本地搜索可用。
++                                        assistant.copy(enableWebSearch = mode != SearchMode.OFF)
+                                     } else {
+                                         assistant
+                                     }
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt
 index d899540..abd5e4f 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt
@@ -33755,7 +34604,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..8ade3a7 100644
+index 8cb3cf1..fd35fab 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -33767,8 +34616,34 @@ index 8cb3cf1..8ade3a7 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
+@@ -1817,4 +1817,25 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+   <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
+   <string name="setting_update_reminder_pause_days">%1$d 天</string>
+   <string name="setting_update_reminder_resume_now">立即恢复</string>
++
++  <!-- 设备传感器 -->
++  <string name="assistant_page_local_tools_sensors">设备传感器</string>
++  <string name="assistant_page_local_tools_sensors_desc">允许 AI 获取设备上的传感器数据。</string>
++  <string name="sensor_name_accelerometer">加速度传感器</string>
++  <string name="sensor_name_magnetic_field">磁力传感器（罗盘）</string>
++  <string name="sensor_name_orientation">方向传感器</string>
++  <string name="sensor_name_gravity">重力传感器</string>
++  <string name="sensor_name_gyroscope">陀螺仪</string>
++  <string name="sensor_name_linear_acceleration">线性加速度</string>
++  <string name="sensor_name_rotation_vector">旋转矢量</string>
++  <string name="sensor_name_step_counter">计步传感器</string>
++  <string name="sensor_name_pressure">气压传感器</string>
++  <string name="sensor_name_location">定位（GPS）</string>
++  <string name="sensor_permission_location">位置信息</string>
++  <string name="sensor_permission_location_desc">读取设备位置需要此权限</string>
++  <string name="sensor_permission_activity_recognition">身体活动</string>
++  <string name="sensor_permission_activity_recognition_desc">读取计步传感器需要此权限</string>
++  <string name="sensor_page_title">设备传感器</string>
++  <string name="sensor_page_hint">只列出本机真实存在的传感器。AI 可获取整组的开关状态，而你在此页决定具体放行哪些。</string>
++  <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
+ </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..8541d38 100644
+index 47ddab2..f7432a4 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -33782,6 +34657,98 @@ index 47ddab2..8541d38 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
+@@ -1815,4 +1817,25 @@
+   <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
+   <string name="setting_update_reminder_pause_days">%1$d days</string>
+   <string name="setting_update_reminder_resume_now">Resume now</string>
++
++  <!-- 设备传感器 -->
++  <string name="assistant_page_local_tools_sensors">Device sensors</string>
++  <string name="assistant_page_local_tools_sensors_desc">Allow the AI to read sensor data from this device.</string>
++  <string name="sensor_name_accelerometer">Accelerometer</string>
++  <string name="sensor_name_magnetic_field">Magnetometer (compass)</string>
++  <string name="sensor_name_orientation">Orientation</string>
++  <string name="sensor_name_gravity">Gravity</string>
++  <string name="sensor_name_gyroscope">Gyroscope</string>
++  <string name="sensor_name_linear_acceleration">Linear acceleration</string>
++  <string name="sensor_name_rotation_vector">Rotation vector</string>
++  <string name="sensor_name_step_counter">Step counter</string>
++  <string name="sensor_name_pressure">Barometer</string>
++  <string name="sensor_name_location">Location (GPS)</string>
++  <string name="sensor_permission_location">Location</string>
++  <string name="sensor_permission_location_desc">Needed to read the device location</string>
++  <string name="sensor_permission_activity_recognition">Physical activity</string>
++  <string name="sensor_permission_activity_recognition_desc">Needed to read the step counter</string>
++  <string name="sensor_page_title">Device sensors</string>
++  <string name="sensor_page_hint">Only sensors actually present on this device are listed. The AI can enable the whole group, or only the sensors you allow here.</string>
++  <string name="sensor_permission_required">Permission required to read this sensor</string>
+ </resources>
+diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
+index afc1fd2..2ad96a8 100644
+--- a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
++++ b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
+@@ -2,7 +2,6 @@ package me.rerere.rikkahub.service
+ 
+ import kotlinx.serialization.json.JsonPrimitive
+ import me.rerere.ai.core.ReasoningLevel
+-import me.rerere.ai.provider.BuiltInTools
+ import me.rerere.ai.provider.CustomBody
+ import me.rerere.ai.provider.CustomHeader
+ import me.rerere.ai.provider.Model
+@@ -34,40 +33,35 @@ class ChatServiceTest {
+     @Test
+     fun `external web search is disabled when assistant preference is disabled`() {
+         val assistant = Assistant(enableWebSearch = false)
+-        val model = Model()
+ 
+-        assertFalse(shouldUseExternalWebSearch(assistant, model))
++        assertFalse(shouldUseExternalWebSearch(assistant))
+     }
+ 
+     @Test
+     fun `external web search is enabled when assistant preference is enabled`() {
+         val assistant = Assistant(enableWebSearch = true)
+-        val model = Model()
+ 
+-        assertTrue(shouldUseExternalWebSearch(assistant, model))
++        assertTrue(shouldUseExternalWebSearch(assistant))
+     }
+ 
++    /**
++     * 回归测试：内置搜索声明**不得**再抑制本地搜索工具。
++     *
++     * `BuiltInTools.Search` 只是声明，服务端是否真的执行取决于 provider 的 API 路径
++     * （OpenAI 兼容网关走 /chat/completions、DeepSeek 的 /responses 都会忽略它）。
++     * 旧实现「声明存在即抑制本地」会导致模型手里一个搜索工具都没有。
++     */
+     @Test
+-    fun `built-in search suppresses enabled external web search`() {
++    fun `built-in search declaration no longer suppresses external web search`() {
+         val assistant = Assistant(enableWebSearch = true)
+-        val model = Model(tools = setOf(BuiltInTools.Search))
+ 
+-        assertFalse(shouldUseExternalWebSearch(assistant, model))
++        assertTrue(shouldUseExternalWebSearch(assistant))
+     }
+ 
+     @Test
+-    fun `built-in search remains exclusive when external web search is disabled`() {
++    fun `built-in search declaration without preference stays off`() {
+         val assistant = Assistant(enableWebSearch = false)
+-        val model = Model(tools = setOf(BuiltInTools.Search))
+ 
+-        assertFalse(shouldUseExternalWebSearch(assistant, model))
+-    }
+-
+-    @Test
+-    fun `unrelated built-in tools do not suppress external web search`() {
+-        val assistant = Assistant(enableWebSearch = true)
+-        val model = Model(tools = setOf(BuiltInTools.UrlContext))
+-
+-        assertTrue(shouldUseExternalWebSearch(assistant, model))
++        assertFalse(shouldUseExternalWebSearch(assistant))
+     }
+ }
 diff --git a/ci/cross_compile_wheels.py b/ci/cross_compile_wheels.py
 deleted file mode 100644
 index 56302d2..0000000

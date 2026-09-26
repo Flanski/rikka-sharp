@@ -123,6 +123,10 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("ssh_client")
     data object SshClient : LocalToolOption()
+
+    @Serializable
+    @SerialName("sensors")
+    data object Sensors : LocalToolOption()
 }
 
 class LocalTools(

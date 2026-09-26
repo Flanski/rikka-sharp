@@ -1817,4 +1817,25 @@
   <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
   <string name="setting_update_reminder_pause_days">%1$d days</string>
   <string name="setting_update_reminder_resume_now">Resume now</string>
+
+  <!-- 设备传感器 -->
+  <string name="assistant_page_local_tools_sensors">Device sensors</string>
+  <string name="assistant_page_local_tools_sensors_desc">Allow the AI to read sensor data from this device.</string>
+  <string name="sensor_name_accelerometer">Accelerometer</string>
+  <string name="sensor_name_magnetic_field">Magnetometer (compass)</string>
+  <string name="sensor_name_orientation">Orientation</string>
+  <string name="sensor_name_gravity">Gravity</string>
+  <string name="sensor_name_gyroscope">Gyroscope</string>
+  <string name="sensor_name_linear_acceleration">Linear acceleration</string>
+  <string name="sensor_name_rotation_vector">Rotation vector</string>
+  <string name="sensor_name_step_counter">Step counter</string>
+  <string name="sensor_name_pressure">Barometer</string>
+  <string name="sensor_name_location">Location (GPS)</string>
+  <string name="sensor_permission_location">Location</string>
+  <string name="sensor_permission_location_desc">Needed to read the device location</string>
+  <string name="sensor_permission_activity_recognition">Physical activity</string>
+  <string name="sensor_permission_activity_recognition_desc">Needed to read the step counter</string>
+  <string name="sensor_page_title">Device sensors</string>
+  <string name="sensor_page_hint">Only sensors actually present on this device are listed. The AI can enable the whole group, or only the sensors you allow here.</string>
+  <string name="sensor_permission_required">Permission required to read this sensor</string>
 </resources>

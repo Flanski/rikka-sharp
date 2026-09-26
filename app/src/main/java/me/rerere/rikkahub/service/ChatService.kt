@@ -83,6 +83,7 @@ import me.rerere.rikkahub.data.ai.tools.createFetchUrlTool
 import me.rerere.rikkahub.data.ai.tools.createGithubSearchTool
 import me.rerere.rikkahub.data.ai.tools.createWikipediaSearchTool
 import me.rerere.rikkahub.data.ai.tools.createSshTools
+import me.rerere.rikkahub.data.ai.tools.local.createSensorTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.files.SkillManager
@@ -139,8 +140,22 @@ internal fun backgroundTextGenerationParams(
 
 private const val TAG = "ChatService"
 
-internal fun shouldUseExternalWebSearch(assistant: Assistant, model: Model): Boolean {
-    return assistant.enableWebSearch && BuiltInTools.Search !in model.tools
+/**
+ * 是否注册「本地搜索工具」（search_web / scrape_web）。
+ *
+ * 原实现：`assistant.enableWebSearch && BuiltInTools.Search !in model.tools`
+ * —— 即「模型勾了内置搜索就不再注册本地搜索」。
+ *
+ * 这导致了实测中的最坏情况：`BuiltInTools.Search` 只是一个**声明**，服务端是否真的执行
+ * 取决于 provider 的 API 路径；一旦服务端忽略它（例如 OpenAI 兼容网关走
+ * /chat/completions，或 DeepSeek 的 /responses 按官方文档 Ignored），模型手里既没有
+ * 服务端搜索、本地搜索又已被抑制 → 只能回答「我没有联网搜索工具」。
+ *
+ * 现改为：只要助手开启了搜索，就始终注册本地工具作为**兜底**。
+ * 服务端内置搜索可用时，模型会自行优先使用它；不可用时则由本地工具接管。
+ */
+internal fun shouldUseExternalWebSearch(assistant: Assistant): Boolean {
+    return assistant.enableWebSearch
 }
 
 data class ChatError(
@@ -1039,7 +1054,7 @@ class ChatService(
         } else {
             model.displayName
         }
-        val useExternalWebSearch = shouldUseExternalWebSearch(assistant, model)
+        val useExternalWebSearch = shouldUseExternalWebSearch(assistant)
 
         runCatching {
 
@@ -1146,6 +1161,9 @@ class ChatService(
                     add(createWikipediaSearchTool())
                     if (assistant.localTools.contains(LocalToolOption.SshClient)) {
                         addAll(createSshTools(sshHostRepository))
+                    }
+                    if (assistant.localTools.contains(LocalToolOption.Sensors)) {
+                        add(createSensorTool(context, assistant.enabledSensors))
                     }
                     if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                         addAll(createTaskTools())
@@ -1528,6 +1546,9 @@ class ChatService(
                 add(createWikipediaSearchTool())
                 if (assistant.localTools.contains(LocalToolOption.SshClient)) {
                     addAll(createSshTools(sshHostRepository))
+                }
+                if (assistant.localTools.contains(LocalToolOption.Sensors)) {
+                    add(createSensorTool(context, assistant.enabledSensors))
                 }
                 if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                     addAll(createTaskTools())
