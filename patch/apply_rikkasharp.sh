@@ -50,6 +50,17 @@ grep -q "createSshTools" app/src/main/java/me/rerere/rikkahub/service/ChatServic
   && echo "   [ok] SSH 工具已注册" || { echo "   [!!] SSH 工具未注册"; FAIL=1; }
 grep -q 'applicationId = "me.rerere.rikkasharp"' app/build.gradle.kts \
   && echo "   [ok] 应用 ID = me.rerere.rikkasharp" || { echo "   [!!] 应用 ID 未改"; FAIL=1; }
+
+# kotlinx.serialization 注解完整性审计
+# （新增 @Serializable 层级的成员时必须补注解，否则运行期 "Serializer not found" 崩溃）
+if [ -f "$PATCH_DIR/serializable_audit.py" ]; then
+  echo "   --- @Serializable 注解审计 ---"
+  if python3 "$PATCH_DIR/serializable_audit.py" app/src/main/java | sed 's/^/   /'; then
+    echo "   [ok] 序列化注解完整"
+  else
+    echo "   [!!] 存在缺失 @Serializable 的成员（运行期会崩）"; FAIL=1
+  fi
+fi
 [ -f app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt ] \
   && echo "   [ok] SSH 客户端页面存在" || { echo "   [!!] SSH 页面缺失"; FAIL=1; }
 [ "$FAIL" -ne 0 ] && { echo; echo "==> 复核未通过"; exit 1; }

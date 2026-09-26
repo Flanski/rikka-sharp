@@ -60,6 +60,7 @@ private const val TAG = "GenerationHandler"
 
 @Serializable
 sealed interface GenerationChunk {
+    @Serializable
     data class Messages(
         val messages: List<UIMessage>
     ) : GenerationChunk

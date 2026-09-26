@@ -1687,11 +1687,16 @@ class ChatService(
             putExtra(GenerationForegroundService.EXTRA_TITLE, title)
             putExtra(GenerationForegroundService.EXTRA_CONVERSATION_ID, conversationId)
         }
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-            context.startForegroundService(intent)
-        } else {
-            context.startService(intent)
-        }
+        // Android 8.0+ 起，后台启动服务会被系统拒绝（IllegalStateException /
+        // ForegroundServiceStartNotAllowedException）。此处失败只是失去「后台保活」，
+        // 不应让整个生成流程崩溃，因此吞掉异常并降级。
+        runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }.onFailure { Log.w(TAG, "startGenerationForeground blocked in background, keep-alive disabled", it) }
     }
 
     private fun updateGenerationForeground(text: String) {
@@ -1699,14 +1704,26 @@ class ChatService(
             action = GenerationForegroundService.ACTION_UPDATE
             putExtra(GenerationForegroundService.EXTRA_TEXT, text.take(200))
         }
-        context.startService(intent)
+        // 服务未处于前台时，后台调 startService 同样会被拒绝；通知没更新只是体验问题。
+        runCatching { context.startService(intent) }
+            .onFailure { Log.d(TAG, "updateGenerationForeground skipped (background restriction)") }
     }
 
     private fun stopGenerationForeground() {
         val intent = Intent(context, GenerationForegroundService::class.java).apply {
             action = GenerationForegroundService.ACTION_STOP
         }
-        context.startService(intent)
+        // 首选原路径：让服务的 ACTION_STOP 分支自己 stopForeground + stopSelf，
+        // 以确保常驻通知被正确移除。
+        // 若因后台限制被拒（这正是「切后台再返回时崩溃」的根因），
+        // 退化为 stopService —— 它不受后台启动限制，服务销毁时通知一并撤销。
+        runCatching { context.startService(intent) }
+            .onFailure {
+                Log.w(TAG, "startService(ACTION_STOP) blocked in background, falling back to stopService", it)
+                runCatching {
+                    context.stopService(Intent(context, GenerationForegroundService::class.java))
+                }
+            }
     }
 
     // endregion

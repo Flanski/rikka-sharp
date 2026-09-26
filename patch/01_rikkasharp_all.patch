@@ -12741,7 +12741,7 @@ index 1054dcd..0000000
 -⑦ Greer: 每张牌都是故事的一个角色/事件,
 -  功能含义优先于象征含义
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-index eecc60c..f80592e 100644
+index eecc60c..2835c40 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 @@ -121,6 +121,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
@@ -12763,20 +12763,29 @@ index eecc60c..f80592e 100644
  
                              entry<Screen.Debug> {
                                  DebugPage()
-@@ -705,6 +710,8 @@ sealed interface Screen : NavKey {
+@@ -705,6 +710,9 @@ sealed interface Screen : NavKey {
      @Serializable
      data object SettingSpeech : Screen
  
++    @Serializable
 +    data object SettingSsh : Screen
 +
      @Serializable
      data object SettingMcp : Screen
  
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
-index 48cefa0..eca1003 100644
+index 48cefa0..dfe9b13 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationHandler.kt
-@@ -182,53 +182,6 @@ class GenerationHandler(
+@@ -60,6 +60,7 @@ private const val TAG = "GenerationHandler"
+ 
+ @Serializable
+ sealed interface GenerationChunk {
++    @Serializable
+     data class Messages(
+         val messages: List<UIMessage>
+     ) : GenerationChunk
+@@ -182,53 +183,6 @@ class GenerationHandler(
                  appendLine("❌ Do NOT use execute_python for math (use calculator)")
                  appendLine("✅ If you need user input, use ask_user directly")
                  appendLine("</work_ethic>")
@@ -15031,7 +15040,7 @@ index 76f057e..9bb5538 100644
          GenMediaRepository(get())
      }
 diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-index 00e409b..2eeaa5a 100644
+index 00e409b..194eb5b 100644
 --- a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
 @@ -79,10 +79,12 @@ import me.rerere.rikkahub.data.ai.tools.createPythonTool
@@ -15109,6 +15118,57 @@ index 00e409b..2eeaa5a 100644
                  if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                      addAll(createTaskTools())
                  }
+@@ -1670,11 +1687,16 @@ class ChatService(
+             putExtra(GenerationForegroundService.EXTRA_TITLE, title)
+             putExtra(GenerationForegroundService.EXTRA_CONVERSATION_ID, conversationId)
+         }
+-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+-            context.startForegroundService(intent)
+-        } else {
+-            context.startService(intent)
+-        }
++        // Android 8.0+ 起，后台启动服务会被系统拒绝（IllegalStateException /
++        // ForegroundServiceStartNotAllowedException）。此处失败只是失去「后台保活」，
++        // 不应让整个生成流程崩溃，因此吞掉异常并降级。
++        runCatching {
++            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
++                context.startForegroundService(intent)
++            } else {
++                context.startService(intent)
++            }
++        }.onFailure { Log.w(TAG, "startGenerationForeground blocked in background, keep-alive disabled", it) }
+     }
+ 
+     private fun updateGenerationForeground(text: String) {
+@@ -1682,14 +1704,26 @@ class ChatService(
+             action = GenerationForegroundService.ACTION_UPDATE
+             putExtra(GenerationForegroundService.EXTRA_TEXT, text.take(200))
+         }
+-        context.startService(intent)
++        // 服务未处于前台时，后台调 startService 同样会被拒绝；通知没更新只是体验问题。
++        runCatching { context.startService(intent) }
++            .onFailure { Log.d(TAG, "updateGenerationForeground skipped (background restriction)") }
+     }
+ 
+     private fun stopGenerationForeground() {
+         val intent = Intent(context, GenerationForegroundService::class.java).apply {
+             action = GenerationForegroundService.ACTION_STOP
+         }
+-        context.startService(intent)
++        // 首选原路径：让服务的 ACTION_STOP 分支自己 stopForeground + stopSelf，
++        // 以确保常驻通知被正确移除。
++        // 若因后台限制被拒（这正是「切后台再返回时崩溃」的根因），
++        // 退化为 stopService —— 它不受后台启动限制，服务销毁时通知一并撤销。
++        runCatching { context.startService(intent) }
++            .onFailure {
++                Log.w(TAG, "startService(ACTION_STOP) blocked in background, falling back to stopService", it)
++                runCatching {
++                    context.stopService(Intent(context, GenerationForegroundService::class.java))
++                }
++            }
+     }
+ 
+     // endregion
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 index 2eeb597..67c8bc7 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt

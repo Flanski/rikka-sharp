@@ -710,6 +710,7 @@ sealed interface Screen : NavKey {
     @Serializable
     data object SettingSpeech : Screen
 
+    @Serializable
     data object SettingSsh : Screen
 
     @Serializable
