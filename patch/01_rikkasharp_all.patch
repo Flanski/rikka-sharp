@@ -15665,10 +15665,10 @@ index 0000000..6bccb56
 +    )
 +}
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
-index 5708616..83c6caa 100644
+index 5708616..4852de9 100644
 --- a/app/src/main/keepRules/rikkahub.keep
 +++ b/app/src/main/keepRules/rikkahub.keep
-@@ -28,6 +28,23 @@
+@@ -28,6 +28,35 @@
  -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
  -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
  
@@ -15684,6 +15684,18 @@ index 5708616..83c6caa 100644
 +# JSch.class 里共有 69 个这样的类名（jce 34 个、bc 9 个、jbcrypt 1 个、顶层 DH 24 个）。
 +# 逐个列举容易漏，且 JSch 以后新增算法也会漏 —— 直接整体 keep。
 +-keep class com.jcraft.jsch.** { *; }
++#
++# 但「整体 keep」会把 JSch 里**依赖可选库**的类一并保留，R8 随后会去解析它们
++# 引用的类型并因缺失而报错（:app:minifyReleaseWithR8 FAILED）。这些功能在
++# Android 上都不会被触发，故用 -dontwarn 抑制（R8 亦会在 missing_rules.txt 中建议同样规则）：
++#   com.jcraft.jsch.PageantConnector     -> com.sun.jna.*                （Windows Pageant）
++#   com.jcraft.jsch.Log4j2Logger         -> org.apache.logging.log4j.*   （log4j2 日志）
++#   com.jcraft.jsch.jgss.GSSContextKrb5  -> org.ietf.jgss.*              （Kerberos）
++#   com.jcraft.jsch.JUnixSocketFactory   -> org.newsclub.net.unix.*      （junixsocket）
++-dontwarn com.sun.jna.**
++-dontwarn org.apache.logging.log4j.**
++-dontwarn org.ietf.jgss.**
++-dontwarn org.newsclub.net.unix.**
 +
 +# BouncyCastle 内部大量使用反射/可选 API，放宽警告
 +-dontwarn org.bouncycastle.**
