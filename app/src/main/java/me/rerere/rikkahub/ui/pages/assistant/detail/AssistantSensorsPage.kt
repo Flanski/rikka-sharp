@@ -55,6 +55,11 @@ fun AssistantSensorsPage(id: String) {
     // 本机实际存在的传感器（设备硬件不会变，remember 一次即可）
     val entries = remember(context) { SensorCatalog.available(context) }
 
+    // 注意：stringResource 是 @Composable，只能在 composable 上下文求值。
+    // 下面 CardGroup 的 DSL 与 buildList/forEach 的 lambda 都**不是** composable 上下文，
+    // 所以在函数体这里先把字符串取好再传进去。
+    val permissionRequiredText = stringResource(R.string.sensor_permission_required)
+
     val locationPermission = rememberPermissionState(
         permissions = setOf(
             PermissionInfo(
@@ -132,7 +137,7 @@ fun AssistantSensorsPage(id: String) {
                         }
                         val info = buildList {
                             entry.hardwareName?.takeIf { it.isNotBlank() }?.let { add(it) }
-                            if (!granted) add(stringResource(R.string.sensor_permission_required))
+                            if (!granted) add(permissionRequiredText)
                         }.joinToString(" · ")
 
                         item(
