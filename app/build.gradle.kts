@@ -202,6 +202,8 @@ dependencies {
     // okhttp
     // SSH（SSH 客户端工具）
     implementation(libs.jsch)
+    // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它
+    implementation(libs.bcprov)
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.retrofit)

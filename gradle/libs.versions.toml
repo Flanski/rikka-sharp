@@ -67,10 +67,15 @@ sqlite-android = "-SNAPSHOT"
 termux = "0.118.0"
 diffutils = "4.17"
 jsch = "2.28.7"
+# BouncyCastle：Android 上 JSch 的 ssh-ed25519 必须走 BC 实现
+# （JSch 在 java.version < 15 时会把 keypairgen.eddsa 指向 com.jcraft.jsch.bc.*）
+# 选 1.78.1：class-file 上限 65(Java21)，在 AGP 9.x 的 D8 支持范围内
+bcprov = "1.78.1"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
+bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

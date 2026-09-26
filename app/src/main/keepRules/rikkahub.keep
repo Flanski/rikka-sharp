@@ -28,6 +28,18 @@
 -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
 -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
 
+# ── JSch 的 Ed25519 实现 ─────────────────────────────────────────
+# JSch 在类初始化时按 JavaVersion.getVersion() 选择 Ed25519 实现：
+#   >=15 → com.jcraft.jsch.jce.*   (Android 上不存在，Android 无 Java15 EdDSA API)
+#   < 15 → com.jcraft.jsch.bc.*    (Android 走这条，需要 BouncyCastle)
+# 该选择是通过**配置字符串 + 动态类加载**完成的，R8 静态分析看不到引用，
+# 因此必须显式 keep，否则会被裁掉 → 运行期 "invalid privatekey"。
+-keep class com.jcraft.jsch.bc.** { *; }
+
+# BouncyCastle 内部大量使用反射/可选 API，放宽警告
+-dontwarn org.bouncycastle.**
+-dontwarn javax.naming.**
+
 # 本地 Compose 自定义组件依赖
 -keep class androidx.compose.animation.** { *; }
 -keep class androidx.compose.runtime.** { *; }

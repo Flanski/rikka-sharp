@@ -76,8 +76,26 @@ object SshClient {
     }
 
     private fun wrap(e: Throwable): String = when (e) {
-        is JSchException -> "SSH error: ${e.message ?: e.toString()}"
+        is JSchException -> {
+            val msg = e.message ?: e.toString()
+            "SSH error: " + msg + hintFor(msg)
+        }
         else -> "${e.javaClass.simpleName}: ${e.message ?: e.toString()}"
+    }
+
+    /** 针对常见失败给出可操作的提示，避免只抛一句 JSch 原文 */
+    private fun hintFor(msg: String): String = when {
+        msg.contains("invalid privatekey", ignoreCase = true) ->
+            "\n\n提示：私钥无法解析。请确认粘贴的是**私钥**（-----BEGIN OPENSSH PRIVATE KEY----- " +
+                "或 -----BEGIN RSA PRIVATE KEY----- 开头，含 BEGIN/END 两行），而不是 .pub 公钥；" +
+                "也不要改动换行或首尾空格。若为 ssh-ed25519 私钥，需要应用内已内置 BouncyCastle 支持。"
+        msg.contains("Auth fail", ignoreCase = true) ->
+            "\n\n提示：认证失败。请核对用户名，以及该主机是否已把对应公钥写入 ~/.ssh/authorized_keys。"
+        msg.contains("Connection refused", ignoreCase = true) ->
+            "\n\n提示：端口无服务。若连本机 Termux，请确认 sshd 正在监听（termux 中执行 `sshd`）且端口正确。"
+        msg.contains("timeout", ignoreCase = true) || msg.contains("timed out", ignoreCase = true) ->
+            "\n\n提示：连接超时。确认地址与端口可达（同一局域网 / 热点）。"
+        else -> ""
     }
 
     /** 连接测试：返回 null 表示成功，否则返回错误说明 */

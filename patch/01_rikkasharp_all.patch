@@ -1251,7 +1251,7 @@ index b2990b5..e787b05 100644
 \ No newline at end of file
 +Distributed under AGPL-3.0.
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 3d07c97..e3f2b54 100644
+index 3d07c97..326af27 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -26,46 +26,10 @@ chaquopy {
@@ -1313,16 +1313,18 @@ index 3d07c97..e3f2b54 100644
          minSdk = 26
          targetSdk = 37
          versionCode = 173
-@@ -236,6 +200,8 @@ dependencies {
+@@ -236,6 +200,10 @@ dependencies {
      // jetbrains markdown parser
      implementation(libs.jetbrains.markdown)
      // okhttp
 +    // SSH（SSH 客户端工具）
 +    implementation(libs.jsch)
++    // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它
++    implementation(libs.bcprov)
      implementation(libs.okhttp)
      implementation(libs.okhttp.sse)
      implementation(libs.retrofit)
-@@ -325,26 +291,4 @@ dependencies {
+@@ -325,26 +293,4 @@ dependencies {
      debugImplementation(libs.androidx.ui.test.manifest)
  }
  
@@ -14660,10 +14662,10 @@ index 0000000..e8190a8
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ssh/SshClient.kt b/app/src/main/java/me/rerere/rikkahub/data/ssh/SshClient.kt
 new file mode 100644
-index 0000000..f077799
+index 0000000..e82bab8
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ssh/SshClient.kt
-@@ -0,0 +1,278 @@
+@@ -0,0 +1,296 @@
 +package me.rerere.rikkahub.data.ssh
 +
 +import com.jcraft.jsch.ChannelExec
@@ -14742,8 +14744,26 @@ index 0000000..f077799
 +    }
 +
 +    private fun wrap(e: Throwable): String = when (e) {
-+        is JSchException -> "SSH error: ${e.message ?: e.toString()}"
++        is JSchException -> {
++            val msg = e.message ?: e.toString()
++            "SSH error: " + msg + hintFor(msg)
++        }
 +        else -> "${e.javaClass.simpleName}: ${e.message ?: e.toString()}"
++    }
++
++    /** 针对常见失败给出可操作的提示，避免只抛一句 JSch 原文 */
++    private fun hintFor(msg: String): String = when {
++        msg.contains("invalid privatekey", ignoreCase = true) ->
++            "\n\n提示：私钥无法解析。请确认粘贴的是**私钥**（-----BEGIN OPENSSH PRIVATE KEY----- " +
++                "或 -----BEGIN RSA PRIVATE KEY----- 开头，含 BEGIN/END 两行），而不是 .pub 公钥；" +
++                "也不要改动换行或首尾空格。若为 ssh-ed25519 私钥，需要应用内已内置 BouncyCastle 支持。"
++        msg.contains("Auth fail", ignoreCase = true) ->
++            "\n\n提示：认证失败。请核对用户名，以及该主机是否已把对应公钥写入 ~/.ssh/authorized_keys。"
++        msg.contains("Connection refused", ignoreCase = true) ->
++            "\n\n提示：端口无服务。若连本机 Termux，请确认 sshd 正在监听（termux 中执行 `sshd`）且端口正确。"
++        msg.contains("timeout", ignoreCase = true) || msg.contains("timed out", ignoreCase = true) ->
++            "\n\n提示：连接超时。确认地址与端口可达（同一局域网 / 热点）。"
++        else -> ""
 +    }
 +
 +    /** 连接测试：返回 null 表示成功，否则返回错误说明 */
@@ -15644,6 +15664,29 @@ index 0000000..6bccb56
 +        },
 +    )
 +}
+diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
+index 5708616..b2f8c90 100644
+--- a/app/src/main/keepRules/rikkahub.keep
++++ b/app/src/main/keepRules/rikkahub.keep
+@@ -28,6 +28,18 @@
+ -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
+ -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
+ 
++# ── JSch 的 Ed25519 实现 ─────────────────────────────────────────
++# JSch 在类初始化时按 JavaVersion.getVersion() 选择 Ed25519 实现：
++#   >=15 → com.jcraft.jsch.jce.*   (Android 上不存在，Android 无 Java15 EdDSA API)
++#   < 15 → com.jcraft.jsch.bc.*    (Android 走这条，需要 BouncyCastle)
++# 该选择是通过**配置字符串 + 动态类加载**完成的，R8 静态分析看不到引用，
++# 因此必须显式 keep，否则会被裁掉 → 运行期 "invalid privatekey"。
++-keep class com.jcraft.jsch.bc.** { *; }
++
++# BouncyCastle 内部大量使用反射/可选 API，放宽警告
++-dontwarn org.bouncycastle.**
++-dontwarn javax.naming.**
++
+ # 本地 Compose 自定义组件依赖
+ -keep class androidx.compose.animation.** { *; }
+ -keep class androidx.compose.runtime.** { *; }
 diff --git a/app/src/main/python/bazi_china/__init__.py b/app/src/main/python/bazi_china/__init__.py
 deleted file mode 100644
 index 98e608a..0000000
@@ -35866,18 +35909,23 @@ index 8aa7cb7..0000000
 -    f.writelines(result)
 -print("Patched timezonefinder pyproject.toml: removed numpy/h3/cffi")
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index d597c01..c68633b 100644
+index d597c01..a80e498 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -66,9 +66,11 @@ slf4j = "2.0.18"
+@@ -66,9 +66,16 @@ slf4j = "2.0.18"
  sqlite-android = "-SNAPSHOT"
  termux = "0.118.0"
  diffutils = "4.17"
 +jsch = "2.28.7"
++# BouncyCastle：Android 上 JSch 的 ssh-ed25519 必须走 BC 实现
++# （JSch 在 java.version < 15 时会把 keypairgen.eddsa 指向 com.jcraft.jsch.bc.*）
++# 选 1.78.1：class-file 上限 65(Java21)，在 AGP 9.x 的 D8 支持范围内
++bcprov = "1.78.1"
  
  [libraries]
  android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 +jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
++bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
  kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
  kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
  androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
