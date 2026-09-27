@@ -1,0 +1,127 @@
+# 把上游 HF Space 的 VITS 角色模型（.pth）转换为 sherpa-onnx 可直接使用的 .onnx。
+#
+# ── 为什么需要这个 workflow ──
+# 上游数据集（HF Space `csukuangfj/vits-models`）共 38 个角色，但官方只把其中
+# 13 个转成了 onnx 并发布。剩下的 25 个（含米哈游的神里绫华/纳西妲/卡芙卡/黑塔）
+# 只有 .pth 原始权重，需自行转换。
+#
+# 转换脚本依赖 torch + onnx + pypinyin + pyopenjtalk 等。
+# **Termux 上装 onnx 失败**（实测两条路径都不通）：
+#   · 默认安装：依赖 ml_dtypes → 需从源码编译 numpy → `cpowf` 未声明 → 编译失败
+#   · --no-build-isolation：`Cannot import scikit_build_core.build`
+# 因此改用本 workflow 在 GitHub runner（x86_64 Linux）上转换 —— 环境完整，无需本地编译。
+#
+# ── 用法 ──
+# Actions → 本 workflow → Run workflow → 填角色名（如 kafka / nahida-jp / herta / ayaka-jp）
+# 产出 artifact：onnx-<name>（约 122MB）
+#
+# ── 备注 ──
+# · 所有 38 个角色共用同一份 `config/config.json`，其中
+#   `text_cleaners = ["zh_ja_mixture_cleaners"]`（中英日混合），
+#   `n_speakers = 804` —— 这解释了为何每个模型都是 804 说话人。
+# · 转换脚本 `tools/vits-zh-hf-models.py` 来自上游模型发行包（vits-zh-hf-*.tar.bz2），
+#   此处原样收录以便复现。
+
+name: Convert VITS (vits-zh-hf)
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: '上游角色名（kafka / nahida-jp / herta / ayaka-jp / …）'
+        required: true
+        default: 'kafka'
+      publish_release:
+        description: '同时发布为 Release 资产（便于 App 直接下载）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # torch 选 2.2.0：它的 torch.load 默认 weights_only=False，
+      # 能直接加载含 optimizer 的旧 ckpt；torch 2.6+ 默认 True 会报错。
+      - name: Install dependencies
+        run: |
+          set -x
+          python -m pip install --upgrade pip
+          pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install "numpy<2" onnx pypinyin unidecode jieba cn2an numba
+          pip install jamo || echo "jamo 跳过"
+          pip install pyopenjtalk-prebuilt || pip install pyopenjtalk || echo "pyopenjtalk 跳过"
+          python -c "import torch, onnx, pypinyin, numba; print('torch', torch.__version__); print('onnx', onnx.__version__)"
+
+      # GIT_LFS_SKIP_SMUDGE：避免 clone 时去拉 38 个 159MB 的 .pth（我们只需要代码 + info.json）
+      - name: Fetch upstream space code
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          git clone --depth 1 https://huggingface.co/spaces/csukuangfj/vits-models
+          ls vits-models/
+          test -f vits-models/config/config.json
+          test -f vits-models/pretrained_models/info.json
+
+      - name: Download .pth
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          set -e
+          mkdir -p "vits-models/pretrained_models/$NAME"
+          URL="https://huggingface.co/spaces/csukuangfj/vits-models/resolve/main/pretrained_models/$NAME/$NAME.pth"
+          curl -L --retry 3 --retry-all-errors -o "vits-models/pretrained_models/$NAME/$NAME.pth" "$URL"
+          ls -la "vits-models/pretrained_models/$NAME/"
+          # 校验确实是权重而不是 LFS 指针（指针只有 ~130 字节）
+          SIZE=$(stat -c%s "vits-models/pretrained_models/$NAME/$NAME.pth")
+          echo "pth size = $SIZE"
+          [ "$SIZE" -gt 10000000 ] || { echo "::error::.pth 大小异常（可能是 LFS 指针）"; exit 1; }
+
+      - name: Convert to ONNX
+        env:
+          NAME: ${{ inputs.name }}
+        run: |
+          set -x
+          # 脚本要求 cwd 为工作区根（内部 sys.path.insert(0, "./vits-models")）
+          python tools/vits-zh-hf-models.py
+          ls -la *.onnx
+          SIZE=$(stat -c%s "$NAME.onnx")
+          echo "onnx size = $SIZE"
+          [ "$SIZE" -gt 10000000 ] || { echo "::error::onnx 大小异常"; exit 1; }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onnx-${{ inputs.name }}
+          path: ${{ inputs.name }}.onnx
+          retention-days: 30
+
+      - name: Publish as release asset
+        if: ${{ inputs.publish_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NAME: ${{ inputs.name }}
+        run: |
+          set -e
+          TAG="tts-models-v1"
+          # Release 不存在则创建
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "VITS extra models" \
+              --notes "上游未发布的 vits-zh-hf 角色模型（自 .pth 转换）。App 可直接从此处下载。"
+
+          # 若资产已存在则先删除，保证可重复运行
+          gh release delete-asset "$TAG" "${NAME}.onnx" -y 2>/dev/null || true
+          gh release upload "$TAG" "${NAME}.onnx"
+          echo "已发布：https://github.com/${{ github.repository }}/releases/download/$TAG/${NAME}.onnx"
