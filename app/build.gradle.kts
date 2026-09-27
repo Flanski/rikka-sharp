@@ -200,6 +200,9 @@ dependencies {
     // jetbrains markdown parser
     implementation(libs.jetbrains.markdown)
     // okhttp
+    // commons-compress：下载工具需要解压 .tar.gz 仓库快照
+    // （speech 模块也有这个依赖，但那是 implementation 作用域，app 模块看不到，必须自己声明）
+    implementation(libs.commons.compress)
     // SSH（SSH 客户端工具）
     implementation(libs.jsch)
     // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它

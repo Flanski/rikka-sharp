@@ -420,6 +420,21 @@ private fun AssistantLocalToolContent(
                     }
                 }
             )
+            // 下载类工具：HTTP 下载 / 仓库快照下载，支持同步与异步两种模式
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_download))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_download_desc))
+                },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.DownloadTools),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.DownloadTools, it) }
+                    )
+                }
+            )
         }
 
         // ────────── 工具授权 ──────────

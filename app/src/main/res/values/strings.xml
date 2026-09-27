@@ -1911,4 +1911,7 @@
   <string name="notification_tool_approval_allow">Allow</string>
   <string name="notification_tool_approval_deny">Deny</string>
   <string name="notification_tool_approval_denied_reason">Denied from notification</string>
+
+  <string name="assistant_page_local_tools_download">Download tools</string>
+  <string name="assistant_page_local_tools_download_desc">HTTP downloads and repository snapshots, with sync or background (async) modes</string>
 </resources>

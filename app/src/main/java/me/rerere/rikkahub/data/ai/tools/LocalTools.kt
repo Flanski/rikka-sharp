@@ -127,6 +127,16 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("sensors")
     data object Sensors : LocalToolOption()
+
+    /**
+     * 下载类工具：http_download / repo_download / download_status / download_cancel。
+     *
+     * 与其他工具的差别是需要「异步」能力（发起后可在别处查询进度），
+     * 因此配套一个进程级任务表（见 DownloadTaskRegistry）。
+     */
+    @Serializable
+    @SerialName("download_tools")
+    data object DownloadTools : LocalToolOption()
 }
 
 class LocalTools(
@@ -465,6 +475,9 @@ class LocalTools(
         if (options.contains(LocalToolOption.Calendar)) {
             tools.add(calendarQueryTool)
             tools.add(calendarCreateTool)
+        }
+        if (options.contains(LocalToolOption.DownloadTools)) {
+            tools.addAll(createDownloadTools(context))
         }
         return tools
     }

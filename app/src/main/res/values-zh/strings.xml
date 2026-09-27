@@ -1911,4 +1911,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="notification_tool_approval_allow">同意</string>
   <string name="notification_tool_approval_deny">拒绝</string>
   <string name="notification_tool_approval_denied_reason">用户从通知中拒绝</string>
+
+  <string name="assistant_page_local_tools_download">下载工具</string>
+  <string name="assistant_page_local_tools_download_desc">HTTP 下载与仓库快照下载，支持同步或后台（异步）两种模式</string>
 </resources>
