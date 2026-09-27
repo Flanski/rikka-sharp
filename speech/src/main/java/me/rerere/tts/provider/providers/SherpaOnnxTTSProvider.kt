@@ -10,6 +10,8 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -77,7 +79,12 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
         // JNI 调用是阻塞的，放到 IO 线程；回调里用 trySend 逐步推给消费者
         withContext(Dispatchers.IO) {
           SherpaTtsCache.withNative {
+            // native 崩溃（SIGSEGV）不会被 try-catch 捕获，因此逐步埋点，
+            // 崩溃后可据此判断"执行到哪一步"。日志写入外部私有目录，
+            // 位置：Android/data/me.rerere.rikkasharp/files/tts_diag.log
+            diag(context, "TTS", "准备加载模型 dir=${dir.absolutePath} threads=${providerSetting.numThreads}")
             val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
+            diag(context, "TTS", "模型加载完成")
             sampleRate = tts.sampleRate()
             numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
             // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
@@ -99,6 +106,7 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             )
             var emitted = 0
             var stopped = false
+            diag(context, "TTS", "开始合成 text=${request.text.take(30)} sid=$sid speed=${providerSetting.speed} silence=${providerSetting.silenceScale}")
 
             tts.generateWithConfigAndCallback(request.text, gen) { samples ->
                 if (stopped) return@generateWithConfigAndCallback 1
@@ -127,6 +135,7 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             }
 
             Log.d(TAG, "generateSpeech: emitted=$emitted chunks, sampleRate=$sampleRate, sid=$sid")
+            diag(context, "TTS", "合成结束 emitted=$emitted sampleRate=$sampleRate stopped=$stopped")
             trySend(
                 AudioChunk(
                     data = ByteArray(0),
@@ -137,6 +146,31 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
                 )
             )
           }
+        }
+    // channelFlow 默认容量是 RENDEZVOUS（0），此时 trySend 在消费者尚未就绪
+    // 或消费稍慢时会**直接失败**；而 native 回调是同步的、不能挂起等待，
+    // 一旦失败我的实现就会停止生成 → 结果是空/不完整音频。
+    // 用无界缓冲吸收这种速度差（音频总量有限，不会无限增长）。
+    }.buffer(Channel.UNLIMITED)
+
+    /**
+     * 写诊断日志到外部私有目录 `Android/data/<pkg>/files/tts_diag.log`。
+     *
+     * 为什么不复用 app 模块的 CrashHandler：依赖方向是 **app → speech**，
+     * speech 不能反向引用 app 的类（会编译失败）。因此这里自己写一份。
+     *
+     * 为什么需要它：native 崩溃（SIGSEGV）不会被 Kotlin 的 try-catch 捕获，
+     * 只有在关键步骤落盘，崩溃后才能判断"执行到哪一步"。
+     */
+    private fun diag(context: Context, tag: String, message: String) {
+        runCatching {
+            val dir = context.getExternalFilesDir(null) ?: return@runCatching
+            val f = File(dir, "tts_diag.log")
+            // 避免无限增长
+            if (f.exists() && f.length() > 512 * 1024) f.delete()
+            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
+                .format(java.util.Date())
+            f.appendText("[$ts][$tag] $message\n")
         }
     }
 

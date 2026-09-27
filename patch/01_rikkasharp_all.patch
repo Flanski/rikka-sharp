@@ -17047,6 +17047,65 @@ index b5c48c5..089fa8d 100644
 +        }
 +    }
 +}
+diff --git a/app/src/main/java/me/rerere/rikkahub/utils/CrashHandler.kt b/app/src/main/java/me/rerere/rikkahub/utils/CrashHandler.kt
+index 8e9bd52..1754265 100644
+--- a/app/src/main/java/me/rerere/rikkahub/utils/CrashHandler.kt
++++ b/app/src/main/java/me/rerere/rikkahub/utils/CrashHandler.kt
+@@ -38,16 +38,54 @@ object CrashHandler {
+             .getString(KEY_STACKTRACE, null)
+     }
+ 
++    /**
++     * 写入一条诊断日志到外部私有目录（`tts_diag.log`）。
++     *
++     * 用途：native 崩溃（SIGSEGV）不会被 uncaught handler 捕获，
++     * 因此需要在崩溃前的关键步骤埋点，才能定位到"执行到哪一步挂掉"。
++     * 与 [dumpToExternal] 同目录，便于一并读取。
++     */
++    fun diag(context: Context, tag: String, message: String) {
++        runCatching {
++            val dir = context.getExternalFilesDir(null) ?: return@runCatching
++            val f = java.io.File(dir, "tts_diag.log")
++            if (f.exists() && f.length() > 512 * 1024) f.delete()
++            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
++                .format(java.util.Date())
++            f.appendText("[$ts][$tag] $message\n")
++        }
++    }
++
+     fun clearCrashed(context: Context) {
+         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+             .edit { remove(KEY_CRASHED).remove(KEY_STACKTRACE) }
+     }
+ 
++    /**
++     * 崩溃日志同时写入 **外部私有目录**（`Android/data/<pkg>/files/`）。
++     *
++     * 原因：SharedPreferences 位于 App 私有目录，adb/终端工具无法读取，
++     * 排查问题时拿不到堆栈。外部私有目录**无需任何权限**即可写入，
++     * 且在同一设备上其它终端工具可以读取，便于定位问题。
++     */
++    private fun dumpToExternal(context: Context, text: String) {
++        runCatching {
++            val dir = context.getExternalFilesDir(null) ?: return@runCatching
++            val f = java.io.File(dir, "crash.log")
++            // 保留最近 3 次崩溃，避免无限增长
++            if (f.exists() && f.length() > 256 * 1024) f.delete()
++            f.appendText("\n===== ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} =====\n")
++            f.appendText(text)
++            f.appendText("\n")
++        }
++    }
++
+     private fun markCrashed(context: Context, thread: Thread, throwable: Throwable) {
+         val stackTrace = buildString {
+             appendLine("Thread: ${thread.name}")
+             appendLine(throwable.stackTraceToString())
+         }.take(MAX_STACKTRACE_LENGTH)
++        dumpToExternal(context, stackTrace)
+         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+             .edit(commit = true) {
+                 putBoolean(KEY_CRASHED, true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
 index 5708616..4852de9 100644
 --- a/app/src/main/keepRules/rikkahub.keep
@@ -38053,10 +38112,10 @@ index 18a0061..a48c7da 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..0791266
+index 0000000..2234113
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,296 @@
+@@ -0,0 +1,330 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -38069,6 +38128,8 @@ index 0000000..0791266
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.flow.Flow
 +import kotlinx.coroutines.flow.channelFlow
++import kotlinx.coroutines.channels.Channel
++import kotlinx.coroutines.flow.buffer
 +import kotlinx.coroutines.sync.Mutex
 +import kotlinx.coroutines.sync.withLock
 +import kotlinx.coroutines.withContext
@@ -38136,7 +38197,12 @@ index 0000000..0791266
 +        // JNI 调用是阻塞的，放到 IO 线程；回调里用 trySend 逐步推给消费者
 +        withContext(Dispatchers.IO) {
 +          SherpaTtsCache.withNative {
++            // native 崩溃（SIGSEGV）不会被 try-catch 捕获，因此逐步埋点，
++            // 崩溃后可据此判断"执行到哪一步"。日志写入外部私有目录，
++            // 位置：Android/data/me.rerere.rikkasharp/files/tts_diag.log
++            diag(context, "TTS", "准备加载模型 dir=${dir.absolutePath} threads=${providerSetting.numThreads}")
 +            val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
++            diag(context, "TTS", "模型加载完成")
 +            sampleRate = tts.sampleRate()
 +            numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
 +            // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
@@ -38158,6 +38224,7 @@ index 0000000..0791266
 +            )
 +            var emitted = 0
 +            var stopped = false
++            diag(context, "TTS", "开始合成 text=${request.text.take(30)} sid=$sid speed=${providerSetting.speed} silence=${providerSetting.silenceScale}")
 +
 +            tts.generateWithConfigAndCallback(request.text, gen) { samples ->
 +                if (stopped) return@generateWithConfigAndCallback 1
@@ -38186,6 +38253,7 @@ index 0000000..0791266
 +            }
 +
 +            Log.d(TAG, "generateSpeech: emitted=$emitted chunks, sampleRate=$sampleRate, sid=$sid")
++            diag(context, "TTS", "合成结束 emitted=$emitted sampleRate=$sampleRate stopped=$stopped")
 +            trySend(
 +                AudioChunk(
 +                    data = ByteArray(0),
@@ -38196,6 +38264,31 @@ index 0000000..0791266
 +                )
 +            )
 +          }
++        }
++    // channelFlow 默认容量是 RENDEZVOUS（0），此时 trySend 在消费者尚未就绪
++    // 或消费稍慢时会**直接失败**；而 native 回调是同步的、不能挂起等待，
++    // 一旦失败我的实现就会停止生成 → 结果是空/不完整音频。
++    // 用无界缓冲吸收这种速度差（音频总量有限，不会无限增长）。
++    }.buffer(Channel.UNLIMITED)
++
++    /**
++     * 写诊断日志到外部私有目录 `Android/data/<pkg>/files/tts_diag.log`。
++     *
++     * 为什么不复用 app 模块的 CrashHandler：依赖方向是 **app → speech**，
++     * speech 不能反向引用 app 的类（会编译失败）。因此这里自己写一份。
++     *
++     * 为什么需要它：native 崩溃（SIGSEGV）不会被 Kotlin 的 try-catch 捕获，
++     * 只有在关键步骤落盘，崩溃后才能判断"执行到哪一步"。
++     */
++    private fun diag(context: Context, tag: String, message: String) {
++        runCatching {
++            val dir = context.getExternalFilesDir(null) ?: return@runCatching
++            val f = File(dir, "tts_diag.log")
++            // 避免无限增长
++            if (f.exists() && f.length() > 512 * 1024) f.delete()
++            val ts = java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US)
++                .format(java.util.Date())
++            f.appendText("[$ts][$tag] $message\n")
 +        }
 +    }
 +
