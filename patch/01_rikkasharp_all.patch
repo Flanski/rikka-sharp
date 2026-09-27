@@ -1,5 +1,5 @@
 diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
-index 81b0ce0..b77baa6 100644
+index 81b0ce0..07840b2 100644
 --- a/.github/workflows/build.yml
 +++ b/.github/workflows/build.yml
 @@ -2,7 +2,7 @@ name: Build APK
@@ -498,7 +498,7 @@ index 81b0ce0..b77baa6 100644
        - name: Write signing config
          run: |
            cat > local.properties << 'EOF'
-@@ -509,36 +29,9 @@ jobs:
+@@ -509,36 +29,15 @@ jobs:
            keyAlias=androiddebugkey
            keyPassword=android
            EOF
@@ -521,13 +521,18 @@ index 81b0ce0..b77baa6 100644
 -          tar czf ${GITHUB_WORKSPACE}/app/offline_pkgs/pyjhora-4.8.7.tar.gz .
 -          echo "✅ pyjhora patched: lang resources embedded in utils.py"
 -      - name: Patch flatlib sweNextTransit (pyswisseph 2.10.x geopos API)
--        run: |
++      - name: Fetch sherpa-onnx native library (local TTS)
+         run: |
 -          cd /tmp
 -          unzip -q ${GITHUB_WORKSPACE}/app/offline_pkgs/flatlib-0.2.3-py3-none-any.whl -d flatlib-0.2.3
 -          python3 ${GITHUB_WORKSPACE}/ci/patch_flatlib_swetransit.py flatlib-0.2.3
 -          cd flatlib-0.2.3
 -          zip -qr ${GITHUB_WORKSPACE}/app/offline_pkgs/flatlib-0.2.3-py3-none-any.whl .
 -          echo "✅ flatlib patched: sweNextTransit uses geopos tuple"
++          # 23MB 的预编译 .so 不入库（见 .gitignore），构建前按需下载。
++          # 版本与 speech/.../com/k2fsa/sherpa/onnx/Tts.kt 必须一致，
++          # 否则 JNI 符号不匹配会在运行期抛 UnsatisfiedLinkError。
++          bash patch/fetch_sherpa_native.sh "$PWD"
        - name: Build
          run: |
            chmod +x gradlew
@@ -705,6 +710,18 @@ index 6d91118..0000000
 -
 -            > ⚠️ 开发版本，可能不稳定，仅供测试。
 -          files: app/build/outputs/apk/release/*.apk
+diff --git a/.gitignore b/.gitignore
+index ecf6ada..72ccd27 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -21,3 +21,7 @@ stelli/
+ *验证报告*
+ *_verification_report.*
+ verification_report.*
++
++# sherpa-onnx 预编译 native 库（23MB，不入库）
++# 由 .github/workflows/build.yml 与 patch/apply_rikkasharp.sh 在构建前自动下载
++speech/src/main/jniLibs/
 diff --git a/README.md b/README.md
 index b148f0e..f8a1e98 100644
 --- a/README.md
@@ -14982,6 +14999,27 @@ index cb055d0..b6645db 100644
      ProviderSetting.Claude(
          id = Uuid.parse("b4deabea-20fb-4101-a74c-65679c7e4754"),
          name = "MiniMax",
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt b/app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt
+index 8439d28..e973d87 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/datastore/PreferencesStore.kt
+@@ -846,7 +846,16 @@ internal val DEFAULT_ASSISTANTS = listOf(
+ )
+ 
+ val DEFAULT_SYSTEM_TTS_ID = Uuid.parse("026a01a2-c3a0-4fd5-8075-80e03bdef200")
++val DEFAULT_SHERPA_TTS_ID = Uuid.parse("3b7c91e4-2a58-4d6f-9c31-8e5a0d2f7b64")
+ private val DEFAULT_TTS_PROVIDERS = listOf(
++    // 本地神经网络语音（sherpa-onnx + VITS）置于首位 —— 即默认 TTS。
++    // 相比系统 TTS 只能调语速/音高，它可切换多说话人音色并调节韵律。
++    // 注意：需先下载模型（设置 → 文字转语音 → 本地神经网络语音），
++    // 模型缺失时该 provider 会抛出带指引的错误，可切回 System TTS。
++    TTSProviderSetting.SherpaOnnx(
++        id = DEFAULT_SHERPA_TTS_ID,
++        name = "",
++    ),
+     TTSProviderSetting.SystemTTS(
+         id = DEFAULT_SYSTEM_TTS_ID,
+         name = "",
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 index 422028c..8a767ad 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
@@ -16197,6 +16235,18 @@ index d899540..abd5e4f 100644
                  }
              }
  
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSpeechPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSpeechPage.kt
+index 80e50b6..647aaf6 100644
+--- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSpeechPage.kt
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSpeechPage.kt
+@@ -767,6 +767,7 @@ private fun TTSProviderItem(
+                             is TTSProviderSetting.Step -> "Step"
+                             is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
+                             is TTSProviderSetting.FishAudio -> "Fish Audio"
++                            is TTSProviderSetting.SherpaOnnx -> stringResource(R.string.setting_tts_page_provider_sherpa)
+                         },
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt
 new file mode 100644
 index 0000000..6bccb56
@@ -16619,6 +16669,163 @@ index 0000000..6bccb56
 +            }
 +        },
 +    )
++}
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
+index b5c48c5..1317a7f 100644
+--- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
+@@ -48,6 +48,7 @@ fun TTSProviderConfigure(
+                     is TTSProviderSetting.Step -> "Step"
+                     is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
+                     is TTSProviderSetting.FishAudio -> "Fish Audio"
++                    is TTSProviderSetting.SherpaOnnx -> "本地神经网络语音"
+                 },
+                 options = providers,
+                 readOnly = true,
+@@ -56,6 +57,7 @@ fun TTSProviderConfigure(
+                     when (providerClass) {
+                         TTSProviderSetting.OpenAI::class -> "OpenAI"
+                         TTSProviderSetting.Gemini::class -> "Gemini"
++                        TTSProviderSetting.SherpaOnnx::class -> "本地神经网络语音"
+                         TTSProviderSetting.SystemTTS::class -> "System TTS"
+                         TTSProviderSetting.MiniMax::class -> "MiniMax"
+                         TTSProviderSetting.Qwen::class -> "Qwen"
+@@ -80,6 +82,7 @@ fun TTSProviderConfigure(
+                             name = "Gemini TTS"
+                         )
+ 
++                        TTSProviderSetting.SherpaOnnx::class -> TTSProviderSetting.SherpaOnnx()
+                         TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
+                             id = setting.id,
+                             name = "System TTS"
+@@ -160,6 +163,7 @@ fun TTSProviderConfigure(
+             is TTSProviderSetting.ElevenLabs -> ElevenLabsTTSConfiguration(setting, onValueChange)
+             is TTSProviderSetting.FishAudio -> FishAudioTTSConfiguration(setting, onValueChange)
+             is TTSProviderSetting.Step -> StepTTSConfiguration(setting, onValueChange)
++            is TTSProviderSetting.SherpaOnnx -> SherpaOnnxTTSConfiguration(setting, onValueChange)
+         }
+     }
+ }
+@@ -1201,3 +1205,120 @@ private fun StepTTSConfiguration(
+         )
+     }
+ }
++
++/**
++ * 本地神经网络语音（sherpa-onnx + VITS）的配置界面。
++ *
++ * 说明：音色数由所用模型决定（vits-zh-hf-theresa / eula 为 804，
++ * vits-icefall-zh-aishell3 为 174），无法在编译期得知，因此这里用数字输入，
++ * 由用户按所用模型填写；越界值在朗读时会被自动夹紧到合法范围。
++ */
++@Composable
++private fun SherpaOnnxTTSConfiguration(
++    setting: TTSProviderSetting.SherpaOnnx,
++    onValueChange: (TTSProviderSetting) -> Unit
++) {
++    // 模型目录
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_desc)) }
++    ) {
++        OutlinedTextField(
++            value = setting.modelDir,
++            onValueChange = { onValueChange(setting.copy(modelDir = it)) },
++            modifier = Modifier.fillMaxWidth(),
++            singleLine = true,
++            placeholder = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_hint)) },
++        )
++    }
++
++    // 音色序号
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.speakerId.toFloat(),
++            onValueChange = { v ->
++                onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0)))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
++        )
++    }
++
++    // 语速
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
++        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.speed,
++            onValueChange = { v ->
++                if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_speech_rate),
++        )
++    }
++
++    // 韵律随机性（语气起伏）
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.noiseScale,
++            onValueChange = { v ->
++                if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
++        )
++    }
++
++    // 时长随机性
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.noiseScaleW,
++            onValueChange = { v ->
++                if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
++        )
++    }
++
++    // 句间停顿
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.silenceScale,
++            onValueChange = { v ->
++                if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_silence),
++        )
++    }
++
++    // 推理线程数
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.numThreads.toFloat(),
++            onValueChange = { v ->
++                onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8)))
++            },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_threads),
++        )
++    }
 +}
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
 index 5708616..4852de9 100644
@@ -34711,7 +34918,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..c9d2bb7 100644
+index 8cb3cf1..cf96d36 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -34723,7 +34930,7 @@ index 8cb3cf1..c9d2bb7 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,27 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,44 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -34750,9 +34957,26 @@ index 8cb3cf1..c9d2bb7 100644
 +  <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
 +
 +  <string name="search_picker_model_need_responses_api">需先在提供商设置中启用「Responses API」。点击前往配置。</string>
++
++  <string name="setting_tts_page_provider_sherpa">本地神经网络语音</string>
++
++  <!-- 本地神经网络语音（sherpa-onnx） -->
++  <string name="setting_tts_page_sherpa_model_dir">模型目录</string>
++  <string name="setting_tts_page_sherpa_model_dir_desc">包含 model.onnx / lexicon.txt / tokens.txt 的文件夹。留空则使用应用私有目录下的 tts_models。</string>
++  <string name="setting_tts_page_sherpa_model_dir_hint">留空使用默认位置</string>
++  <string name="setting_tts_page_sherpa_speaker">音色序号</string>
++  <string name="setting_tts_page_sherpa_speaker_desc">选择使用哪个说话人。取决于模型：theresa/eula 有 804 个（0-803），aishell3 有 174 个。</string>
++  <string name="setting_tts_page_sherpa_noise_scale">韵律随机性</string>
++  <string name="setting_tts_page_sherpa_noise_scale_desc">数值越大语调起伏越丰富、越不机械（默认 0.667）。</string>
++  <string name="setting_tts_page_sherpa_noise_scale_w">时长随机性</string>
++  <string name="setting_tts_page_sherpa_noise_scale_w_desc">时长预测的随机程度（默认 0.8）。</string>
++  <string name="setting_tts_page_sherpa_silence">句间停顿</string>
++  <string name="setting_tts_page_sherpa_silence_desc">句子之间插入的静音比例（默认 0.2）。</string>
++  <string name="setting_tts_page_sherpa_threads">推理线程数</string>
++  <string name="setting_tts_page_sherpa_threads_desc">用于合成的 CPU 线程数，手机上过多反而变慢（默认 2）。</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..64fbd4f 100644
+index 47ddab2..ba45aec 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -34766,7 +34990,7 @@ index 47ddab2..64fbd4f 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,27 @@
+@@ -1815,4 +1817,44 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -34793,6 +35017,23 @@ index 47ddab2..64fbd4f 100644
 +  <string name="sensor_permission_required">Permission required to read this sensor</string>
 +
 +  <string name="search_picker_model_need_responses_api">This needs "Responses API" enabled in the provider settings. Tap to configure.</string>
++
++  <string name="setting_tts_page_provider_sherpa">Local Neural TTS</string>
++
++  <!-- 本地神经网络语音（sherpa-onnx） -->
++  <string name="setting_tts_page_sherpa_model_dir">Model directory</string>
++  <string name="setting_tts_page_sherpa_model_dir_desc">Folder containing model.onnx / lexicon.txt / tokens.txt. Leave empty to use the app-private tts_models folder.</string>
++  <string name="setting_tts_page_sherpa_model_dir_hint">Leave empty for default location</string>
++  <string name="setting_tts_page_sherpa_speaker">Voice index</string>
++  <string name="setting_tts_page_sherpa_speaker_desc">Which speaker to use. Depends on the model: theresa/eula have 804 (0-803), aishell3 has 174.</string>
++  <string name="setting_tts_page_sherpa_noise_scale">Prosody randomness</string>
++  <string name="setting_tts_page_sherpa_noise_scale_desc">Higher values make intonation more varied and less robotic (default 0.667).</string>
++  <string name="setting_tts_page_sherpa_noise_scale_w">Duration randomness</string>
++  <string name="setting_tts_page_sherpa_noise_scale_w_desc">Randomness of duration prediction (default 0.8).</string>
++  <string name="setting_tts_page_sherpa_silence">Pause between sentences</string>
++  <string name="setting_tts_page_sherpa_silence_desc">Silence inserted between sentences (default 0.2).</string>
++  <string name="setting_tts_page_sherpa_threads">Inference threads</string>
++  <string name="setting_tts_page_sherpa_threads_desc">CPU threads used for synthesis. Too many can be slower on phones (default 2).</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -37024,3 +37265,769 @@ index d597c01..a80e498 100644
  kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
  kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
  androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
+diff --git a/speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt b/speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
+new file mode 100644
+index 0000000..d5dd08a
+--- /dev/null
++++ b/speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
+@@ -0,0 +1,416 @@
++// Copyright (c)  2023  Xiaomi Corporation
++package com.k2fsa.sherpa.onnx
++
++import android.content.res.AssetManager
++
++data class OfflineTtsVitsModelConfig(
++    var model: String = "",
++    var lexicon: String = "",
++    var tokens: String = "",
++    var dataDir: String = "",
++    var dictDir: String = "", // unused
++    var noiseScale: Float = 0.667f,
++    var noiseScaleW: Float = 0.8f,
++    var lengthScale: Float = 1.0f,
++)
++
++data class OfflineTtsMatchaModelConfig(
++    var acousticModel: String = "",
++    var vocoder: String = "",
++    var lexicon: String = "",
++    var tokens: String = "",
++    var dataDir: String = "",
++    var dictDir: String = "", // unused
++    var noiseScale: Float = 1.0f,
++    var lengthScale: Float = 1.0f,
++)
++
++data class OfflineTtsKokoroModelConfig(
++    var model: String = "",
++    var voices: String = "",
++    var tokens: String = "",
++    var dataDir: String = "",
++    var lexicon: String = "",
++    var lang: String = "",
++    var dictDir: String = "", // unused
++    var lengthScale: Float = 1.0f,
++)
++
++data class OfflineTtsZipVoiceModelConfig(
++    var tokens: String = "",
++    var encoder: String = "",
++    var decoder: String = "",
++    var vocoder: String = "",
++    var dataDir: String = "",
++    var lexicon: String = "",
++    var featScale: Float = 0.1f,
++    var tShift: Float = 0.5f,
++    var targetRms: Float = 0.1f,
++    var guidanceScale: Float = 1.0f,
++)
++
++data class OfflineTtsKittenModelConfig(
++    var model: String = "",
++    var voices: String = "",
++    var tokens: String = "",
++    var dataDir: String = "",
++    var lengthScale: Float = 1.0f,
++)
++
++/**
++ * Configuration for Pocket TTS models.
++ *
++ * See https://k2-fsa.github.io/sherpa/onnx/tts/pocket/index.html for details.
++ *
++ * @property lmFlow Path to the LM flow model (.onnx)
++ * @property lmMain Path to the LM main model (.onnx)
++ * @property encoder Path to the encoder model (.onnx)
++ * @property decoder Path to the decoder model (.onnx)
++ * @property textConditioner Path to the text conditioner model (.onnx)
++ * @property vocabJson Path to vocabulary JSON file
++ * @property tokenScoresJson Path to token scores JSON file
++ */
++data class OfflineTtsPocketModelConfig(
++  var lmFlow: String = "",
++  var lmMain: String = "",
++  var encoder: String = "",
++  var decoder: String = "",
++  var textConditioner: String = "",
++  var vocabJson: String = "",
++  var tokenScoresJson: String = "",
++  var voiceEmbeddingCacheCapacity: Int = 50,
++)
++
++data class OfflineTtsSupertonicModelConfig(
++  var durationPredictor: String = "",
++  var textEncoder: String = "",
++  var vectorEstimator: String = "",
++  var vocoder: String = "",
++  var ttsJson: String = "",
++  var unicodeIndexer: String = "",
++  var voiceStyle: String = "",
++)
++
++data class OfflineTtsModelConfig(
++    var vits: OfflineTtsVitsModelConfig = OfflineTtsVitsModelConfig(),
++    var matcha: OfflineTtsMatchaModelConfig = OfflineTtsMatchaModelConfig(),
++    var kokoro: OfflineTtsKokoroModelConfig = OfflineTtsKokoroModelConfig(),
++    var zipvoice: OfflineTtsZipVoiceModelConfig = OfflineTtsZipVoiceModelConfig(),
++    var kitten: OfflineTtsKittenModelConfig = OfflineTtsKittenModelConfig(),
++    var pocket: OfflineTtsPocketModelConfig = OfflineTtsPocketModelConfig(),
++    var supertonic: OfflineTtsSupertonicModelConfig = OfflineTtsSupertonicModelConfig(),
++
++    var numThreads: Int = 1,
++    var debug: Boolean = false,
++    var provider: String = "cpu",
++)
++
++data class OfflineTtsConfig(
++    var model: OfflineTtsModelConfig = OfflineTtsModelConfig(),
++    var ruleFsts: String = "",
++    var ruleFars: String = "",
++    var maxNumSentences: Int = 1,
++    var silenceScale: Float = 0.2f,
++)
++
++class GeneratedAudio(
++    val samples: FloatArray,
++    val sampleRate: Int,
++) {
++    fun save(filename: String) =
++        saveImpl(filename = filename, samples = samples, sampleRate = sampleRate)
++
++    private external fun saveImpl(
++        filename: String,
++        samples: FloatArray,
++        sampleRate: Int
++    ): Boolean
++}
++
++data class GenerationConfig(
++    var silenceScale: Float = 0.2f,
++    var speed: Float = 1.0f,
++    var sid: Int = 0,
++    var referenceAudio: FloatArray? = null,
++    var referenceSampleRate: Int = 0,
++    var referenceText: String? = null,
++    var numSteps: Int = 5,
++    var extra: Map<String, String>? = null
++)
++
++class OfflineTts(
++    assetManager: AssetManager? = null,
++    var config: OfflineTtsConfig,
++) {
++    private var ptr: Long
++
++    init {
++        ptr = if (assetManager != null) {
++            newFromAsset(assetManager, config)
++        } else {
++            newFromFile(config)
++        }
++        require(ptr != 0L) {
++            "Invalid OfflineTtsConfig: failed to create native OfflineTts"
++        }
++    }
++
++    fun sampleRate() = getSampleRate(ptr)
++
++    fun numSpeakers() = getNumSpeakers(ptr)
++
++    fun generate(
++        text: String,
++        sid: Int = 0,
++        speed: Float = 1.0f
++    ): GeneratedAudio {
++        return generateImpl(ptr, text = text, sid = sid, speed = speed)
++    }
++
++    fun generateWithCallback(
++        text: String,
++        sid: Int = 0,
++        speed: Float = 1.0f,
++        callback: (samples: FloatArray) -> Int
++    ): GeneratedAudio {
++        return generateWithCallbackImpl(
++            ptr,
++            text = text,
++            sid = sid,
++            speed = speed,
++            callback = callback
++        )
++    }
++
++    fun generateWithConfig(
++      text: String,
++      config: GenerationConfig
++    ): GeneratedAudio {
++        return generateWithConfigImpl(ptr, text, config, null)
++    }
++
++    fun generateWithConfigAndCallback(
++        text: String,
++        config: GenerationConfig,
++        callback: (samples: FloatArray) -> Int
++    ): GeneratedAudio {
++        return generateWithConfigImpl(ptr, text, config, callback)
++    }
++
++    fun allocate(assetManager: AssetManager? = null) {
++        if (ptr == 0L) {
++            ptr = if (assetManager != null) {
++                newFromAsset(assetManager, config)
++            } else {
++                newFromFile(config)
++            }
++            require(ptr != 0L) {
++                "Invalid OfflineTtsConfig: failed to create native OfflineTts"
++            }
++        }
++    }
++
++    fun free() {
++        if (ptr != 0L) {
++            delete(ptr)
++            ptr = 0
++        }
++    }
++
++    protected fun finalize() {
++        if (ptr != 0L) {
++            delete(ptr)
++            ptr = 0
++        }
++    }
++
++    fun release() = finalize()
++
++    private external fun newFromAsset(
++        assetManager: AssetManager,
++        config: OfflineTtsConfig,
++    ): Long
++
++    private external fun newFromFile(
++        config: OfflineTtsConfig,
++    ): Long
++
++    private external fun delete(ptr: Long)
++    private external fun getSampleRate(ptr: Long): Int
++    private external fun getNumSpeakers(ptr: Long): Int
++
++    // The returned array has two entries:
++    //  - the first entry is an 1-D float array containing audio samples.
++    //    Each sample is normalized to the range [-1, 1]
++    //  - the second entry is the sample rate
++    private external fun generateImpl(
++        ptr: Long,
++        text: String,
++        sid: Int = 0,
++        speed: Float = 1.0f
++    ): GeneratedAudio
++
++    private external fun generateWithCallbackImpl(
++        ptr: Long,
++        text: String,
++        sid: Int = 0,
++        speed: Float = 1.0f,
++        callback: (samples: FloatArray) -> Int
++    ): GeneratedAudio
++
++
++    private external fun generateWithConfigImpl(
++        ptr: Long,
++        text: String,
++        config: GenerationConfig,
++        callback: ((samples: FloatArray) -> Int)?
++    ): GeneratedAudio
++
++    companion object {
++        init {
++            System.loadLibrary("sherpa-onnx-jni")
++        }
++    }
++}
++
++// please refer to
++// https://k2-fsa.github.io/sherpa/onnx/tts/pretrained_models/index.html
++// to download models
++fun getOfflineTtsConfig(
++    modelDir: String,
++    modelName: String, // for VITS
++    acousticModelName: String, // for Matcha
++    vocoder: String, // for Matcha
++    voices: String, // for Kokoro or kitten
++    lexicon: String,
++    dataDir: String,
++    dictDir: String, // unused
++    ruleFsts: String,
++    ruleFars: String,
++    numThreads: Int? = null,
++    isKitten: Boolean = false,
++    isSupertonic: Boolean = false,
++    durationPredictor: String = "", // for Supertonic
++    textEncoder: String = "", // for Supertonic
++    vectorEstimator: String = "", // for Supertonic
++    supertonicVocoder: String = "", // for Supertonic
++    ttsJson: String = "", // for Supertonic
++    unicodeIndexer: String = "", // for Supertonic
++    voiceStyle: String = "", // for Supertonic
++): OfflineTtsConfig {
++    // For Matcha TTS, please set
++    // acousticModelName, vocoder
++
++    // For Kokoro TTS, please set
++    // modelName, voices
++
++    // For Kitten TTS, please set
++    // modelName, voices, isKitten
++
++    // For VITS, please set
++    // modelName
++
++    // For Supertonic TTS, please set
++    // isSupertonic, durationPredictor, textEncoder, vectorEstimator,
++    // supertonicVocoder, ttsJson, unicodeIndexer, voiceStyle
++
++    val numberOfThreads = if (numThreads != null) {
++        numThreads
++    } else if (voices.isNotEmpty()) {
++        // for Kokoro and Kitten TTS models, we use more threads
++        4
++    } else {
++        2
++    }
++
++    if (!isSupertonic && modelName.isEmpty() && acousticModelName.isEmpty()) {
++        throw IllegalArgumentException("Please specify a TTS model")
++    }
++
++    if (modelName.isNotEmpty() && acousticModelName.isNotEmpty()) {
++        throw IllegalArgumentException("Please specify either a VITS or a Matcha model, but not both")
++    }
++
++    if (acousticModelName.isNotEmpty() && vocoder.isEmpty()) {
++        throw IllegalArgumentException("Please provide vocoder for Matcha TTS")
++    }
++
++    val vits = if (modelName.isNotEmpty() && voices.isEmpty() && !isSupertonic) {
++        OfflineTtsVitsModelConfig(
++            model = "$modelDir/$modelName",
++            lexicon = "$modelDir/$lexicon",
++            tokens = "$modelDir/tokens.txt",
++            dataDir = dataDir,
++        )
++    } else {
++        OfflineTtsVitsModelConfig()
++    }
++
++    val matcha = if (acousticModelName.isNotEmpty()) {
++        OfflineTtsMatchaModelConfig(
++            acousticModel = "$modelDir/$acousticModelName",
++            vocoder = vocoder,
++            lexicon = "$modelDir/$lexicon",
++            tokens = "$modelDir/tokens.txt",
++            dataDir = dataDir,
++        )
++    } else {
++        OfflineTtsMatchaModelConfig()
++    }
++
++    val kokoro = if (voices.isNotEmpty() && !isKitten && !isSupertonic) {
++        OfflineTtsKokoroModelConfig(
++            model = "$modelDir/$modelName",
++            voices = "$modelDir/$voices",
++            tokens = "$modelDir/tokens.txt",
++            dataDir = dataDir,
++            lexicon = when {
++                lexicon == "" -> lexicon
++                "," in lexicon -> lexicon
++                else -> "$modelDir/$lexicon"
++            },
++        )
++    } else {
++        OfflineTtsKokoroModelConfig()
++    }
++
++    val kitten = if (isKitten) {
++        OfflineTtsKittenModelConfig(
++            model = "$modelDir/$modelName",
++            voices = "$modelDir/$voices",
++            tokens = "$modelDir/tokens.txt",
++            dataDir = dataDir,
++        )
++    } else {
++        OfflineTtsKittenModelConfig()
++    }
++
++    val supertonic = if (isSupertonic) {
++        OfflineTtsSupertonicModelConfig(
++            durationPredictor = "$modelDir/$durationPredictor",
++            textEncoder = "$modelDir/$textEncoder",
++            vectorEstimator = "$modelDir/$vectorEstimator",
++            vocoder = "$modelDir/$supertonicVocoder",
++            ttsJson = "$modelDir/$ttsJson",
++            unicodeIndexer = "$modelDir/$unicodeIndexer",
++            voiceStyle = "$modelDir/$voiceStyle",
++        )
++    } else {
++        OfflineTtsSupertonicModelConfig()
++    }
++
++    return OfflineTtsConfig(
++        model = OfflineTtsModelConfig(
++            vits = vits,
++            matcha = matcha,
++            kokoro = kokoro,
++            kitten = kitten,
++            supertonic = supertonic,
++            numThreads = numberOfThreads,
++            debug = true,
++            provider = "cpu",
++        ),
++        ruleFsts = ruleFsts,
++        ruleFars = ruleFars,
++    )
++}
+diff --git a/speech/src/main/java/me/rerere/tts/provider/TTSManager.kt b/speech/src/main/java/me/rerere/tts/provider/TTSManager.kt
+index 9f40830..b10b4aa 100644
+--- a/speech/src/main/java/me/rerere/tts/provider/TTSManager.kt
++++ b/speech/src/main/java/me/rerere/tts/provider/TTSManager.kt
+@@ -13,6 +13,7 @@ import me.rerere.tts.provider.providers.MiniMaxTTSProvider
+ import me.rerere.tts.provider.providers.OpenAITTSProvider
+ import me.rerere.tts.provider.providers.QwenTTSProvider
+ import me.rerere.tts.provider.providers.StepTTSProvider
++import me.rerere.tts.provider.providers.SherpaOnnxTTSProvider
+ import me.rerere.tts.provider.providers.SystemTTSProvider
+ import me.rerere.tts.provider.providers.XAITTSProvider
+ 
+@@ -28,6 +29,7 @@ class TTSManager(private val context: Context) {
+     private val stepProvider = StepTTSProvider()
+     private val elevenLabsProvider = ElevenLabsTTSProvider()
+     private val fishAudioProvider = FishAudioTTSProvider()
++    private val sherpaOnnxProvider = SherpaOnnxTTSProvider()
+ 
+     fun generateSpeech(
+         providerSetting: TTSProviderSetting,
+@@ -45,6 +47,7 @@ class TTSManager(private val context: Context) {
+             is TTSProviderSetting.ElevenLabs -> elevenLabsProvider.generateSpeech(context, providerSetting, request)
+             is TTSProviderSetting.FishAudio -> fishAudioProvider.generateSpeech(context, providerSetting, request)
+             is TTSProviderSetting.Step -> stepProvider.generateSpeech(context, providerSetting, request)
++            is TTSProviderSetting.SherpaOnnx -> sherpaOnnxProvider.generateSpeech(context, providerSetting, request)
+         }
+     }
+ 
+@@ -65,6 +68,7 @@ class TTSManager(private val context: Context) {
+             is TTSProviderSetting.ElevenLabs -> elevenLabsProvider.promptGuidance
+             is TTSProviderSetting.FishAudio -> fishAudioProvider.promptGuidance
+             is TTSProviderSetting.Step -> stepProvider.promptGuidance
++            is TTSProviderSetting.SherpaOnnx -> sherpaOnnxProvider.promptGuidance
+         }
+     }
+ }
+diff --git a/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt b/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
+index 18a0061..8b03e7b 100644
+--- a/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
++++ b/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
+@@ -56,6 +56,53 @@ sealed class TTSProviderSetting {
+         }
+     }
+ 
++    /**
++     * 本地（离线）神经网络语音 —— sherpa-onnx + VITS。
++     *
++     * 与 [SystemTTS] 的区别：声学模型在设备上推理，可选音色由模型的说话人数决定
++     * （如 vits-zh-hf-theresa 有 804 个），并暴露韵律相关参数。
++     */
++    @Serializable
++    @SerialName("sherpa-onnx")
++    data class SherpaOnnx(
++        override var id: Uuid = Uuid.random(),
++        override var name: String = "本地神经网络语音",
++        /** 模型目录；留空则用 App 私有目录下的 [DEFAULT_MODEL_DIR_NAME] */
++        var modelDir: String = "",
++        /** 音色序号，范围 [0, numSpeakers-1]；越界会在读取时被夹紧 */
++        var speakerId: Int = 0,
++        /** 语速，1.0 为原速 */
++        var speed: Float = 1.0f,
++        /** 韵律随机性：越大语调起伏越丰富（更自然、更少机械感） */
++        var noiseScale: Float = 0.667f,
++        /** 时长预测的随机性 */
++        var noiseScaleW: Float = 0.8f,
++        /** 句间停顿比例 */
++        var silenceScale: Float = 0.2f,
++        /** 推理线程数；过大在手机上反而变慢 */
++        var numThreads: Int = 2,
++    ) : TTSProviderSetting() {
++        override fun copyProvider(
++            id: Uuid,
++            name: String,
++        ): TTSProviderSetting {
++            return this.copy(
++                id = id,
++                name = name,
++            )
++        }
++
++        /** 解析实际使用的模型目录：用户指定优先，否则用 App 私有目录下的默认位置 */
++        fun resolvedModelDir(context: android.content.Context): java.io.File {
++            if (modelDir.isNotBlank()) return java.io.File(modelDir)
++            return java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
++        }
++
++        companion object {
++            const val DEFAULT_MODEL_DIR_NAME = "tts_models"
++        }
++    }
++
+     @Serializable
+     @SerialName("system")
+     data class SystemTTS(
+diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
+new file mode 100644
+index 0000000..803ed36
+--- /dev/null
++++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
+@@ -0,0 +1,244 @@
++package me.rerere.tts.provider.providers
++
++import android.content.Context
++import android.util.Log
++import com.k2fsa.sherpa.onnx.GenerationConfig
++import com.k2fsa.sherpa.onnx.OfflineTts
++import com.k2fsa.sherpa.onnx.OfflineTtsConfig
++import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
++import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.flow.Flow
++import kotlinx.coroutines.flow.channelFlow
++import kotlinx.coroutines.withContext
++import me.rerere.tts.model.AudioChunk
++import me.rerere.tts.model.AudioFormat
++import me.rerere.tts.model.TTSRequest
++import me.rerere.tts.provider.TTSProvider
++import me.rerere.tts.provider.TTSProviderSetting
++import java.io.File
++
++private const val TAG = "SherpaOnnxTTSProvider"
++
++/**
++ * 本地（离线）TTS —— 基于 sherpa-onnx + VITS 中文多说话人模型。
++ *
++ * 相比系统 TTS（只能调语速与音高）的核心能力：
++ *  - **音色**：多说话人模型可逐 speaker 切换（`sid`）；例如
++ *    `vits-zh-hf-theresa` / `vits-zh-hf-eula` 有 804 个音色，
++ *    `vits-icefall-zh-aishell3` 有 174 个。
++ *  - **韵律（"语气"）**：VITS 的 `noiseScale` / `noiseScaleW` 控制合成的随机性，
++ *    调高会让语调起伏更自然、更少机械感；再配合 `speed`（语速）与
++ *    `silenceScale`（句间停顿）可表达不同情绪倾向。
++ *  - **流式**：通过 `generateWithConfigAndCallback` 边合成边回传 PCM，
++ *    无需等整段合成完（长文本首字延迟明显更低）。
++ *
++ * 注意（能力边界，勿误传）：VITS/Kokoro 这类模型**不支持内联情感标记**
++ * （不像 ChatTTS 的 `[laugh]`）。所谓"带语气"是通过上面三个维度 + AI 用
++ * 标点控制停顿来实现的，不是真正的情感标签。
++ */
++class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
++
++    /**
++     * 该模型不支持内联标记，因此引导 AI 用**标点与断句**表达语气。
++     * 约束与项目既有注释一致：不要用 `*` `_`（会被 stripMarkdown 删掉）、
++     * 标记内部不要含 `。，！？…`（会被 TextChunker 切断）。
++     */
++    override val promptGuidance: String
++        get() = """
++            你正在用本地神经网络语音朗读，需要通过**标点与断句**来传达语气：
++            - 想让语气舒缓或制造停顿：用逗号、省略号、换行，而不是长句一气读完
++            - 想强调情绪：把短句独立成句，用感叹号/问号收尾
++            - 不要输出 Markdown 标记（星号、下划线）或括号标记，它们不会被朗读出来
++            - 只把要朗读的正文放进 text_to_speech 的 text 参数，不要包含说明文字
++        """.trimIndent()
++
++    override fun generateSpeech(
++        context: Context,
++        providerSetting: TTSProviderSetting.SherpaOnnx,
++        request: TTSRequest,
++    ): Flow<AudioChunk> = channelFlow {
++        val dir = providerSetting.resolvedModelDir(context)
++        val error = validateModelDir(dir)
++        if (error != null) {
++            // 给出可操作的提示，而不是让上层只看到一句 native 报错
++            throw IllegalStateException(error)
++        }
++
++        val tts = SherpaTtsCache.obtain(dir, providerSetting)
++        val sampleRate = tts.sampleRate()
++        val numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
++
++        // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
++        val sid = if (numSpeakers > 0) {
++            providerSetting.speakerId.coerceIn(0, numSpeakers - 1)
++        } else {
++            0
++        }
++
++        val chunkMeta = mapOf(
++            "provider" to "sherpa-onnx",
++            "model" to dir.name,
++            "speakerId" to sid.toString(),
++            "numSpeakers" to numSpeakers.toString(),
++            "speed" to providerSetting.speed.toString(),
++        )
++
++        // JNI 调用是阻塞的，放到 IO 线程；回调里用 trySend 逐步推给消费者
++        withContext(Dispatchers.IO) {
++            val gen = GenerationConfig(
++                speed = providerSetting.speed,
++                sid = sid,
++                silenceScale = providerSetting.silenceScale,
++            )
++            var emitted = 0
++            var stopped = false
++
++            tts.generateWithConfigAndCallback(request.text, gen) { samples ->
++                if (stopped) return@generateWithConfigAndCallback 1
++                val pcm = floatToPcm16(samples)
++                if (pcm.isEmpty()) {
++                    0
++                } else {
++                    val ok = trySend(
++                        AudioChunk(
++                            data = pcm,
++                            format = AudioFormat.PCM,
++                            sampleRate = sampleRate,
++                            isLast = false,
++                            metadata = chunkMeta,
++                        )
++                    ).isSuccess
++                    if (!ok) {
++                        // 下游已取消（例如用户停止播放），通知 native 侧提前收尾
++                        stopped = true
++                        1
++                    } else {
++                        emitted++
++                        0
++                    }
++                }
++            }
++
++            Log.d(TAG, "generateSpeech: emitted=$emitted chunks, sampleRate=$sampleRate, sid=$sid")
++            trySend(
++                AudioChunk(
++                    data = ByteArray(0),
++                    format = AudioFormat.PCM,
++                    sampleRate = sampleRate,
++                    isLast = true,
++                    metadata = chunkMeta,
++                )
++            )
++        }
++    }
++
++    /** 校验模型目录；返回 null 表示可用，否则返回给用户看的错误信息 */
++    private fun validateModelDir(dir: File): String? {
++        if (!dir.isDirectory) {
++            return "本地 TTS 模型目录不存在：${dir.absolutePath}\n" +
++                "请在「设置 → 文字转语音 → 本地模型」中下载或选择模型目录。"
++        }
++        val model = resolveModelFile(dir)
++        if (model == null) {
++            return "模型目录中未找到 .onnx 模型文件：${dir.absolutePath}\n" +
++                "请确认已完整解压模型包（应包含 model.onnx / lexicon.txt / tokens.txt）。"
++        }
++        val tokens = File(dir, "tokens.txt")
++        if (!tokens.isFile) {
++            return "模型目录缺少 tokens.txt：${dir.absolutePath}"
++        }
++        return null
++    }
++
++    companion object {
++        /** 模型文件命名在不同模型里可能是 model.onnx / *.onnx，逐个探测 */
++        fun resolveModelFile(dir: File): File? {
++            val exact = File(dir, "model.onnx")
++            if (exact.isFile) return exact
++            return dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }
++                ?.sortedBy { it.name }
++                ?.firstOrNull()
++        }
++
++        /** FloatArray(-1f..1f) → 16-bit 小端 PCM */
++        fun floatToPcm16(samples: FloatArray): ByteArray {
++            val out = ByteArray(samples.size * 2)
++            var i = 0
++            for (s in samples) {
++                val v = (s.coerceIn(-1f, 1f) * 32767f).toInt()
++                out[i++] = (v and 0xFF).toByte()
++                out[i++] = ((v shr 8) and 0xFF).toByte()
++            }
++            return out
++        }
++    }
++}
++
++/**
++ * [OfflineTts] 的实例缓存。
++ *
++ * 加载 onnx 模型开销较大（读文件 + 初始化会话），而每次朗读都重新构造会明显卡顿，
++ * 因此按「模型目录 + 线程数」缓存。仅改 sid/speed/noiseScale 这类**生成期**参数
++ * 时命中缓存，不需要重载。
++ *
++ * 目前只保留一份（单模型场景足够）；换模型时释放旧的。
++ */
++private object SherpaTtsCache {
++    private var cachedKey: String? = null
++    private var cached: OfflineTts? = null
++
++    @Synchronized
++    fun obtain(dir: File, setting: TTSProviderSetting.SherpaOnnx): OfflineTts {
++        val key = "${dir.absolutePath}|${setting.numThreads}"
++        cached?.let { if (cachedKey == key) return it }
++
++        // 释放旧实例，避免 native 内存泄漏
++        runCatching { cached?.free() }.onFailure { Log.w(TAG, "free previous OfflineTts failed", it) }
++        cached = null
++        cachedKey = null
++
++        val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
++            ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
++        val tokens = File(dir, "tokens.txt").absolutePath
++        val lexicon = File(dir, "lexicon.txt").let { if (it.isFile) it.absolutePath else "" }
++        // 中文模型常带 dict/ 目录（jieba 词典等），没有就留空
++        val dataDir = File(dir, "dict").let { if (it.isDirectory) it.absolutePath else "" }
++
++        val config = OfflineTtsConfig(
++            model = OfflineTtsModelConfig(
++                vits = OfflineTtsVitsModelConfig(
++                    model = modelFile.absolutePath,
++                    lexicon = lexicon,
++                    tokens = tokens,
++                    dataDir = dataDir,
++                    // 韵律随机性：影响语调起伏（"语气"）
++                    noiseScale = setting.noiseScale,
++                    noiseScaleW = setting.noiseScaleW,
++                    // lengthScale 与生成期的 speed 相乘，故此处固定 1.0，统一由 speed 控制
++                    lengthScale = 1.0f,
++                ),
++                numThreads = setting.numThreads,
++                debug = false,
++                provider = "cpu",
++            ),
++            // 中文数字/日期读法规则（若模型目录带 *.fst 则启用，缺省忽略）
++            ruleFsts = collectRuleFsts(dir),
++            ruleFars = "",
++        )
++
++        Log.i(TAG, "loading OfflineTts: model=${modelFile.name}, threads=${setting.numThreads}, dir=${dir.absolutePath}")
++        val tts = OfflineTts(config = config)
++        cached = tts
++        cachedKey = key
++        Log.i(TAG, "OfflineTts loaded: sampleRate=${tts.sampleRate()}, speakers=${tts.numSpeakers()}")
++        return tts
++    }
++
++    /** 收集目录下的 *.fst 规则文件（以逗号分隔，供 sherpa-onnx 使用） */
++    private fun collectRuleFsts(dir: File): String =
++        dir.listFiles { f -> f.isFile && f.name.endsWith(".fst") }
++            ?.sortedBy { it.name }
++            ?.joinToString(",") { it.absolutePath }
++            .orEmpty()
++}

@@ -28,13 +28,20 @@ VER=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts | head -1 || echo "
 echo "    versionCode = $VER (期望 173 / v2.4.6)"
 [ "$VER" = "173" ] || echo "    ⚠️ 版本不一致，请确认在同一基线上操作"
 
-echo "==> 1/4 删除命理二进制包（offline_pkgs，33MB；CI 脚本含在 patch 内）"
+echo "==> 1/5 删除命理二进制包（offline_pkgs，33MB；CI 脚本含在 patch 内）"
 git rm -r --quiet --ignore-unmatch app/offline_pkgs || true
 
-echo "==> 2/4 应用代码改动"
+echo "==> 2/5 应用代码改动"
 git apply --whitespace=nowarn "$PATCH"
 
-echo "==> 3/4 复核"
+echo "==> 3/5 下载 sherpa-onnx native 库（本地 TTS 用，23MB，不入库）"
+if [ -f "$PATCH_DIR/fetch_sherpa_native.sh" ]; then
+  bash "$PATCH_DIR/fetch_sherpa_native.sh" "$REPO"
+else
+  echo "   [!!] 缺少 fetch_sherpa_native.sh（TTS 将无法在运行期加载 native 库）"
+fi
+
+echo "==> 4/5 复核"
 FAIL=0
 check() {
   local n
@@ -55,7 +62,16 @@ grep -q 'applicationId = "me.rerere.rikkasharp"' app/build.gradle.kts \
 # （新增 @Serializable 层级的成员时必须补注解，否则运行期 "Serializer not found" 崩溃）
 if [ -f "$PATCH_DIR/serializable_audit.py" ]; then
   echo "   --- @Serializable 注解审计 ---"
-  if python3 "$PATCH_DIR/serializable_audit.py" app/src/main/java | sed 's/^/   /'; then
+  # 同时审计 app 与 speech 两个模块（TTSProviderSetting 在 speech 模块，
+  # 本次新增的 SherpaOnnx 就在那里）
+  AUDIT_OK=1
+  for MOD in app/src/main/java speech/src/main/java; do
+    echo "   --- $MOD ---"
+    if ! python3 "$PATCH_DIR/serializable_audit.py" "$MOD" | sed 's/^/   /'; then
+      AUDIT_OK=0
+    fi
+  done
+  if [ "$AUDIT_OK" = "1" ]; then
     echo "   [ok] 序列化注解完整"
   else
     echo "   [!!] 存在缺失 @Serializable 的成员（运行期会崩）"; FAIL=1
@@ -63,9 +79,15 @@ if [ -f "$PATCH_DIR/serializable_audit.py" ]; then
 fi
 [ -f app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingSshPage.kt ] \
   && echo "   [ok] SSH 客户端页面存在" || { echo "   [!!] SSH 页面缺失"; FAIL=1; }
+[ -f speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt ] \
+  && echo "   [ok] sherpa-onnx Kotlin API 存在" || { echo "   [!!] Tts.kt 缺失"; FAIL=1; }
+[ -s speech/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so ] \
+  && echo "   [ok] sherpa-onnx native 库就位" || { echo "   [!!] 缺少 libsherpa-onnx-jni.so（CI 会下载，本地请跑 fetch_sherpa_native.sh）"; FAIL=1; }
+grep -q "SherpaOnnx" speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt 2>/dev/null \
+  && echo "   [ok] TTS provider 设置已含 SherpaOnnx" || { echo "   [!!] TTSProviderSetting 未含 SherpaOnnx"; FAIL=1; }
 [ "$FAIL" -ne 0 ] && { echo; echo "==> 复核未通过"; exit 1; }
 
-echo "==> 4/4 完成"
+echo "==> 5/5 完成"
 cat <<'EOF'
 
 接下来（推送即触发 GitHub Actions 编译）：

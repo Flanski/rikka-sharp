@@ -1840,4 +1840,21 @@
   <string name="sensor_permission_required">Permission required to read this sensor</string>
 
   <string name="search_picker_model_need_responses_api">This needs "Responses API" enabled in the provider settings. Tap to configure.</string>
+
+  <string name="setting_tts_page_provider_sherpa">Local Neural TTS</string>
+
+  <!-- 本地神经网络语音（sherpa-onnx） -->
+  <string name="setting_tts_page_sherpa_model_dir">Model directory</string>
+  <string name="setting_tts_page_sherpa_model_dir_desc">Folder containing model.onnx / lexicon.txt / tokens.txt. Leave empty to use the app-private tts_models folder.</string>
+  <string name="setting_tts_page_sherpa_model_dir_hint">Leave empty for default location</string>
+  <string name="setting_tts_page_sherpa_speaker">Voice index</string>
+  <string name="setting_tts_page_sherpa_speaker_desc">Which speaker to use. Depends on the model: theresa/eula have 804 (0-803), aishell3 has 174.</string>
+  <string name="setting_tts_page_sherpa_noise_scale">Prosody randomness</string>
+  <string name="setting_tts_page_sherpa_noise_scale_desc">Higher values make intonation more varied and less robotic (default 0.667).</string>
+  <string name="setting_tts_page_sherpa_noise_scale_w">Duration randomness</string>
+  <string name="setting_tts_page_sherpa_noise_scale_w_desc">Randomness of duration prediction (default 0.8).</string>
+  <string name="setting_tts_page_sherpa_silence">Pause between sentences</string>
+  <string name="setting_tts_page_sherpa_silence_desc">Silence inserted between sentences (default 0.2).</string>
+  <string name="setting_tts_page_sherpa_threads">Inference threads</string>
+  <string name="setting_tts_page_sherpa_threads_desc">CPU threads used for synthesis. Too many can be slower on phones (default 2).</string>
 </resources>

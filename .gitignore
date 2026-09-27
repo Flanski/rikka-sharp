@@ -21,3 +21,7 @@ stelli/
 *验证报告*
 *_verification_report.*
 verification_report.*
+
+# sherpa-onnx 预编译 native 库（23MB，不入库）
+# 由 .github/workflows/build.yml 与 patch/apply_rikkasharp.sh 在构建前自动下载
+speech/src/main/jniLibs/

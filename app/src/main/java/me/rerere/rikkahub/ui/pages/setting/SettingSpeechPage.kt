@@ -767,6 +767,7 @@ private fun TTSProviderItem(
                             is TTSProviderSetting.Step -> "Step"
                             is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                             is TTSProviderSetting.FishAudio -> "Fish Audio"
+                            is TTSProviderSetting.SherpaOnnx -> stringResource(R.string.setting_tts_page_provider_sherpa)
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant

@@ -40,7 +40,15 @@ def annotation_block(lines, i):
     j = i - 1
     while j >= 0:
         t = lines[j].strip()
-        if t == '':
+        # 空行、以及注解与声明之间的**注释行**都要跳过。
+        # 反例（TTSProviderSetting.MiMo）：
+        #     @Serializable
+        #     @SerialName("mimo")
+        #     // 默认值仅用于快捷起步 可在设置页任意修改
+        #     data class MiMo(
+        # 早期版本遇到注释就停止收集，导致误报「缺 @Serializable」，
+        # 而该脚本已作为 apply/CI 的硬门禁，误报会让构建失败。
+        if t == '' or t.startswith('//') or t.startswith('/*') or t.startswith('*') or t.endswith('*/'):
             j -= 1
             continue
         if t.startswith('@'):

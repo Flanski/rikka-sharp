@@ -1840,4 +1840,21 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="sensor_permission_required">读取该传感器需要先授予权限</string>
 
   <string name="search_picker_model_need_responses_api">需先在提供商设置中启用「Responses API」。点击前往配置。</string>
+
+  <string name="setting_tts_page_provider_sherpa">本地神经网络语音</string>
+
+  <!-- 本地神经网络语音（sherpa-onnx） -->
+  <string name="setting_tts_page_sherpa_model_dir">模型目录</string>
+  <string name="setting_tts_page_sherpa_model_dir_desc">包含 model.onnx / lexicon.txt / tokens.txt 的文件夹。留空则使用应用私有目录下的 tts_models。</string>
+  <string name="setting_tts_page_sherpa_model_dir_hint">留空使用默认位置</string>
+  <string name="setting_tts_page_sherpa_speaker">音色序号</string>
+  <string name="setting_tts_page_sherpa_speaker_desc">选择使用哪个说话人。取决于模型：theresa/eula 有 804 个（0-803），aishell3 有 174 个。</string>
+  <string name="setting_tts_page_sherpa_noise_scale">韵律随机性</string>
+  <string name="setting_tts_page_sherpa_noise_scale_desc">数值越大语调起伏越丰富、越不机械（默认 0.667）。</string>
+  <string name="setting_tts_page_sherpa_noise_scale_w">时长随机性</string>
+  <string name="setting_tts_page_sherpa_noise_scale_w_desc">时长预测的随机程度（默认 0.8）。</string>
+  <string name="setting_tts_page_sherpa_silence">句间停顿</string>
+  <string name="setting_tts_page_sherpa_silence_desc">句子之间插入的静音比例（默认 0.2）。</string>
+  <string name="setting_tts_page_sherpa_threads">推理线程数</string>
+  <string name="setting_tts_page_sherpa_threads_desc">用于合成的 CPU 线程数，手机上过多反而变慢（默认 2）。</string>
 </resources>

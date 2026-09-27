@@ -56,6 +56,53 @@ sealed class TTSProviderSetting {
         }
     }
 
+    /**
+     * 本地（离线）神经网络语音 —— sherpa-onnx + VITS。
+     *
+     * 与 [SystemTTS] 的区别：声学模型在设备上推理，可选音色由模型的说话人数决定
+     * （如 vits-zh-hf-theresa 有 804 个），并暴露韵律相关参数。
+     */
+    @Serializable
+    @SerialName("sherpa-onnx")
+    data class SherpaOnnx(
+        override var id: Uuid = Uuid.random(),
+        override var name: String = "本地神经网络语音",
+        /** 模型目录；留空则用 App 私有目录下的 [DEFAULT_MODEL_DIR_NAME] */
+        var modelDir: String = "",
+        /** 音色序号，范围 [0, numSpeakers-1]；越界会在读取时被夹紧 */
+        var speakerId: Int = 0,
+        /** 语速，1.0 为原速 */
+        var speed: Float = 1.0f,
+        /** 韵律随机性：越大语调起伏越丰富（更自然、更少机械感） */
+        var noiseScale: Float = 0.667f,
+        /** 时长预测的随机性 */
+        var noiseScaleW: Float = 0.8f,
+        /** 句间停顿比例 */
+        var silenceScale: Float = 0.2f,
+        /** 推理线程数；过大在手机上反而变慢 */
+        var numThreads: Int = 2,
+    ) : TTSProviderSetting() {
+        override fun copyProvider(
+            id: Uuid,
+            name: String,
+        ): TTSProviderSetting {
+            return this.copy(
+                id = id,
+                name = name,
+            )
+        }
+
+        /** 解析实际使用的模型目录：用户指定优先，否则用 App 私有目录下的默认位置 */
+        fun resolvedModelDir(context: android.content.Context): java.io.File {
+            if (modelDir.isNotBlank()) return java.io.File(modelDir)
+            return java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
+        }
+
+        companion object {
+            const val DEFAULT_MODEL_DIR_NAME = "tts_models"
+        }
+    }
+
     @Serializable
     @SerialName("system")
     data class SystemTTS(

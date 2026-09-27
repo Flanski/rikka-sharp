@@ -846,7 +846,16 @@ internal val DEFAULT_ASSISTANTS = listOf(
 )
 
 val DEFAULT_SYSTEM_TTS_ID = Uuid.parse("026a01a2-c3a0-4fd5-8075-80e03bdef200")
+val DEFAULT_SHERPA_TTS_ID = Uuid.parse("3b7c91e4-2a58-4d6f-9c31-8e5a0d2f7b64")
 private val DEFAULT_TTS_PROVIDERS = listOf(
+    // 本地神经网络语音（sherpa-onnx + VITS）置于首位 —— 即默认 TTS。
+    // 相比系统 TTS 只能调语速/音高，它可切换多说话人音色并调节韵律。
+    // 注意：需先下载模型（设置 → 文字转语音 → 本地神经网络语音），
+    // 模型缺失时该 provider 会抛出带指引的错误，可切回 System TTS。
+    TTSProviderSetting.SherpaOnnx(
+        id = DEFAULT_SHERPA_TTS_ID,
+        name = "",
+    ),
     TTSProviderSetting.SystemTTS(
         id = DEFAULT_SYSTEM_TTS_ID,
         name = "",

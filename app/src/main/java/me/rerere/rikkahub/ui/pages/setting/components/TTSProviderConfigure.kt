@@ -48,6 +48,7 @@ fun TTSProviderConfigure(
                     is TTSProviderSetting.Step -> "Step"
                     is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                     is TTSProviderSetting.FishAudio -> "Fish Audio"
+                    is TTSProviderSetting.SherpaOnnx -> "本地神经网络语音"
                 },
                 options = providers,
                 readOnly = true,
@@ -56,6 +57,7 @@ fun TTSProviderConfigure(
                     when (providerClass) {
                         TTSProviderSetting.OpenAI::class -> "OpenAI"
                         TTSProviderSetting.Gemini::class -> "Gemini"
+                        TTSProviderSetting.SherpaOnnx::class -> "本地神经网络语音"
                         TTSProviderSetting.SystemTTS::class -> "System TTS"
                         TTSProviderSetting.MiniMax::class -> "MiniMax"
                         TTSProviderSetting.Qwen::class -> "Qwen"
@@ -80,6 +82,7 @@ fun TTSProviderConfigure(
                             name = "Gemini TTS"
                         )
 
+                        TTSProviderSetting.SherpaOnnx::class -> TTSProviderSetting.SherpaOnnx()
                         TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
                             id = setting.id,
                             name = "System TTS"
@@ -160,6 +163,7 @@ fun TTSProviderConfigure(
             is TTSProviderSetting.ElevenLabs -> ElevenLabsTTSConfiguration(setting, onValueChange)
             is TTSProviderSetting.FishAudio -> FishAudioTTSConfiguration(setting, onValueChange)
             is TTSProviderSetting.Step -> StepTTSConfiguration(setting, onValueChange)
+            is TTSProviderSetting.SherpaOnnx -> SherpaOnnxTTSConfiguration(setting, onValueChange)
         }
     }
 }
@@ -1198,6 +1202,123 @@ private fun StepTTSConfiguration(
             placeholder = { Text("例如: 语气温柔, 语速偏慢") },
             minLines = 2,
             maxLines = 4,
+        )
+    }
+}
+
+/**
+ * 本地神经网络语音（sherpa-onnx + VITS）的配置界面。
+ *
+ * 说明：音色数由所用模型决定（vits-zh-hf-theresa / eula 为 804，
+ * vits-icefall-zh-aishell3 为 174），无法在编译期得知，因此这里用数字输入，
+ * 由用户按所用模型填写；越界值在朗读时会被自动夹紧到合法范围。
+ */
+@Composable
+private fun SherpaOnnxTTSConfiguration(
+    setting: TTSProviderSetting.SherpaOnnx,
+    onValueChange: (TTSProviderSetting) -> Unit
+) {
+    // 模型目录
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_desc)) }
+    ) {
+        OutlinedTextField(
+            value = setting.modelDir,
+            onValueChange = { onValueChange(setting.copy(modelDir = it)) },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_hint)) },
+        )
+    }
+
+    // 音色序号
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.speakerId.toFloat(),
+            onValueChange = { v ->
+                onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0)))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
+        )
+    }
+
+    // 语速
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
+        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.speed,
+            onValueChange = { v ->
+                if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_speech_rate),
+        )
+    }
+
+    // 韵律随机性（语气起伏）
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.noiseScale,
+            onValueChange = { v ->
+                if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
+        )
+    }
+
+    // 时长随机性
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.noiseScaleW,
+            onValueChange = { v ->
+                if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
+        )
+    }
+
+    // 句间停顿
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.silenceScale,
+            onValueChange = { v ->
+                if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_silence),
+        )
+    }
+
+    // 推理线程数
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.numThreads.toFloat(),
+            onValueChange = { v ->
+                onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8)))
+            },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_threads),
         )
     }
 }
