@@ -74,12 +74,18 @@ bcprov = "1.78.1"
 # 仅用于解压 sherpa-onnx 模型包（.tar.bz2）。Android 无内置 bz2 解压。
 # class-file 52(Java 8)，Android 兼容。zstd-jni/dec/xz/asm 均为 optional，不会被传递引入。
 commons-compress = "1.28.0"
+# JGit：真正的 git 实现（含历史/提交/推送），纯 Java。
+# 选 7.8.0：class-file 61(Java 17)，项目用 Java 21 编译，AGP 9.x 的 D8 支持。
+# 需要 R8 keep —— JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
+# 静态分析看不到（与 JSch 把类名放进配置字符串是同类问题，见 keepRules 注释）。
+jgit = "7.8.0.202609011348-r"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
+jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

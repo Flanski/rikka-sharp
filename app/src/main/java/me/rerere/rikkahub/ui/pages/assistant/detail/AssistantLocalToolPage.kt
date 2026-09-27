@@ -420,6 +420,19 @@ private fun AssistantLocalToolContent(
                     }
                 }
             )
+            // 编程开发工具：纯入口（无总开关）—— 它是分类容器，具体工具在子页面里各自开关
+            item(
+                onClick = { nav.navigate(Screen.AssistantProgrammingTools(assistant.id.toString())) },
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_programming_tools))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_programming_tools_desc))
+                },
+                trailingContent = {
+                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
+                }
+            )
             // 下载类工具：HTTP 下载 / 仓库快照下载，支持同步与异步两种模式
             item(
                 headlineContent = {

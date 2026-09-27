@@ -137,6 +137,17 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("download_tools")
     data object DownloadTools : LocalToolOption()
+
+    /**
+     * Git 工具（真正的 git，基于 JGit）。
+     *
+     * 与 [DownloadTools] 里的 `repo_download` 不同：后者只拿代码快照（无 .git），
+     * 这个能做完整操作 —— 克隆含历史、提交、分支、推送。
+     * 入口在「编程开发工具」子页面。
+     */
+    @Serializable
+    @SerialName("git_tools")
+    data object GitTools : LocalToolOption()
 }
 
 class LocalTools(
@@ -478,6 +489,9 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.DownloadTools)) {
             tools.addAll(createDownloadTools(context))
+        }
+        if (options.contains(LocalToolOption.GitTools)) {
+            tools.addAll(createGitTools(context))
         }
         return tools
     }

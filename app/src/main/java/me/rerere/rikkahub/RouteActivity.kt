@@ -79,6 +79,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantProgrammingToolsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
@@ -404,6 +405,10 @@ class RouteActivity : ComponentActivity() {
                                 SherpaModelStorePage()
                             }
 
+                            entry<Screen.AssistantProgrammingTools> { key ->
+                                AssistantProgrammingToolsPage(key.id)
+                            }
+
                             entry<Screen.AssistantInjections> { key ->
                                 AssistantExtensionsPage(key.id)
                             }
@@ -673,6 +678,10 @@ sealed interface Screen : NavKey {
     /** 本地 TTS 模型仓库（全量列表 / 搜索 / 下载 / 删除） */
     @Serializable
     data object SettingSherpaModels : Screen
+
+    /** 编程开发工具（Git / 语法检查 / 串口 …）—— 本地工具页的纯入口，内部工具各自有开关 */
+    @Serializable
+    data class AssistantProgrammingTools(val id: String) : Screen
 
     @Serializable
     data class AssistantInjections(val id: String) : Screen

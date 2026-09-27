@@ -1918,4 +1918,11 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="notification_channel_tool_activity">工具活动</string>
   <string name="notification_tool_activity_title">%1$s 正在执行操作</string>
   <string name="notification_tool_activity_subtext">已完成 %1$d 项 · 待批准 %2$d 项</string>
+
+  <!-- 编程开发工具 -->
+  <string name="assistant_page_programming_tools">编程开发工具</string>
+  <string name="assistant_page_programming_tools_desc">Git、语法检查、串口等开发辅助</string>
+  <string name="programming_page_title">编程开发工具</string>
+  <string name="programming_git_tools">Git 工具</string>
+  <string name="programming_git_tools_desc">基于 JGit 的完整 git 操作：克隆（含历史）、状态、日志、差异、提交、分支、拉取/推送</string>
 </resources>

@@ -203,6 +203,8 @@ dependencies {
     // commons-compress：下载工具需要解压 .tar.gz 仓库快照
     // （speech 模块也有这个依赖，但那是 implementation 作用域，app 模块看不到，必须自己声明）
     implementation(libs.commons.compress)
+    // JGit：真正的 git（clone/commit/log/push 等），供「编程开发工具」使用
+    implementation(libs.jgit)
     // SSH（SSH 客户端工具）
     implementation(libs.jsch)
     // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它

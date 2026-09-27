@@ -1348,7 +1348,7 @@ index 0000000..93056ec
 +    }
 +}
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 3d07c97..0f58bdb 100644
+index 3d07c97..71cf934 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -26,46 +26,10 @@ chaquopy {
@@ -1410,13 +1410,15 @@ index 3d07c97..0f58bdb 100644
          minSdk = 26
          targetSdk = 37
          versionCode = 173
-@@ -236,6 +200,13 @@ dependencies {
+@@ -236,6 +200,15 @@ dependencies {
      // jetbrains markdown parser
      implementation(libs.jetbrains.markdown)
      // okhttp
 +    // commons-compress：下载工具需要解压 .tar.gz 仓库快照
 +    // （speech 模块也有这个依赖，但那是 implementation 作用域，app 模块看不到，必须自己声明）
 +    implementation(libs.commons.compress)
++    // JGit：真正的 git（clone/commit/log/push 等），供「编程开发工具」使用
++    implementation(libs.jgit)
 +    // SSH（SSH 客户端工具）
 +    implementation(libs.jsch)
 +    // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它
@@ -1424,7 +1426,7 @@ index 3d07c97..0f58bdb 100644
      implementation(libs.okhttp)
      implementation(libs.okhttp.sse)
      implementation(libs.retrofit)
-@@ -325,26 +296,4 @@ dependencies {
+@@ -325,26 +298,4 @@ dependencies {
      debugImplementation(libs.androidx.ui.test.manifest)
  }
  
@@ -12927,18 +12929,19 @@ index e688510..d6c97de 100644
              .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
              .setName(getString(R.string.notification_channel_generation_foreground))
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-index eecc60c..ffcde4a 100644
+index eecc60c..8c8be70 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-@@ -79,6 +79,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
+@@ -79,6 +79,8 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
++import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantProgrammingToolsPage
 +import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
-@@ -121,6 +122,8 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
+@@ -121,6 +123,8 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
@@ -12947,7 +12950,7 @@ index eecc60c..ffcde4a 100644
  import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
  import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
  import me.rerere.rikkahub.ui.pages.stats.StatsPage
-@@ -253,6 +256,10 @@ class RouteActivity : ComponentActivity() {
+@@ -253,6 +257,10 @@ class RouteActivity : ComponentActivity() {
                      is AppEvent.McpOAuthCallback -> Unit // 由 McpManager 消费
                      is AppEvent.ChatGenerationUpdate -> Unit // 由 ChatNotificationManager 消费
                      is AppEvent.ChatGenerationEnded -> Unit // 由 ChatNotificationManager 消费
@@ -12958,7 +12961,7 @@ index eecc60c..ffcde4a 100644
                  }
              }
          }
-@@ -389,6 +396,14 @@ class RouteActivity : ComponentActivity() {
+@@ -389,6 +397,18 @@ class RouteActivity : ComponentActivity() {
                                  AssistantLocalToolPage(key.id)
                              }
  
@@ -12970,10 +12973,14 @@ index eecc60c..ffcde4a 100644
 +                                SherpaModelStorePage()
 +                            }
 +
++                            entry<Screen.AssistantProgrammingTools> { key ->
++                                AssistantProgrammingToolsPage(key.id)
++                            }
++
                              entry<Screen.AssistantInjections> { key ->
                                  AssistantExtensionsPage(key.id)
                              }
-@@ -483,6 +498,10 @@ class RouteActivity : ComponentActivity() {
+@@ -483,6 +503,10 @@ class RouteActivity : ComponentActivity() {
                                  SettingWebPage()
                              }
  
@@ -12984,7 +12991,7 @@ index eecc60c..ffcde4a 100644
  
                              entry<Screen.Debug> {
                                  DebugPage()
-@@ -648,6 +667,13 @@ sealed interface Screen : NavKey {
+@@ -648,6 +672,17 @@ sealed interface Screen : NavKey {
      @Serializable
      data class AssistantLocalTool(val id: String) : Screen
  
@@ -12995,10 +13002,14 @@ index eecc60c..ffcde4a 100644
 +    @Serializable
 +    data object SettingSherpaModels : Screen
 +
++    /** 编程开发工具（Git / 语法检查 / 串口 …）—— 本地工具页的纯入口，内部工具各自有开关 */
++    @Serializable
++    data class AssistantProgrammingTools(val id: String) : Screen
++
      @Serializable
      data class AssistantInjections(val id: String) : Screen
  
-@@ -705,6 +731,9 @@ sealed interface Screen : NavKey {
+@@ -705,6 +740,9 @@ sealed interface Screen : NavKey {
      @Serializable
      data object SettingSpeech : Screen
  
@@ -13723,6 +13734,632 @@ index 0000000..3c49fcb
 +        ))
 +    },
 +)
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/GitTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/GitTools.kt
+new file mode 100644
+index 0000000..d72af1d
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/GitTools.kt
+@@ -0,0 +1,620 @@
++package me.rerere.rikkahub.data.ai.tools
++
++import android.content.Context
++import android.util.Log
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonArray
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.longOrNull
++import kotlinx.serialization.json.put
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++import org.eclipse.jgit.api.Git
++import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
++import java.io.File
++
++private const val TAG = "GitTools"
++
++/** 公共下载目录（与 FileTools / DownloadTools 一致） */
++private const val PUBLIC_ROOT = "/storage/emulated/0/Download"
++
++/** 「编程开发工具」下的仓库默认存放目录名（位于下载根目录下） */
++private const val REPOS_SUBDIR = "repos"
++
++/** 未配置 git 身份时使用的默认值 */
++private const val DEFAULT_USER_NAME = "RikkaSharp"
++private const val DEFAULT_USER_EMAIL = "rikkasharp@localhost"
++
++/**
++ * 真正的 git 工具（基于 JGit，不是快照下载）。
++ *
++ * ── 与 `repo_download` 的区别 ──
++ * `repo_download` 拿的是某分支的 tarball 快照（**没有 .git 目录**，不能提交/看历史）；
++ * 本组工具用 JGit 做**真正的 git 操作**：克隆（含历史）、查看状态与差异、提交、分支、推送/拉取。
++ *
++ * ── 在 Android 上的两个注意点 ──
++ * 1. **git 身份**：JGit 提交时要求 author/committer 的 name/email。
++ *    Android 上没有全局 git 配置，故代码里会在缺失时**自动写入默认值**，
++ *    避免用户第一次提交就撞上 "No identity" 之类的错误。
++ * 2. **仓库位置**：默认放在下载根目录下的 `repos/`，让用户能在文件管理器里找到。
++ *    若公共目录不可写（未授予「所有文件访问权限」），回退到 App 私有目录。
++ *
++ * ── 凭据 ──
++ * 私有仓库的 push/pull 需要 token，通过**工具参数**传入（HTTPS 方式）。
++ * 不写入任何日志，也不持久化。
++ */
++fun createGitTools(context: Context): List<Tool> = listOf(
++    gitCloneTool(context),
++    gitStatusTool(context),
++    gitLogTool(context),
++    gitDiffTool(context),
++    gitCommitTool(context),
++    gitBranchTool(context),
++    gitSyncTool(context),
++)
++
++// ────────────────────────── 公共辅助 ──────────────────────────
++
++/**
++ * 解析下载根目录。
++ *
++ * 与 `DownloadTools.resolveRootDir` 同样的策略（优先公共 Download，不可写则回退私有目录）。
++ * 这里**独立实现**而不去复用，是为了不触碰已经验证过的下载工具代码。
++ */
++private fun resolveRoot(context: Context): File {
++    val public = File(PUBLIC_ROOT)
++    val ok = runCatching { public.mkdirs(); public.isDirectory && public.canWrite() }.getOrDefault(false)
++    return if (ok) public else File(context.filesDir, "downloads").apply { mkdirs() }
++}
++
++/** 把用户给的路径解析成仓库目录；相对路径按下载根目录处理 */
++private fun resolveRepoDir(context: Context, path: String): File {
++    val f = File(path)
++    return if (f.isAbsolute) f else File(resolveRoot(context), path)
++}
++
++/** 打开一个已有仓库（校验 .git 是否存在，给出可读错误） */
++private fun openRepo(context: Context, path: String): Pair<Git, File> {
++    val dir = resolveRepoDir(context, path)
++    if (!File(dir, ".git").exists()) {
++        throw IllegalArgumentException(
++            "不是 git 仓库：${dir.absolutePath}\n" +
++                "（该目录下没有 .git。若你只有下载来的快照代码，请先用 git_clone 克隆）"
++        )
++    }
++    return Git.open(dir) to dir
++}
++
++/** 缺省身份时补上，避免 commit 因 "No identity" 失败 */
++private fun ensureIdentity(git: Git, name: String?, email: String?) {
++    val config = git.repository.config
++    val n = config.getString("user", null, "name") ?: name ?: DEFAULT_USER_NAME
++    val e = config.getString("user", null, "email") ?: email ?: DEFAULT_USER_EMAIL
++    if (config.getString("user", null, "name") == null) {
++        config.setString("user", null, "name", n)
++    }
++    if (config.getString("user", null, "email") == null) {
++        config.setString("user", null, "email", e)
++    }
++    runCatching { config.save() }
++}
++
++private fun creds(token: String?) =
++    token?.takeIf { it.isNotBlank() }?.let { UsernamePasswordCredentialsProvider(it, "") }
++
++/** 文本结果（统一走 UIMessagePart.Text，与其它工具一致） */
++private fun text(json: kotlinx.serialization.json.JsonObject) =
++    listOf(UIMessagePart.Text(json.toString()))
++
++/** 限制字符串长度，避免把整个文件塞进上下文 */
++private fun String.cap(max: Int = 4000): String =
++    if (length <= max) this else substring(0, max) + "\n…（已截断，共 $length 字符）"
++
++// ────────────────────────── 1. clone ──────────────────────────
++
++private fun gitCloneTool(context: Context): Tool = Tool(
++    name = "git_clone",
++    description = """
++        Clone a git repository with full history (real git, via JGit) into a local directory.
++        Unlike repo_download (which fetches a tarball snapshot with no .git), the result is a working
++        repository you can commit to, branch, and push.
++        For large repositories prefer depth=1 (shallow) to keep the download small.
++        If the operation exceeds the tool timeout, clone again later — partially cloned directories
++        are left in place and git will refuse to reuse them; delete the directory first.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("url", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Repository URL, e.g. https://github.com/owner/repo.git")
++                })
++                put("path", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Destination directory. Relative paths go under the download root's '$REPOS_SUBDIR'. " +
++                        "Defaults to <repos>/<repo-name>.")
++                })
++                put("branch", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Branch or tag to check out after cloning")
++                })
++                put("depth", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "Shallow clone depth. 1 = only the latest commit (much faster). Omit for full history.")
++                })
++            },
++            required = listOf("url"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val url = obj["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("url is required")
++        val branch = obj["branch"]?.jsonPrimitive?.contentOrNull
++        val depth = obj["depth"]?.jsonPrimitive?.longOrNull?.toInt()?.takeIf { it > 0 }
++
++        val repoName = url.substringBefore('?').substringAfterLast('/')
++            .removeSuffix(".git").ifBlank { "repo" }
++        val pathArg = obj["path"]?.jsonPrimitive?.contentOrNull
++        val dest = when {
++            pathArg.isNullOrBlank() -> File(resolveRoot(context), "$REPOS_SUBDIR/$repoName")
++            File(pathArg).isAbsolute -> File(pathArg)
++            else -> File(resolveRoot(context), pathArg)
++        }
++        if (dest.exists() && dest.list()?.isNotEmpty() == true) {
++            throw IllegalArgumentException(
++                "目标目录非空：${dest.absolutePath}\n" +
++                    "git 不会克隆到非空目录。请改用别的 path，或先删除该目录。"
++            )
++        }
++
++        withContext(Dispatchers.IO) {
++            dest.parentFile?.mkdirs()
++            val cmd = Git.cloneRepository()
++                .setURI(url)
++                .setDirectory(dest)
++                .setCloneAllBranches(depth == null)
++            branch?.takeIf { it.isNotBlank() }?.let { cmd.setBranch(it) }
++            depth?.let { cmd.setDepth(it) }
++            cmd.call().use { git ->
++                val head = git.repository.exactRef("HEAD")?.objectId?.name?.take(10) ?: "?"
++                Log.i(TAG, "cloned $url -> ${dest.absolutePath}")
++                text(buildJsonObject {
++                    put("ok", JsonPrimitive(true))
++                    put("path", JsonPrimitive(dest.absolutePath))
++                    put("head", JsonPrimitive(head))
++                    put("shallow", JsonPrimitive(depth != null))
++                })
++            }
++        }
++    },
++)
++
++// ────────────────────────── 2. status ──────────────────────────
++
++private fun gitStatusTool(context: Context): Tool = Tool(
++    name = "git_status",
++    description = "Show the working tree status of a local repository: current branch, staged/added/modified/" +
++        "untracked files, and how far the branch is ahead/behind its upstream.",
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Repository directory (relative to download root, or absolute)")
++                })
++            },
++            required = listOf("repo"),
++        )
++    },
++    execute = { args ->
++        val repo = args.jsonObject["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, dir) ->
++                git.use { g ->
++                    val st = g.status().call()
++                    text(buildJsonObject {
++                        put("path", JsonPrimitive(dir.absolutePath))
++                        put("branch", JsonPrimitive(g.repository.branch ?: "(detached)"))
++                        put("clean", JsonPrimitive(st.isClean))
++                        put("added", buildJsonArray { st.added.forEach { add(it) } })
++                        put("changed", buildJsonArray { st.changed.forEach { add(it) } })
++                        put("modified", buildJsonArray { st.modified.forEach { add(it) } })
++                        put("missing", buildJsonArray { st.missing.forEach { add(it) } })
++                        put("untracked", buildJsonArray { st.untracked.forEach { add(it) } })
++                        put("conflicting", buildJsonArray { st.conflicting.forEach { add(it) } })
++                    })
++                }
++            }
++        }
++    },
++)
++
++// ────────────────────────── 3. log ──────────────────────────
++
++private fun gitLogTool(context: Context): Tool = Tool(
++    name = "git_log",
++    description = "Show recent commits of a local repository (hash, author, date, message).",
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Repository directory")
++                })
++                put("limit", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "How many commits to list (default 20, max 200)")
++                })
++            },
++            required = listOf("repo"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        val limit = (obj["limit"]?.jsonPrimitive?.longOrNull?.toInt() ?: 20).coerceIn(1, 200)
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, _) ->
++                git.use { g ->
++                    val commits = g.log().setMaxCount(limit).call().toList()
++                    text(buildJsonObject {
++                        put("count", JsonPrimitive(commits.size))
++                        put("commits", buildJsonArray {
++                            commits.forEach { c ->
++                                add(buildJsonObject {
++                                    put("hash", JsonPrimitive(c.name.take(10)))
++                                    put("author", JsonPrimitive(c.authorIdent.name))
++                                    put("email", JsonPrimitive(c.authorIdent.emailAddress))
++                                    put("when", JsonPrimitive(c.authorIdent.getWhen().toInstant().toString()))
++                                    put("message", JsonPrimitive(c.fullMessage.trim().cap(500)))
++                                })
++                            }
++                        })
++                    })
++                }
++            }
++        }
++    },
++)
++
++// ────────────────────────── 4. diff ──────────────────────────
++
++private fun gitDiffTool(context: Context): Tool = Tool(
++    name = "git_diff",
++    description = "Show the diff of a local repository. By default shows unstaged changes; " +
++        "set staged=true to see what is about to be committed.",
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Repository directory")
++                })
++                put("staged", buildJsonObject {
++                    put("type", "boolean")
++                    put("description", "true = diff of the index (staged), false = working tree (default)")
++                })
++                put("path", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Optional file path filter")
++                })
++            },
++            required = listOf("repo"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        val staged = obj["staged"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
++        val path = obj["path"]?.jsonPrimitive?.contentOrNull
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, _) ->
++                git.use { g ->
++                    val cmd = g.diff().setCached(staged)
++                    path?.takeIf { it.isNotBlank() }?.let { cmd.setPathFilter(it) }
++                    val diff = cmd.call()
++                    text(buildJsonObject {
++                        put("staged", JsonPrimitive(staged))
++                        put("files", JsonPrimitive(diff.size()))
++                        put("diff", JsonPrimitive(diff.toString().cap(8000)))
++                    })
++                }
++            }
++        }
++    },
++)
++
++// ────────────────────────── 5. commit ──────────────────────────
++
++private fun gitCommitTool(context: Context): Tool = Tool(
++    name = "git_commit",
++    description = """
++        Stage files and create a commit in a local repository.
++        By default stages everything (add -A equivalent). Pass paths to stage only specific files.
++        The commit does NOT push — use git_sync with action="push" for that.
++        Author identity defaults to a generic name if the repository has none configured.
++    """.trimIndent().replace("\n", " "),
++    // 提交会改动本地仓库，但不会影响设备或远程；与 shell/ssh 相比风险有限，默认不要求授权
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Repository directory")
++                })
++                put("message", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Commit message")
++                })
++                put("paths", buildJsonObject {
++                    put("type", "array")
++                    put("description", "Optional list of file paths to stage. Omit to stage all changes.")
++                    put("items", buildJsonObject { put("type", "string") })
++                })
++                put("author_name", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Optional author name (otherwise repo config or a default)")
++                })
++                put("author_email", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Optional author email")
++                })
++            },
++            required = listOf("repo", "message"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        val message = obj["message"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("message is required")
++        val paths = (obj["paths"] as? kotlinx.serialization.json.JsonArray)
++            ?.mapNotNull { it.jsonPrimitive.contentOrNull }?.filter { it.isNotBlank() }.orEmpty()
++        val name = obj["author_name"]?.jsonPrimitive?.contentOrNull
++        val email = obj["author_email"]?.jsonPrimitive?.contentOrNull
++
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, _) ->
++                git.use { g ->
++                    ensureIdentity(g, name, email)
++                    val add = g.add()
++                    if (paths.isEmpty()) add.addFilepattern(".") else paths.forEach { add.addFilepattern(it) }
++                    add.call()
++
++                    val st = g.status().call()
++                    if (st.isClean) {
++                        return@withContext text(buildJsonObject {
++                            put("ok", JsonPrimitive(false))
++                            put("reason", JsonPrimitive("没有需要提交的改动（工作区干净）"))
++                        })
++                    }
++
++                    val rev = g.commit().setMessage(message).call()
++                    text(buildJsonObject {
++                        put("ok", JsonPrimitive(true))
++                        put("hash", JsonPrimitive(rev.name.take(10)))
++                        put("message", JsonPrimitive(rev.fullMessage.trim()))
++                        // parentCount 是**父提交数**（0=初始提交，1=普通提交，>1=合并提交），
++                        // 不是改动文件数 —— 先前我误标成 files，已修正
++                        put("parents", JsonPrimitive(rev.parentCount))
++                    })
++                }
++            }
++        }
++    },
++)
++
++// ────────────────────────── 6. branch ──────────────────────────
++
++private fun gitBranchTool(context: Context): Tool = Tool(
++    name = "git_branch",
++    description = """
++        Branch operations on a local repository.
++        action="list" (default): list local branches with the current one marked.
++        action="create": create a branch with name (and switch to it unless checkout=false).
++        action="checkout": switch to an existing branch or tag given by name.
++        action="delete": delete the branch given by name.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject { put("type", "string"); put("description", "Repository directory") })
++                put("action", buildJsonObject {
++                    put("type", "string")
++                    put("description", "list | create | checkout | delete")
++                })
++                put("name", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Branch (or tag) name — required for create/checkout/delete")
++                })
++                put("checkout", buildJsonObject {
++                    put("type", "boolean")
++                    put("description", "For action=create: switch to the new branch (default true)")
++                })
++            },
++            required = listOf("repo"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        val action = obj["action"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "list"
++        val name = obj["name"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, _) ->
++                git.use { g ->
++                    when (action) {
++                        "list" -> {
++                            val cur = g.repository.branch
++                            val branches = g.branchList().call().map {
++                                org.eclipse.jgit.lib.Repository.shortenRefName(it.name)
++                            }
++                            text(buildJsonObject {
++                                put("current", JsonPrimitive(cur ?: "(detached)"))
++                                put("branches", buildJsonArray {
++                                    branches.forEach { b ->
++                                        add(buildJsonObject {
++                                            put("name", JsonPrimitive(b))
++                                            put("current", JsonPrimitive(b == cur))
++                                        })
++                                    }
++                                })
++                            })
++                        }
++                        "create" -> {
++                            val n = name ?: error("name is required for action=create")
++                            g.branchCreate().setName(n).call()
++                            val switch = obj["checkout"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: true
++                            if (switch) g.checkout().setName(n).call()
++                            text(buildJsonObject {
++                                put("ok", JsonPrimitive(true))
++                                put("created", JsonPrimitive(n))
++                                put("switched", JsonPrimitive(switch))
++                            })
++                        }
++                        "checkout" -> {
++                            val n = name ?: error("name is required for action=checkout")
++                            g.checkout().setName(n).call()
++                            text(buildJsonObject {
++                                put("ok", JsonPrimitive(true))
++                                put("checked_out", JsonPrimitive(n))
++                            })
++                        }
++                        "delete" -> {
++                            val n = name ?: error("name is required for action=delete")
++                            val deleted = g.branchDelete().setBranchNames(n).call()
++                            text(buildJsonObject {
++                                put("ok", JsonPrimitive(true))
++                                put("deleted", buildJsonArray { deleted.forEach { add(it) } })
++                            })
++                        }
++                        else -> error("未知 action：$action（支持 list / create / checkout / delete）")
++                    }
++                }
++            }
++        }
++    },
++)
++
++// ────────────────────────── 7. pull / push ──────────────────────────
++
++private fun gitSyncTool(context: Context): Tool = Tool(
++    name = "git_sync",
++    description = """
++        Pull from or push to the repository's remote (HTTPS).
++        action="pull": fetch + merge the upstream branch.
++        action="push": push the current branch to origin.
++        For private repositories pass a personal access token; it is used only for this call and never logged.
++        Note: HTTPS remotes only — for SSH remotes use the SSH tools on a host that has git installed.
++    """.trimIndent().replace("\n", " "),
++    // 会改动远程仓库（push），属于需要谨慎的操作 —— 但用户未要求对它单独授权，
++    // 且需显式传 action="push"，故保持默认（不强制授权）。如需可后续加入 LocalToolDefaultApprovals。
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("repo", buildJsonObject { put("type", "string"); put("description", "Repository directory") })
++                put("action", buildJsonObject {
++                    put("type", "string")
++                    put("description", "pull | push")
++                })
++                put("token", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Optional HTTPS access token for private repositories")
++                })
++                put("remote", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Remote name (default origin)")
++                })
++                put("branch", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Remote branch name (optional)")
++                })
++                put("set_upstream", buildJsonObject {
++                    put("type", "boolean")
++                    put("description", "For push: set the upstream tracking branch (default false)")
++                })
++            },
++            required = listOf("repo", "action"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            ?: error("repo is required")
++        val action = obj["action"]?.jsonPrimitive?.contentOrNull?.lowercase()
++            ?: error("action is required (pull | push)")
++        val token = obj["token"]?.jsonPrimitive?.contentOrNull
++        val remote = obj["remote"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: "origin"
++        val branch = obj["branch"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++        val setUpstream = obj["set_upstream"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
++        val c = creds(token)
++
++        withContext(Dispatchers.IO) {
++            openRepo(context, repo).let { (git, _) ->
++                git.use { g ->
++                    when (action) {
++                        "pull" -> {
++                            val cmd = g.pull().setRemote(remote)
++                            c?.let { cmd.setCredentialsProvider(it) }
++                            branch?.let { cmd.setRemoteBranchName(it) }
++                            val result = cmd.call()
++                            text(buildJsonObject {
++                                put("ok", JsonPrimitive(result.isSuccessful))
++                                put("action", JsonPrimitive("pull"))
++                                put("remote", JsonPrimitive(remote))
++                                put("message", JsonPrimitive(result.mergeResult?.mergeStatus?.toString() ?: "ok"))
++                            })
++                        }
++                        "push" -> {
++                            val cmd = g.push().setRemote(remote)
++                            c?.let { cmd.setCredentialsProvider(it) }
++                            if (setUpstream) cmd.setSetUpstream(true)
++                            val result = cmd.call()
++                            text(buildJsonObject {
++                                put("ok", JsonPrimitive(true))
++                                put("action", JsonPrimitive("push"))
++                                put("remote", JsonPrimitive(remote))
++                                put("results", buildJsonArray {
++                                    result.forEach { r ->
++                                        add(buildJsonObject {
++                                            // RemoteRefUpdate 没有 getName()，远程引用名是 getRemoteName()
++                                            put("remote_refs", JsonPrimitive(
++                                                r.remoteUpdates.joinToString(", ") { it.remoteName ?: "?" }
++                                            ))
++                                            // getMessages() 返回的是 Message 对象集合（不是 String），
++                                            // 用 toString() 输出，避免依赖其内部结构
++                                            put("messages", JsonPrimitive(
++                                                r.messages?.joinToString("; ") { it.toString() } ?: ""
++                                            ))
++                                        })
++                                    }
++                                })
++                            })
++                        }
++                        else -> error("未知 action：$action（支持 pull / push）")
++                    }
++                }
++            }
++        }
++    },
++)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt
 new file mode 100644
 index 0000000..7322790
@@ -13787,10 +14424,10 @@ index 0000000..7322790
 +fun localToolApprovalChecker(overrides: Map<String, Boolean>): (String) -> Boolean =
 +    { name -> resolveLocalToolApproval(name, overrides) }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-index dc0ab1a..c1512fa 100644
+index dc0ab1a..36fb9ec 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-@@ -119,6 +119,24 @@ sealed class LocalToolOption {
+@@ -119,6 +119,35 @@ sealed class LocalToolOption {
      @Serializable
      @SerialName("calendar")
      data object Calendar : LocalToolOption()
@@ -13812,10 +14449,21 @@ index dc0ab1a..c1512fa 100644
 +    @Serializable
 +    @SerialName("download_tools")
 +    data object DownloadTools : LocalToolOption()
++
++    /**
++     * Git 工具（真正的 git，基于 JGit）。
++     *
++     * 与 [DownloadTools] 里的 `repo_download` 不同：后者只拿代码快照（无 .git），
++     * 这个能做完整操作 —— 克隆含历史、提交、分支、推送。
++     * 入口在「编程开发工具」子页面。
++     */
++    @Serializable
++    @SerialName("git_tools")
++    data object GitTools : LocalToolOption()
  }
  
  class LocalTools(
-@@ -201,18 +219,12 @@ class LocalTools(
+@@ -201,18 +230,12 @@ class LocalTools(
                  "The JS context persists between calls — libraries loaded via action='load' stay available.\n" +
                  "⚠️ NOTE: Eval runs in a block scope — `const`/`let` are local to each call (no redeclaration errors).\n" +
                  "Use `var` for variables that need to persist across multiple calls.\n\n" +
@@ -13837,7 +14485,7 @@ index dc0ab1a..c1512fa 100644
  
                  "- action: 'eval' (default) | 'load' | 'reset'\n" +
                  "- library: asset filename without .js (for action='load') — loads once, cached\n" +
-@@ -284,12 +296,6 @@ class LocalTools(
+@@ -284,12 +307,6 @@ class LocalTools(
                                  val lib = library ?: throw IllegalArgumentException("library is required for action='load'")
                                  val ctx = getOrCreateJSContext()
                                  if (lib !in loadedLibraries) {
@@ -13850,12 +14498,15 @@ index dc0ab1a..c1512fa 100644
                                      val engineCode = context.assets.open("$lib.js").bufferedReader().readText()
                                      ctx.evaluate(engineCode)
                                      loadedLibraries.add(lib)
-@@ -470,6 +476,9 @@ class LocalTools(
+@@ -470,6 +487,12 @@ class LocalTools(
              tools.add(calendarQueryTool)
              tools.add(calendarCreateTool)
          }
 +        if (options.contains(LocalToolOption.DownloadTools)) {
 +            tools.addAll(createDownloadTools(context))
++        }
++        if (options.contains(LocalToolOption.GitTools)) {
++            tools.addAll(createGitTools(context))
 +        }
          return tools
      }
@@ -17305,7 +17956,7 @@ index 42d6a3d..5401a27 100644
          val processed = text.stripMarkdown()
          controller.speak(processed, flushCalled)
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
-index 2eeb597..9f3f850 100644
+index 2eeb597..dceaac3 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 @@ -4,6 +4,7 @@ import android.Manifest
@@ -17395,7 +18046,7 @@ index 2eeb597..9f3f850 100644
                      )
                  }
              )
-@@ -388,6 +398,104 @@ private fun AssistantLocalToolContent(
+@@ -388,6 +398,117 @@ private fun AssistantLocalToolContent(
                      )
                  }
              )
@@ -17419,6 +18070,19 @@ index 2eeb597..9f3f850 100644
 +                        )
 +                        Icon(HugeIcons.ArrowRight01, contentDescription = null)
 +                    }
++                }
++            )
++            // 编程开发工具：纯入口（无总开关）—— 它是分类容器，具体工具在子页面里各自开关
++            item(
++                onClick = { nav.navigate(Screen.AssistantProgrammingTools(assistant.id.toString())) },
++                headlineContent = {
++                    Text(stringResource(R.string.assistant_page_programming_tools))
++                },
++                supportingContent = {
++                    Text(stringResource(R.string.assistant_page_programming_tools_desc))
++                },
++                trailingContent = {
++                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
 +                }
 +            )
 +            // 下载类工具：HTTP 下载 / 仓库快照下载，支持同步与异步两种模式
@@ -17499,6 +18163,115 @@ index 2eeb597..9f3f850 100644
 +            )
 +        },
 +    )
++}
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt
+new file mode 100644
+index 0000000..6a68bb3
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt
+@@ -0,0 +1,103 @@
++package me.rerere.rikkahub.ui.pages.assistant.detail
++
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.imePadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.LargeFlexibleTopAppBar
++import androidx.compose.material3.Scaffold
++import androidx.compose.material3.Switch
++import androidx.compose.material3.Text
++import androidx.compose.material3.TopAppBarDefaults
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.input.nestedscroll.nestedScroll
++import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.unit.dp
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import me.rerere.rikkahub.R
++import me.rerere.rikkahub.data.ai.tools.LocalToolOption
++import me.rerere.rikkahub.ui.components.nav.BackButton
++import me.rerere.rikkahub.ui.components.ui.CardGroup
++import me.rerere.rikkahub.ui.theme.CustomColors
++import org.koin.androidx.compose.koinViewModel
++import org.koin.core.parameter.parametersOf
++
++/**
++ * 「编程开发工具」子页面。
++ *
++ * 入口位于「助手 → 本地工具」，是**纯入口项**（无总开关）——
++ * 因为它是若干独立工具的**分类容器**，而不是一个能力本身。
++ * 真正的开关在页面内逐个工具上。
++ *
++ * 当前包含（后续批次继续加入）：
++ *  · Git 工具 —— 真正的 git（JGit）：克隆含历史、状态、日志、差异、提交、分支、拉取/推送
++ *
++ * 规划中：语法检查器、串口工具（USB，HEX/文本两种显示模式）等。
++ *
++ * ★注意：CardGroup 的 content 是 `CardGroupScope.() -> Unit`（**非 @Composable**），
++ * 所以 stringResource 等 @Composable 必须在 CardGroup **之前**求值，
++ * 条目也要做成 CardGroupScope 的扩展函数。
++ */
++@Composable
++fun AssistantProgrammingToolsPage(id: String) {
++    val vm: AssistantDetailVM = koinViewModel(
++        parameters = { parametersOf(id) }
++    )
++    val assistant by vm.assistant.collectAsStateWithLifecycle()
++    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
++
++    fun toggle(option: LocalToolOption, enabled: Boolean) {
++        val newTools = if (enabled) {
++            assistant.localTools + option
++        } else {
++            assistant.localTools - option
++        }
++        vm.update(assistant.copy(localTools = newTools))
++    }
++
++    // @Composable 求值必须在 CardGroup 之前
++    val gitTitle = stringResource(R.string.programming_git_tools)
++    val gitDesc = stringResource(R.string.programming_git_tools_desc)
++    val gitChecked = assistant.localTools.contains(LocalToolOption.GitTools)
++
++    Scaffold(
++        topBar = {
++            LargeFlexibleTopAppBar(
++                title = { Text(stringResource(R.string.programming_page_title)) },
++                navigationIcon = { BackButton() },
++                scrollBehavior = scrollBehavior,
++                colors = CustomColors.topBarColors,
++            )
++        },
++        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
++        containerColor = CustomColors.topBarColors.containerColor,
++    ) { innerPadding ->
++        Column(
++            modifier = Modifier
++                .fillMaxSize()
++                .verticalScroll(rememberScrollState())
++                .padding(horizontal = 16.dp)
++                .padding(innerPadding)
++                .imePadding(),
++            verticalArrangement = Arrangement.spacedBy(8.dp),
++        ) {
++            CardGroup {
++                item(
++                    headlineContent = { Text(gitTitle) },
++                    supportingContent = { Text(gitDesc) },
++                    trailingContent = {
++                        Switch(
++                            checked = gitChecked,
++                            onCheckedChange = { toggle(LocalToolOption.GitTools, it) },
++                        )
++                    },
++                )
++            }
++        }
++    }
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt
 new file mode 100644
@@ -19012,10 +19785,10 @@ index ba9a6ee..d0e1d65 100644
              if (config.requestPromotedOngoing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                  setRequestPromotedOngoing(true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
-index 5708616..0e53662 100644
+index 5708616..3ea97d8 100644
 --- a/app/src/main/keepRules/rikkahub.keep
 +++ b/app/src/main/keepRules/rikkahub.keep
-@@ -28,6 +28,52 @@
+@@ -28,6 +28,78 @@
  -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
  -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
  
@@ -19060,6 +19833,32 @@ index 5708616..0e53662 100644
 +# 排查代价说明：这个 bug 无法用 C API 复现 —— C 版本用结构体传参、
 +# 不做任何字段名查找，所以底层怎么测都是好的；而 JNI 版本才会中招。
 +-keep class com.k2fsa.sherpa.onnx.** { *; }
++
++# ── JGit（编程开发工具里的真 git）────────────────────────────────────
++# **必须整体 keep。** 原因与 JSch 同类：JGit 通过 ServiceLoader / 反射按「名字」
++# 加载实现类，静态分析看不到这些引用，R8 会把它们裁掉或改名，运行期才炸。
++#   · org.eclipse.jgit.transport.Transport  —— 各协议实现（git/ssh/file/http）
++#   · org.eclipse.jgit.transport.Protocol
++#   · org.eclipse.jgit.transport.SshSessionFactory
++#   · org.eclipse.jgit.hooks.*（pre-commit 等）
++#   · org.eclipse.jgit.lib.GpgSigner
++-keep class org.eclipse.jgit.** { *; }
++
++# JGit 的可选依赖：这些模块我们**没有**引入，但 JGit 代码里引用了它们的类型。
++# 不 dontwarn 的话 R8 在整体 keep 后会因「解析不到的引用」直接失败。
++-dontwarn org.slf4j.**
++-dontwarn javax.servlet.**
++-dontwarn org.eclipse.jgit.lfs.**
++-dontwarn org.eclipse.jgit.gpg.bc.**
++-dontwarn org.eclipse.jgit.ssh.apache.**
++-dontwarn org.eclipse.jgit.ssh.jsch.**
++-dontwarn org.eclipse.jgit.http.server.**
++-dontwarn com.jcraft.jsch.**
++-dontwarn org.apache.sshd.**
++-dontwarn org.bouncycastle.**
++-dontwarn com.googlecode.javaewah.**
++-dontwarn org.apache.http.**
++-dontwarn org.ietf.jgss.**
 +
 +# BouncyCastle 内部大量使用反射/可选 API，放宽警告
 +-dontwarn org.bouncycastle.**
@@ -37119,7 +37918,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..437ee47 100644
+index 8cb3cf1..5f7e0f5 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -37131,7 +37930,7 @@ index 8cb3cf1..437ee47 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,105 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,112 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -37236,9 +38035,16 @@ index 8cb3cf1..437ee47 100644
 +  <string name="notification_channel_tool_activity">工具活动</string>
 +  <string name="notification_tool_activity_title">%1$s 正在执行操作</string>
 +  <string name="notification_tool_activity_subtext">已完成 %1$d 项 · 待批准 %2$d 项</string>
++
++  <!-- 编程开发工具 -->
++  <string name="assistant_page_programming_tools">编程开发工具</string>
++  <string name="assistant_page_programming_tools_desc">Git、语法检查、串口等开发辅助</string>
++  <string name="programming_page_title">编程开发工具</string>
++  <string name="programming_git_tools">Git 工具</string>
++  <string name="programming_git_tools_desc">基于 JGit 的完整 git 操作：克隆（含历史）、状态、日志、差异、提交、分支、拉取/推送</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..0188e36 100644
+index 47ddab2..fbf6ae3 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -37252,7 +38058,7 @@ index 47ddab2..0188e36 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,105 @@
+@@ -1815,4 +1817,112 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -37357,6 +38163,13 @@ index 47ddab2..0188e36 100644
 +  <string name="notification_channel_tool_activity">Tool activity</string>
 +  <string name="notification_tool_activity_title">%1$s is running tools</string>
 +  <string name="notification_tool_activity_subtext">%1$d done · %2$d awaiting approval</string>
++
++  <!-- 编程开发工具 -->
++  <string name="assistant_page_programming_tools">Developer tools</string>
++  <string name="assistant_page_programming_tools_desc">Git, syntax checking, serial port and more</string>
++  <string name="programming_page_title">Developer tools</string>
++  <string name="programming_git_tools">Git</string>
++  <string name="programming_git_tools_desc">Full git operations via JGit: clone with history, status, log, diff, commit, branch, pull/push</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -39583,10 +40396,10 @@ index 164b3af..2c4689d 100644
  kotlin.code.style=official
  android.nonTransitiveRClass=true
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index d597c01..0ae038b 100644
+index d597c01..dd05ce9 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -66,9 +66,20 @@ slf4j = "2.0.18"
+@@ -66,9 +66,26 @@ slf4j = "2.0.18"
  sqlite-android = "-SNAPSHOT"
  termux = "0.118.0"
  diffutils = "4.17"
@@ -39598,12 +40411,18 @@ index d597c01..0ae038b 100644
 +# 仅用于解压 sherpa-onnx 模型包（.tar.bz2）。Android 无内置 bz2 解压。
 +# class-file 52(Java 8)，Android 兼容。zstd-jni/dec/xz/asm 均为 optional，不会被传递引入。
 +commons-compress = "1.28.0"
++# JGit：真正的 git 实现（含历史/提交/推送），纯 Java。
++# 选 7.8.0：class-file 61(Java 17)，项目用 Java 21 编译，AGP 9.x 的 D8 支持。
++# 需要 R8 keep —— JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
++# 静态分析看不到（与 JSch 把类名放进配置字符串是同类问题，见 keepRules 注释）。
++jgit = "7.8.0.202609011348-r"
  
  [libraries]
  android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 +jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 +bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 +commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
++jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
  kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
  kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
  androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

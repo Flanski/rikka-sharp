@@ -70,6 +70,32 @@
 # 不做任何字段名查找，所以底层怎么测都是好的；而 JNI 版本才会中招。
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 
+# ── JGit（编程开发工具里的真 git）────────────────────────────────────
+# **必须整体 keep。** 原因与 JSch 同类：JGit 通过 ServiceLoader / 反射按「名字」
+# 加载实现类，静态分析看不到这些引用，R8 会把它们裁掉或改名，运行期才炸。
+#   · org.eclipse.jgit.transport.Transport  —— 各协议实现（git/ssh/file/http）
+#   · org.eclipse.jgit.transport.Protocol
+#   · org.eclipse.jgit.transport.SshSessionFactory
+#   · org.eclipse.jgit.hooks.*（pre-commit 等）
+#   · org.eclipse.jgit.lib.GpgSigner
+-keep class org.eclipse.jgit.** { *; }
+
+# JGit 的可选依赖：这些模块我们**没有**引入，但 JGit 代码里引用了它们的类型。
+# 不 dontwarn 的话 R8 在整体 keep 后会因「解析不到的引用」直接失败。
+-dontwarn org.slf4j.**
+-dontwarn javax.servlet.**
+-dontwarn org.eclipse.jgit.lfs.**
+-dontwarn org.eclipse.jgit.gpg.bc.**
+-dontwarn org.eclipse.jgit.ssh.apache.**
+-dontwarn org.eclipse.jgit.ssh.jsch.**
+-dontwarn org.eclipse.jgit.http.server.**
+-dontwarn com.jcraft.jsch.**
+-dontwarn org.apache.sshd.**
+-dontwarn org.bouncycastle.**
+-dontwarn com.googlecode.javaewah.**
+-dontwarn org.apache.http.**
+-dontwarn org.ietf.jgss.**
+
 # BouncyCastle 内部大量使用反射/可选 API，放宽警告
 -dontwarn org.bouncycastle.**
 -dontwarn javax.naming.**
