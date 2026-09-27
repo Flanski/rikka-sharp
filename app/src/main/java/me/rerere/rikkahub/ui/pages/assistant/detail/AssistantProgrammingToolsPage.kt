@@ -70,6 +70,12 @@ fun AssistantProgrammingToolsPage(id: String) {
     val lintTitle = stringResource(R.string.programming_code_linter)
     val lintDesc = stringResource(R.string.programming_code_linter_desc)
     val lintChecked = assistant.localTools.contains(LocalToolOption.CodeLinter)
+    val serialTitle = stringResource(R.string.programming_serial_port)
+    val serialDesc = stringResource(R.string.programming_serial_port_desc)
+    val serialChecked = assistant.localTools.contains(LocalToolOption.SerialPort)
+    val midiTitle = stringResource(R.string.programming_midi)
+    val midiDesc = stringResource(R.string.programming_midi_desc)
+    val midiChecked = assistant.localTools.contains(LocalToolOption.Midi)
 
     Scaffold(
         topBar = {
@@ -120,6 +126,26 @@ fun AssistantProgrammingToolsPage(id: String) {
                         Switch(
                             checked = lintChecked,
                             onCheckedChange = { toggle(LocalToolOption.CodeLinter, it) },
+                        )
+                    },
+                )
+                item(
+                    headlineContent = { Text(serialTitle) },
+                    supportingContent = { Text(serialDesc) },
+                    trailingContent = {
+                        Switch(
+                            checked = serialChecked,
+                            onCheckedChange = { toggle(LocalToolOption.SerialPort, it) },
+                        )
+                    },
+                )
+                item(
+                    headlineContent = { Text(midiTitle) },
+                    supportingContent = { Text(midiDesc) },
+                    trailingContent = {
+                        Switch(
+                            checked = midiChecked,
+                            onCheckedChange = { toggle(LocalToolOption.Midi, it) },
                         )
                     },
                 )

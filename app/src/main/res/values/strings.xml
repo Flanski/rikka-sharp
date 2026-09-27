@@ -1930,4 +1930,10 @@
   <string name="programming_syntax_checker_desc">Parse-only syntax check (never executes). JS / Python / JSON / XML / HTML use real parsers; other languages get a structure check</string>
   <string name="programming_code_linter">Code linter</string>
   <string name="programming_code_linter_desc">Quality rules: long lines, trailing whitespace, TODO markers, leftover debug output, hardcoded secrets, empty catch blocks</string>
+
+  <string name="programming_serial_port">Serial port</string>
+  <string name="programming_serial_port_desc">USB serial: driver-free CDC-ACM (RP2040 / ESP32-S2/S3) plus CH340 / CP2102 / FTDI. Read and write in hex or text</string>
+
+  <string name="programming_midi">MIDI</string>
+  <string name="programming_midi_desc">List and talk to MIDI devices via the built-in Android MIDI API — driver-free, no extra permission</string>
 </resources>

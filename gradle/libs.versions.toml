@@ -79,6 +79,10 @@ commons-compress = "1.28.0"
 # 需要 R8 keep —— JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
 # 静态分析看不到（与 JSch 把类名放进配置字符串是同类问题，见 keepRules 注释）。
 jgit = "7.8.0.202609011348-r"
+# usb-serial-for-android：USB 转串口（MIT，JitPack）。
+# 覆盖 **CDC-ACM**（RP2040 / ESP32-S2/S3 的原生 USB 串口即此类，属免驱方案）、
+# 以及 CH34x / CP21xx / FTDI / PL2303 等常见桥接芯片。
+usb-serial = "3.8.1"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -86,6 +90,7 @@ jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
+usb-serial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usb-serial" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

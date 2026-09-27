@@ -1930,4 +1930,10 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="programming_syntax_checker_desc">只解析不执行的语法检查。JS / Python / JSON / XML / HTML 用真解析器，其它语言做结构检查</string>
   <string name="programming_code_linter">代码检查器</string>
   <string name="programming_code_linter_desc">质量规则：超长行、尾随空白、TODO 标记、调试输出残留、硬编码凭据、空 catch 块等</string>
+
+  <string name="programming_serial_port">串口工具</string>
+  <string name="programming_serial_port_desc">USB 转串口：免驱 CDC-ACM（RP2040 / ESP32-S2/S3）以及 CH340 / CP2102 / FTDI。支持 HEX 与文本两种模式读写</string>
+
+  <string name="programming_midi">MIDI 工具</string>
+  <string name="programming_midi_desc">用 Android 原生 MIDI API 收发 MIDI 数据 —— 免驱、无需额外权限</string>
 </resources>

@@ -205,6 +205,8 @@ dependencies {
     implementation(libs.commons.compress)
     // JGit：真正的 git（clone/commit/log/push 等），供「编程开发工具」使用
     implementation(libs.jgit)
+    // USB 转串口（CDC-ACM 等）：供「编程开发工具 → 串口工具」使用
+    implementation(libs.usb.serial)
     // SSH（SSH 客户端工具）
     implementation(libs.jsch)
     // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它

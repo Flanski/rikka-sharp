@@ -96,6 +96,13 @@
 -dontwarn org.apache.http.**
 -dontwarn org.ietf.jgss.**
 
+# ── usb-serial-for-android（串口工具）────────────────────────────────
+# 库内部通过 UsbSerialProber 的驱动表按设备 VID/PID 匹配驱动实现类。
+# 这些类是代码里直接引用的（不是字符串反射），理论上 R8 能保住；
+# 但为稳妥仍整体 keep —— 串口驱动的失败只在运行期暴露，代价高，不值得冒险。
+-keep class com.hoho.android.usbserial.** { *; }
+-dontwarn com.hoho.android.usbserial.**
+
 # BouncyCastle 内部大量使用反射/可选 API，放宽警告
 -dontwarn org.bouncycastle.**
 -dontwarn javax.naming.**

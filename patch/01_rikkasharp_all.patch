@@ -1348,7 +1348,7 @@ index 0000000..93056ec
 +    }
 +}
 diff --git a/app/build.gradle.kts b/app/build.gradle.kts
-index 3d07c97..71cf934 100644
+index 3d07c97..6c693b3 100644
 --- a/app/build.gradle.kts
 +++ b/app/build.gradle.kts
 @@ -26,46 +26,10 @@ chaquopy {
@@ -1410,7 +1410,7 @@ index 3d07c97..71cf934 100644
          minSdk = 26
          targetSdk = 37
          versionCode = 173
-@@ -236,6 +200,15 @@ dependencies {
+@@ -236,6 +200,17 @@ dependencies {
      // jetbrains markdown parser
      implementation(libs.jetbrains.markdown)
      // okhttp
@@ -1419,6 +1419,8 @@ index 3d07c97..71cf934 100644
 +    implementation(libs.commons.compress)
 +    // JGit：真正的 git（clone/commit/log/push 等），供「编程开发工具」使用
 +    implementation(libs.jgit)
++    // USB 转串口（CDC-ACM 等）：供「编程开发工具 → 串口工具」使用
++    implementation(libs.usb.serial)
 +    // SSH（SSH 客户端工具）
 +    implementation(libs.jsch)
 +    // BouncyCastle：JSch 在 Android(Java<15) 上处理 ssh-ed25519 必须依赖它
@@ -1426,7 +1428,7 @@ index 3d07c97..71cf934 100644
      implementation(libs.okhttp)
      implementation(libs.okhttp.sse)
      implementation(libs.retrofit)
-@@ -325,26 +298,4 @@ dependencies {
+@@ -325,26 +300,4 @@ dependencies {
      debugImplementation(libs.androidx.ui.test.manifest)
  }
  
@@ -13100,10 +13102,10 @@ index 8abf47c..0c75ff0 100644
      fun evalJavascript(library: String, code: String): String = runBlocking {
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt
 new file mode 100644
-index 0000000..1ad4c85
+index 0000000..680a585
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,554 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
@@ -13112,7 +13114,6 @@ index 0000000..1ad4c85
 +import com.chaquo.python.android.AndroidPlatform
 +import com.whl.quickjs.wrapper.QuickJSContext
 +import kotlinx.coroutines.Dispatchers
-+import kotlinx.coroutines.runBlocking
 +import kotlinx.coroutines.withContext
 +import kotlinx.serialization.json.JsonArray
 +import kotlinx.serialization.json.JsonPrimitive
@@ -13386,7 +13387,7 @@ index 0000000..1ad4c85
 + * Chaquopy 要求 Python 在主线程启动一次；之后可在后台线程使用。
 + * 编译错误会带 "line N" 信息，从中提取行号。
 + */
-+private fun checkPython(context: Context, code: String): List<SyntaxError> {
++private suspend fun checkPython(context: Context, code: String): List<SyntaxError> {
 +    ensurePythonStarted(context)
 +    return try {
 +        val py = Python.getInstance()
@@ -13404,12 +13405,11 @@ index 0000000..1ad4c85
 +    }
 +}
 +
-+private fun ensurePythonStarted(context: Context) {
++private suspend fun ensurePythonStarted(context: Context) {
 +    if (Python.isStarted()) return
-+    runBlocking {
-+        withContext(Dispatchers.Main) {
-+            Python.start(AndroidPlatform(context.applicationContext))
-+        }
++    // Chaquopy 要求在主线程启动；execute 本身是 suspend，直接切换调度器即可
++    withContext(Dispatchers.Main) {
++        Python.start(AndroidPlatform(context.applicationContext))
 +    }
 +}
 +
@@ -14990,10 +14990,10 @@ index 0000000..7322790
 +fun localToolApprovalChecker(overrides: Map<String, Boolean>): (String) -> Boolean =
 +    { name -> resolveLocalToolApproval(name, overrides) }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-index dc0ab1a..a41aa14 100644
+index dc0ab1a..317dfe9 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-@@ -119,6 +119,45 @@ sealed class LocalToolOption {
+@@ -119,6 +119,65 @@ sealed class LocalToolOption {
      @Serializable
      @SerialName("calendar")
      data object Calendar : LocalToolOption()
@@ -15036,10 +15036,30 @@ index dc0ab1a..a41aa14 100644
 +    @Serializable
 +    @SerialName("code_linter")
 +    data object CodeLinter : LocalToolOption()
++
++    /**
++     * 串口工具（USB 转串口）。
++     *
++     * 优先覆盖**免驱**的 USB 模拟串口（CDC-ACM）：RP2040 / ESP32-S2 / ESP32-S3 等；
++     * 同时也支持 CH340 / CP2102 / FTDI / PL2303 桥接芯片。
++     */
++    @Serializable
++    @SerialName("serial_port")
++    data object SerialPort : LocalToolOption()
++
++    /**
++     * MIDI 工具。
++     *
++     * 基于 Android 原生 `android.media.midi` —— **零依赖、免驱、无需权限**。
++     * USB MIDI 是标准设备类，系统直接识别；虚拟 MIDI 端口也能看到。
++     */
++    @Serializable
++    @SerialName("midi")
++    data object Midi : LocalToolOption()
  }
  
  class LocalTools(
-@@ -201,18 +240,12 @@ class LocalTools(
+@@ -201,18 +260,12 @@ class LocalTools(
                  "The JS context persists between calls — libraries loaded via action='load' stay available.\n" +
                  "⚠️ NOTE: Eval runs in a block scope — `const`/`let` are local to each call (no redeclaration errors).\n" +
                  "Use `var` for variables that need to persist across multiple calls.\n\n" +
@@ -15061,7 +15081,7 @@ index dc0ab1a..a41aa14 100644
  
                  "- action: 'eval' (default) | 'load' | 'reset'\n" +
                  "- library: asset filename without .js (for action='load') — loads once, cached\n" +
-@@ -284,12 +317,6 @@ class LocalTools(
+@@ -284,12 +337,6 @@ class LocalTools(
                                  val lib = library ?: throw IllegalArgumentException("library is required for action='load'")
                                  val ctx = getOrCreateJSContext()
                                  if (lib !in loadedLibraries) {
@@ -15074,7 +15094,7 @@ index dc0ab1a..a41aa14 100644
                                      val engineCode = context.assets.open("$lib.js").bufferedReader().readText()
                                      ctx.evaluate(engineCode)
                                      loadedLibraries.add(lib)
-@@ -470,6 +497,18 @@ class LocalTools(
+@@ -470,6 +517,24 @@ class LocalTools(
              tools.add(calendarQueryTool)
              tools.add(calendarCreateTool)
          }
@@ -15090,9 +15110,607 @@ index dc0ab1a..a41aa14 100644
 +        if (options.contains(LocalToolOption.CodeLinter)) {
 +            tools.add(createLintTool(context))
 +        }
++        if (options.contains(LocalToolOption.SerialPort)) {
++            tools.add(createSerialTool(context))
++        }
++        if (options.contains(LocalToolOption.Midi)) {
++            tools.add(createMidiTool(context))
++        }
          return tools
      }
  }
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
+new file mode 100644
+index 0000000..ca4b9b4
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
+@@ -0,0 +1,586 @@
++package me.rerere.rikkahub.data.ai.tools
++
++import android.content.Context
++import android.media.midi.MidiDevice
++import android.media.midi.MidiDeviceInfo
++import android.media.midi.MidiInputPort
++import android.media.midi.MidiManager
++import android.media.midi.MidiOutputPort
++import android.media.midi.MidiReceiver
++import android.os.Build
++import android.os.Handler
++import android.os.Looper
++import android.util.Log
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonArray
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.longOrNull
++import kotlinx.serialization.json.put
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++import java.io.ByteArrayOutputStream
++
++private const val TAG = "MidiTools"
++
++/** 等待 openDevice 回调的最长时间 */
++private const val OPEN_TIMEOUT_MS = 10_000L
++
++/** 单设备接收缓冲上限 */
++private const val MAX_RX = 256 * 1024
++
++/**
++ * MIDI 工具 —— 基于 **Android 原生 `android.media.midi`**。
++ *
++ * ── 为什么零依赖且免驱 ──
++ * USB MIDI 是 USB 标准设备类，Android 从 6.0(API 23) 起由系统提供 `MidiManager`，
++ * **不需要任何第三方库，也不需要 root 或额外权限**（系统在打开设备时自行处理 USB 授权）。
++ * 这与「免驱串口」的思路一致 —— 凡是被系统识别为标准类别的设备都可直接用。
++ *
++ * ── 典型用途 ──
++ * 数字音频设备 / 控制器（键盘、打击垫）、合成器、MIDI 转接板等，
++ * 无论是 USB MIDI 还是系统内的虚拟 MIDI 端口，都能在这里看到。
++ *
++ * ── 消息格式 ──
++ * 收发都用**原始字节**（MIDI 本身就是字节协议）。`mode=text` 时会把字节解析成
++ * 可读描述，例如 `90 3C 64` → `NoteOn ch=1 note=60(C4) vel=100`。
++ */
++fun createMidiTool(context: Context): Tool = Tool(
++    name = "midi",
++    description = """
++        List and talk to MIDI devices (USB MIDI and virtual ports) via the Android MIDI API.
++        No driver or extra permission is needed — USB MIDI is a standard USB class.
++        Actions:
++          list    — list MIDI devices with id, ports, type and name
++          open    — open a device's input and/or output port (required before send/receive)
++          send    — send MIDI bytes to the device's input port (data = hex like "90 3C 64",
++                    or use note_on/note_off/cc helpers)
++          receive — read MIDI bytes received from the device since the last read
++          status  — which devices are open, counters, last error
++          close   — close the device
++        MIDI messages are bytes: 90 3C 64 = NoteOn channel 1 note 60 velocity 100;
++        80 3C 40 = NoteOff; B0 07 7F = ControlChange #7 = 127.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("action", buildJsonObject {
++                    put("type", "string")
++                    put("description", "list | open | send | receive | status | close")
++                })
++                put("device", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Device id from action=list. For send/receive/status/close you may omit it when exactly one device is open.")
++                })
++                put("data", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Hex bytes to send, e.g. \"90 3C 64\". Also accepts \"0x90 0x3C 0x64\" or \"903C64\".")
++                })
++                put("note_on", buildJsonObject {
++                    put("type", "array")
++                    put("description", "Helper: [note, velocity] or [note, velocity, channel(1-16)]. Mutually exclusive with data.")
++                    put("items", buildJsonObject { put("type", "integer") })
++                })
++                put("note_off", buildJsonObject {
++                    put("type", "array")
++                    put("description", "Helper: [note] or [note, channel(1-16)]")
++                    put("items", buildJsonObject { put("type", "integer") })
++                })
++                put("cc", buildJsonObject {
++                    put("type", "array")
++                    put("description", "Helper: [controller, value] or [controller, value, channel(1-16)]")
++                    put("items", buildJsonObject { put("type", "integer") })
++                })
++                put("mode", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Output format for receive: text (decoded descriptions, default) | hex | both")
++                })
++                put("timeout_ms", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "For receive: how long to wait for messages (default 0 = return immediately)")
++                })
++            },
++            required = listOf("action"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val action = obj["action"]?.jsonPrimitive?.contentOrNull?.lowercase()
++            ?: error("action is required")
++        val deviceArg = obj["device"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++        val mode = obj["mode"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "text"
++        val timeoutMs = (obj["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 0L).coerceIn(0L, 60_000L)
++
++        when (action) {
++            "list" -> midiText(listMidiDevices(context))
++            "open" -> {
++                val id = deviceArg ?: error("device is required for action=open")
++                midiText(MidiRegistry.open(context, id))
++            }
++            "send" -> {
++                val bytes = buildMidiBytes(obj)
++                midiText(MidiRegistry.send(deviceArg, bytes))
++            }
++            "receive" -> midiText(MidiRegistry.receive(deviceArg, mode, timeoutMs))
++            "status" -> midiText(MidiRegistry.status(deviceArg))
++            "close" -> midiText(MidiRegistry.close(deviceArg))
++            else -> error("未知 action：$action（支持 list / open / send / receive / status / close）")
++        }
++    },
++)
++
++private fun midiText(json: kotlinx.serialization.json.JsonObject) =
++    listOf(UIMessagePart.Text(json.toString()))
++
++// ────────────────────────── 设备列举 ──────────────────────────
++
++private fun midiManager(context: Context) =
++    context.getSystemService(Context.MIDI_SERVICE) as MidiManager
++
++private fun typeName(type: Int): String = when (type) {
++    MidiDeviceInfo.TYPE_USB -> "usb"
++    MidiDeviceInfo.TYPE_BLUETOOTH -> "bluetooth"
++    MidiDeviceInfo.TYPE_VIRTUAL -> "virtual"
++    MidiDeviceInfo.TYPE_BUILTIN -> "builtin"
++    else -> "type$type"
++}
++
++private fun listMidiDevices(context: Context): kotlinx.serialization.json.JsonObject {
++    val manager = midiManager(context)
++    val devices = manager.devices
++    return buildJsonObject {
++        put("count", JsonPrimitive(devices.size))
++        put("devices", buildJsonArray {
++            devices.forEach { info ->
++                add(buildJsonObject {
++                    put("id", JsonPrimitive(info.id.toString()))
++                    put("name", JsonPrimitive(deviceDisplayName(info)))
++                    put("type", JsonPrimitive(typeName(info.type)))
++                    put("input_ports", JsonPrimitive(info.inputPortCount))
++                    put("output_ports", JsonPrimitive(info.outputPortCount))
++                    put("opened", JsonPrimitive(MidiRegistry.isOpen(info.id.toString())))
++                })
++            }
++        })
++        if (devices.isEmpty()) {
++            put("hint", JsonPrimitive(
++                "未发现 MIDI 设备。USB MIDI 是标准设备类，插上后系统应自动识别；" +
++                    "若看不到，请确认设备工作在 MIDI 模式（部分开发板需要固件支持）。"
++            ))
++        }
++    }
++}
++
++/** 设备名：API 29+ 走 properties，低版本回退到 id */
++private fun deviceDisplayName(info: MidiDeviceInfo): String {
++    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
++        val props = info.properties
++        val name = props.getString(MidiDeviceInfo.PROPERTY_NAME)
++        val product = props.getString(MidiDeviceInfo.PROPERTY_PRODUCT)
++        val manufacturer = props.getString(MidiDeviceInfo.PROPERTY_MANUFACTURER)
++        val parts = listOfNotNull(manufacturer, product, name).filter { it.isNotBlank() }.distinct()
++        if (parts.isNotEmpty()) return parts.joinToString(" ")
++    }
++    return "MIDI device #${info.id}"
++}
++
++// ────────────────────────── 打开的设备表 ──────────────────────────
++
++/**
++ * 已打开的 MIDI 设备（进程级）。
++ *
++ * 与串口一样，MIDI 连接是**有状态**的：保持 input/output port 才能持续收发。
++ * 收到的消息带时间戳进缓冲，`receive` 取走已有内容。
++ */
++private object MidiRegistry {
++
++    /**
++     * openDevice 回调的结果包装。
++     *
++     * 存在的理由：回调参数本身可空，而「等超时」也会产生 null ——
++     * 直接把两者混在一个可空值里就无法区分失败原因。
++     */
++    private class OpenResult(val device: MidiDevice?)
++
++    private class OpenDevice(
++        val id: String,
++        val device: MidiDevice,
++        val inputPort: MidiInputPort?,
++        val outputPort: MidiOutputPort?,
++    ) {
++        val rx = ByteArrayOutputStream()
++        @Volatile var error: String? = null
++        @Volatile var rxBytes: Long = 0
++        @Volatile var txBytes: Long = 0
++        lateinit var receiver: MidiReceiver
++
++        fun append(data: ByteArray, count: Int) {
++            synchronized(rx) {
++                if (rx.size() + count > MAX_RX) {
++                    val kept = rx.toByteArray().takeLast(MAX_RX / 2).toByteArray()
++                    rx.reset(); rx.write(kept)
++                }
++                rx.write(data, 0, count)
++                rxBytes += count
++            }
++        }
++
++        fun drain(): ByteArray = synchronized(rx) {
++            val all = rx.toByteArray(); rx.reset(); all
++        }
++    }
++
++    private val devices = java.util.concurrent.ConcurrentHashMap<String, OpenDevice>()
++
++    fun isOpen(id: String): Boolean = devices.containsKey(id)
++
++    private fun resolve(id: String?): OpenDevice {
++        if (!id.isNullOrBlank()) {
++            return devices[id] ?: error("设备未打开：$id（先用 action=list，再 action=open）")
++        }
++        if (devices.size == 1) return devices.values.first()
++        if (devices.isEmpty()) error("当前没有已打开的 MIDI 设备")
++        error("有多个设备已打开（${devices.keys.joinToString()}），请显式指定 device")
++    }
++
++    suspend fun open(context: Context, id: String): kotlinx.serialization.json.JsonObject =
++        withContext(Dispatchers.IO) {
++            devices[id]?.let {
++                return@withContext buildJsonObject {
++                    put("ok", JsonPrimitive(true))
++                    put("already_open", JsonPrimitive(true))
++                    put("id", JsonPrimitive(id))
++                }
++            }
++
++            val manager = midiManager(context)
++            val info = manager.devices.firstOrNull { it.id.toString() == id }
++                ?: error("找不到 MIDI 设备：$id（用 action=list 查看；设备可能已拔出）")
++
++            // openDevice 是**异步回调**式的（没有同步重载），因此用 CompletableDeferred 等待。
++            // Handler 必须非 null，用主线程 Looper。
++            //
++            // ★用 OpenResult 包一层而不是直接 await 一个可空的 MidiDevice：
++            //   否则「超时」与「回调给出 null（设备打开失败）」都会得到 null，
++            //   无法区分两者，报错信息就会指错方向。
++            val deferred = CompletableDeferred<OpenResult>()
++            val listener = MidiManager.OnDeviceOpenedListener { opened ->
++                deferred.complete(OpenResult(opened))
++            }
++            manager.openDevice(info, listener, Handler(Looper.getMainLooper()))
++
++            val result = withTimeoutOrNull(OPEN_TIMEOUT_MS) { deferred.await() }
++                ?: error("打开 MIDI 设备超时（$OPEN_TIMEOUT_MS ms，用户可能没有响应系统弹窗）")
++            val device = result.device
++                ?: error("系统拒绝打开该 MIDI 设备（可能被其它应用独占，或设备已断开）")
++
++            val inputPort = runCatching {
++                if (info.inputPortCount > 0) device.openInputPort(0) else null
++            }.getOrElse {
++                runCatching { device.close() }
++                throw IllegalStateException("打开输入端口失败：${it.message}", it)
++            }
++            val outputPort = runCatching {
++                if (info.outputPortCount > 0) device.openOutputPort(0) else null
++            }.getOrElse {
++                runCatching { inputPort?.close() }
++                runCatching { device.close() }
++                throw IllegalStateException("打开输出端口失败：${it.message}", it)
++            }
++
++            val open = OpenDevice(id, device, inputPort, outputPort)
++
++            if (outputPort != null) {
++                open.receiver = object : MidiReceiver() {
++                    override fun onSend(data: ByteArray, offset: Int, count: Int, timestamp: Long) {
++                        // MidiReceiver 给的是「一段可能含多条消息」的字节；这里原样收下，
++                        // 解析留到 receive 时按 mode 处理（避免在回调里做重活）
++                        val slice = data.copyOfRange(offset, offset + count)
++                        open.append(slice, slice.size)
++                    }
++
++                    override fun onFlush() { /* 设备要求丢弃未处理数据：缓冲区已在 drain 后自然清空 */ }
++                }
++                runCatching { outputPort.connect(open.receiver) }.onFailure {
++                    open.error = "连接接收器失败：${it.message}"
++                    Log.w(TAG, "connect receiver failed", it)
++                }
++            }
++
++            devices[id] = open
++            Log.i(TAG, "opened MIDI $id (name=${deviceDisplayName(info)})")
++
++            buildJsonObject {
++                put("ok", JsonPrimitive(true))
++                put("id", JsonPrimitive(id))
++                put("name", JsonPrimitive(deviceDisplayName(info)))
++                put("input_port", JsonPrimitive(inputPort != null))
++                put("output_port", JsonPrimitive(outputPort != null))
++                put("hint", JsonPrimitive(
++                    "设备已保持打开。可用 send 发送（需 input_port）与 receive 读取（需 output_port）。" +
++                        "完成后 action=close。"
++                ))
++                open.error?.let { put("warning", JsonPrimitive(it)) }
++            }
++        }
++
++    fun send(id: String?, bytes: ByteArray): kotlinx.serialization.json.JsonObject {
++        val d = resolve(id)
++        val port = d.inputPort
++            ?: error("该设备没有输入端口（input_port=false），无法发送。MIDI 设备的接收端口才是发送目标。")
++        if (bytes.isEmpty()) error("要发送的数据为空")
++        return try {
++            // 时间戳用 -1 表示「尽快发送」
++            port.send(bytes, 0, bytes.size, -1)
++            d.txBytes += bytes.size
++            buildJsonObject {
++                put("ok", JsonPrimitive(true))
++                put("id", JsonPrimitive(d.id))
++                put("bytes", JsonPrimitive(bytes.size))
++                put("sent_hex", JsonPrimitive(bytes.joinToString(" ") { "%02X".format(it) }))
++                put("sent_text", JsonPrimitive(decodeMidi(bytes).joinToString(" | ")))
++                put("total_tx", JsonPrimitive(d.txBytes))
++            }
++        } catch (t: Throwable) {
++            buildJsonObject {
++                put("ok", JsonPrimitive(false))
++                put("id", JsonPrimitive(d.id))
++                put("error", JsonPrimitive("${t.javaClass.simpleName}: ${t.message}"))
++            }
++        }
++    }
++
++    suspend fun receive(
++        id: String?,
++        mode: String,
++        timeoutMs: Long,
++    ): kotlinx.serialization.json.JsonObject {
++        val d = resolve(id)
++        if (d.outputPort == null) {
++            error("该设备没有输出端口（output_port=false），无法接收。")
++        }
++        val deadline = System.currentTimeMillis() + timeoutMs
++        var data: ByteArray
++        while (true) {
++            data = d.drain()
++            if (data.isNotEmpty() || System.currentTimeMillis() >= deadline) break
++            delay(20)
++        }
++        return buildJsonObject {
++            put("id", JsonPrimitive(d.id))
++            put("bytes", JsonPrimitive(data.size))
++            put("mode", JsonPrimitive(mode))
++            if (mode == "hex" || mode == "both") {
++                put("hex", JsonPrimitive(data.joinToString(" ") { "%02X".format(it) }))
++            }
++            if (mode != "hex") {
++                put("messages", buildJsonArray {
++                    decodeMidi(data).forEach { add(it) }
++                })
++            }
++            put("total_rx", JsonPrimitive(d.rxBytes))
++            d.error?.let { put("receiver_error", JsonPrimitive(it)) }
++            if (data.isEmpty()) {
++                put("hint", JsonPrimitive("本次没有收到消息。可增大 timeout_ms；也请确认设备确实在发送（多数设备只在演奏/操作时发）。"))
++            }
++        }
++    }
++
++    fun status(id: String?): kotlinx.serialization.json.JsonObject {
++        val all = devices.values
++        val target = if (!id.isNullOrBlank()) resolve(id) else null
++        return buildJsonObject {
++            put("open_count", JsonPrimitive(all.size))
++            if (target != null) {
++                put("id", JsonPrimitive(target.id))
++                put("rx_bytes", JsonPrimitive(target.rxBytes))
++                put("tx_bytes", JsonPrimitive(target.txBytes))
++                put("buffered_bytes", JsonPrimitive(synchronized(target.rx) { target.rx.size() }))
++                target.error?.let { put("receiver_error", JsonPrimitive(it)) }
++            }
++            put("devices", buildJsonArray {
++                all.forEach { d ->
++                    add(buildJsonObject {
++                        put("id", JsonPrimitive(d.id))
++                        put("buffered_bytes", JsonPrimitive(synchronized(d.rx) { d.rx.size() }))
++                    })
++                }
++            })
++        }
++    }
++
++    fun close(id: String?): kotlinx.serialization.json.JsonObject {
++        val all = devices.values.toList()
++        val targets = if (!id.isNullOrBlank()) listOf(resolve(id)) else all
++        if (targets.isEmpty()) {
++            return buildJsonObject { put("ok", JsonPrimitive(true)); put("closed", JsonPrimitive(0)) }
++        }
++        var n = 0
++        targets.forEach { d ->
++            if (d::receiver.isInitialized) runCatching { d.outputPort?.disconnect(d.receiver) }
++            runCatching { d.inputPort?.close() }
++            runCatching { d.outputPort?.close() }
++            runCatching { d.device.close() }
++            devices.remove(d.id)
++            n++
++            Log.i(TAG, "closed MIDI ${d.id}")
++        }
++        return buildJsonObject { put("ok", JsonPrimitive(true)); put("closed", JsonPrimitive(n)) }
++    }
++}
++
++// ────────────────────────── MIDI 字节 ──────────────────────────
++
++/** 从工具参数构造要发送的字节：支持 data(hex) 或 note_on / note_off / cc 便捷形式 */
++private fun buildMidiBytes(obj: kotlinx.serialization.json.JsonObject): ByteArray {
++    obj["data"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let {
++        return parseMidiHex(it)
++    }
++
++    fun ints(key: String): List<Int>? = (obj[key] as? kotlinx.serialization.json.JsonArray)
++        ?.mapNotNull { it.jsonPrimitive.contentOrNull?.toIntOrNull() }
++
++    ints("note_on")?.let { a ->
++        require(a.size >= 2) { "note_on 需要 [note, velocity]（可选第三个是 channel）" }
++        val note = a[0].coerceIn(0, 127)
++        val vel = a[1].coerceIn(0, 127)
++        val ch = (a.getOrNull(2) ?: 1).coerceIn(1, 16) - 1
++        return byteArrayOf((0x90 or ch).toByte(), note.toByte(), vel.toByte())
++    }
++    ints("note_off")?.let { a ->
++        require(a.isNotEmpty()) { "note_off 需要 [note]（可选第二个是 channel）" }
++        val note = a[0].coerceIn(0, 127)
++        val ch = (a.getOrNull(1) ?: 1).coerceIn(1, 16) - 1
++        return byteArrayOf((0x80 or ch).toByte(), note.toByte(), 0x40)
++    }
++    ints("cc")?.let { a ->
++        require(a.size >= 2) { "cc 需要 [controller, value]（可选第三个是 channel）" }
++        val cc = a[0].coerceIn(0, 127)
++        val v = a[1].coerceIn(0, 127)
++        val ch = (a.getOrNull(2) ?: 1).coerceIn(1, 16) - 1
++        return byteArrayOf((0xB0 or ch).toByte(), cc.toByte(), v.toByte())
++    }
++
++    error("需要 data（十六进制）或 note_on / note_off / cc 之一")
++}
++
++/** 解析 MIDI 十六进制输入（与串口工具同样的宽容策略） */
++private fun parseMidiHex(input: String): ByteArray {
++    val cleaned = input.replace(Regex("0[xX]"), "").replace(Regex("[,;:\\-\\s]"), "")
++    if (cleaned.isEmpty()) return ByteArray(0)
++    require(cleaned.length % 2 == 0) { "十六进制长度必须是偶数：$input" }
++    val bad = cleaned.firstOrNull { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }
++    require(bad == null) { "包含非十六进制字符 '$bad'：$input" }
++    return ByteArray(cleaned.length / 2) { cleaned.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
++}
++
++private val NOTE_NAMES = arrayOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
++
++/**
++ * 把 MIDI 字节流解析成可读描述。
++ *
++ * MIDI 消息是**变长**的：System Real-Time（F8..FF）1 字节，
++ * Program Change（C0/D0）2 字节，其余 Channel Voice 3 字节 —— 必须按状态字节判断长度，
++ * 否则会把多条消息错位解读。
++ */
++private fun decodeMidi(bytes: ByteArray): List<String> {
++    val out = mutableListOf<String>()
++    var i = 0
++    while (i < bytes.size) {
++        val status = bytes[i].toInt() and 0xFF
++        if (status < 0x80) {
++            out += "数据字节 0x%02X（缺少状态字节，字节流可能未对齐）".format(status)
++            i++
++            continue
++        }
++        when {
++            status >= 0xF8 -> { // System Real-Time：1 字节
++                out += systemName(status)
++                i++
++            }
++            status >= 0xF0 -> { // System Common：按类型取长度（这里只处理常见的 1/2/3 字节）
++                val len = when (status) {
++                    0xF1, 0xF3 -> 2
++                    0xF2 -> 3
++                    0xF6, 0xF7 -> 1
++                    else -> 1
++                }
++                out += systemName(status)
++                i += len
++            }
++            status and 0xF0 == 0xC0 || status and 0xF0 == 0xD0 -> { // 2 字节
++                val d1 = bytes.getOrNull(i + 1)?.toInt()?.and(0xFF)
++                out += if (status and 0xF0 == 0xC0) {
++                    "ProgramChange ch=${(status and 0x0F) + 1} program=$d1"
++                } else {
++                    "ChannelPressure ch=${(status and 0x0F) + 1} value=$d1"
++                }
++                i += 2
++            }
++            else -> { // 3 字节 Channel Voice
++                val d1 = bytes.getOrNull(i + 1)?.toInt()?.and(0xFF) ?: 0
++                val d2 = bytes.getOrNull(i + 2)?.toInt()?.and(0xFF) ?: 0
++                val ch = (status and 0x0F) + 1
++                val noteName = "${NOTE_NAMES[d1 % 12]}${d1 / 12 - 1}"
++                out += when (status and 0xF0) {
++                    0x80 -> "NoteOff ch=$ch note=$d1($noteName) vel=$d2"
++                    0x90 -> if (d2 == 0) "NoteOff ch=$ch note=$d1($noteName) vel=0（NoteOn velocity=0 等同于 NoteOff）"
++                    else "NoteOn ch=$ch note=$d1($noteName) vel=$d2"
++                    0xA0 -> "PolyPressure ch=$ch note=$d1($noteName) value=$d2"
++                    0xB0 -> "ControlChange ch=$ch cc=$d1(${ccName(d1)}) value=$d2"
++                    0xE0 -> {
++                        val bend = ((d2 shl 7) or d1) - 8192
++                        "PitchBend ch=$ch value=$bend"
++                    }
++                    else -> "未知状态 0x%02X".format(status)
++                }
++                i += 3
++            }
++        }
++    }
++    return out
++}
++
++private fun systemName(status: Int): String = when (status) {
++    0xF0 -> "SystemExclusive 开始"
++    0xF7 -> "SystemExclusive 结束"
++    0xF1 -> "MTC Quarter Frame"
++    0xF2 -> "Song Position Pointer"
++    0xF3 -> "Song Select"
++    0xF6 -> "Tune Request"
++    0xF8 -> "Timing Clock"
++    0xFA -> "Start"
++    0xFB -> "Continue"
++    0xFC -> "Stop"
++    0xFE -> "Active Sensing"
++    0xFF -> "System Reset"
++    else -> "System 0x%02X".format(status)
++}
++
++/** 常见控制器名称（只覆盖最常用的几个，其余显示编号即可） */
++private fun ccName(cc: Int): String = when (cc) {
++    1 -> "Modulation"
++    2 -> "Breath"
++    7 -> "Volume"
++    10 -> "Pan"
++    11 -> "Expression"
++    64 -> "Sustain Pedal"
++    65 -> "Portamento"
++    71 -> "Resonance"
++    74 -> "Brightness"
++    91 -> "Reverb"
++    93 -> "Chorus"
++    120 -> "All Sound Off"
++    121 -> "Reset All Controllers"
++    123 -> "All Notes Off"
++    else -> "CC$cc"
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt
 index d888690..471fcec 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt
@@ -15105,6 +15723,544 @@ index d888690..471fcec 100644
          "Args:\n" +
          "- code: Python code to execute. Last expression value returned. Use print() for debugging.\n" +
          "Code runs in an isolated Python environment on the device.",
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt
+new file mode 100644
+index 0000000..e731166
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt
+@@ -0,0 +1,532 @@
++package me.rerere.rikkahub.data.ai.tools
++
++import android.app.PendingIntent
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.hardware.usb.UsbDevice
++import android.hardware.usb.UsbManager
++import android.util.Log
++import androidx.core.content.ContextCompat
++import com.hoho.android.usbserial.driver.UsbSerialPort
++import com.hoho.android.usbserial.driver.UsbSerialProber
++import com.hoho.android.usbserial.util.SerialInputOutputManager
++import kotlinx.coroutines.CompletableDeferred
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonArray
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.longOrNull
++import kotlinx.serialization.json.put
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++import java.io.ByteArrayOutputStream
++import java.util.concurrent.ConcurrentHashMap
++
++private const val TAG = "SerialTools"
++
++/** USB 权限请求的 action（仅应用内使用） */
++private const val ACTION_USB_PERMISSION = "me.rerere.rikkahub.action.USB_PERMISSION"
++
++/** 等待用户点 USB 权限弹窗的最长时间 */
++private const val PERMISSION_TIMEOUT_MS = 60_000L
++
++/** 单个端口接收缓冲上限（防止无限增长吃内存） */
++private const val MAX_RX_BUFFER = 1 * 1024 * 1024
++
++/**
++ * 串口工具。
++ *
++ * ── 免驱优先 ──
++ * 对「USB 模拟串口」的设备（**RP2040 / ESP32-S2 / ESP32-S3** 等）走 **CDC-ACM** ——
++ * 这是 USB 标准设备类，Android 侧无需任何厂商驱动即可通信。
++ * 库同时也覆盖 CH340 / CP2102 / FTDI / PL2303 等桥接芯片，插上即可被识别。
++ *
++ * ── 与「工具授权」的关系 ──
++ * 串口会向**外部设备**写数据，但它不在用户指定的三类需授权工具里
++ * （那三类是：Shell 命令、SSH 写操作、传感器），故此处不做强制授权。
++ * 注意 USB 权限本身是**系统弹窗**（[UsbManager.requestPermission]），
++ * 与应用的「工具授权」是两回事。
++ *
++ * ── 状态 ──
++ * 打开的端口是**有状态**的：连接、接收缓冲都保存在 [SerialPortRegistry] 里，
++ * 因此 `read` 可以拿到「上次读取之后新到的数据」。用完请用 action=close 释放。
++ */
++fun createSerialTool(context: Context): Tool = Tool(
++    name = "serial_port",
++    description = """
++        Talk to a USB serial device (CDC-ACM devices like RP2040 / ESP32-S2 / ESP32-S3 need no driver;
++        CH340 / CP2102 / FTDI / PL2303 are also supported).
++        Actions:
++          list   — list connected USB serial devices with their id, chip type and VID:PID
++          open   — open a port (port, baud, data_bits, stop_bits, parity). The first call triggers the
++                   system USB permission dialog — the user must confirm on the device.
++          read   — return data received since the last read (mode: hex | hex_compact | text | dump)
++          write  — send data (mode hex accepts "0xAB 0xC1", "ABC1" or "AB,C1"; mode text sends UTF-8)
++          status — current port state, counters and the last error
++          close  — close the port and release it
++        Ports stay open between calls, so read/write keep working until you close them.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("action", buildJsonObject {
++                    put("type", "string")
++                    put("description", "list | open | read | write | status | close")
++                })
++                put("port", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Port id from action=list (e.g. /dev/bus/usb/001/002). For read/write/status/close you may omit it when exactly one port is open.")
++                })
++                put("baud", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "Baud rate (default 115200)")
++                })
++                put("data_bits", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "5 | 6 | 7 | 8 (default 8)")
++                })
++                put("stop_bits", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "1 | 2 (default 1)")
++                })
++                put("parity", buildJsonObject {
++                    put("type", "string")
++                    put("description", "none | odd | even (default none)")
++                })
++                put("mode", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Data format for read/write: hex (\"0xAB 0xC1\") | hex_compact (\"0xABC1\") | text | dump (read only)")
++                })
++                put("data", buildJsonObject {
++                    put("type", "string")
++                    put("description", "Data to write (action=write)")
++                })
++                put("timeout_ms", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "For read: how long to wait for data (default 0 = return immediately). For write: write timeout (default 1000).")
++                })
++                put("max_bytes", buildJsonObject {
++                    put("type", "integer")
++                    put("description", "For read: cap the returned bytes (default 4096)")
++                })
++            },
++            required = listOf("action"),
++        )
++    },
++    execute = { args ->
++        val obj = args.jsonObject
++        val action = obj["action"]?.jsonPrimitive?.contentOrNull?.lowercase()
++            ?: error("action is required")
++        val portArg = obj["port"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++        val mode = obj["mode"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "hex"
++        val timeoutMs = (obj["timeout_ms"]?.jsonPrimitive?.longOrNull ?: 0L).coerceIn(0L, 60_000L)
++        val maxBytes = (obj["max_bytes"]?.jsonPrimitive?.longOrNull ?: 4096L).toInt().coerceIn(1, 65536)
++
++        when (action) {
++            "list" -> text(listPorts(context))
++            "open" -> {
++                val id = portArg ?: error("port is required for action=open")
++                val baud = (obj["baud"]?.jsonPrimitive?.longOrNull ?: 115200L).toInt()
++                val dataBits = (obj["data_bits"]?.jsonPrimitive?.longOrNull ?: 8L).toInt()
++                val stopBits = (obj["stop_bits"]?.jsonPrimitive?.longOrNull ?: 1L).toInt()
++                val parity = obj["parity"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "none"
++                text(SerialPortRegistry.open(context, id, baud, dataBits, stopBits, parity))
++            }
++            "read" -> text(SerialPortRegistry.read(portArg, mode, timeoutMs, maxBytes))
++            "write" -> {
++                val body = obj["data"]?.jsonPrimitive?.contentOrNull
++                    ?: error("data is required for action=write")
++                val writeTimeout = if (timeoutMs > 0) timeoutMs.toInt() else 1000
++                text(SerialPortRegistry.write(portArg, mode, body, writeTimeout))
++            }
++            "status" -> text(SerialPortRegistry.status(portArg))
++            "close" -> text(SerialPortRegistry.close(portArg))
++            else -> error("未知 action：$action（支持 list / open / read / write / status / close）")
++        }
++    },
++)
++
++private fun text(json: kotlinx.serialization.json.JsonObject) =
++    listOf(UIMessagePart.Text(json.toString()))
++
++// ────────────────────────── 设备列举 ──────────────────────────
++
++private fun listPorts(context: Context): kotlinx.serialization.json.JsonObject {
++    val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
++    val drivers = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
++    return buildJsonObject {
++        put("count", JsonPrimitive(drivers.size))
++        put("devices", buildJsonArray {
++            drivers.forEach { d ->
++                val device = d.device
++                add(buildJsonObject {
++                    put("id", JsonPrimitive(device.deviceName))
++                    put("chip", JsonPrimitive(d.javaClass.simpleName.replace("SerialDriver", "")))
++                    put("vendor_id", JsonPrimitive(String.format("0x%04X", device.vendorId)))
++                    put("product_id", JsonPrimitive(String.format("0x%04X", device.productId)))
++                    put("ports", JsonPrimitive(d.ports.size))
++                    put("permission", JsonPrimitive(usbManager.hasPermission(device)))
++                    put("opened", JsonPrimitive(SerialPortRegistry.isOpen(device.deviceName)))
++                    // CDC 类设备（RP2040 / ESP32-S2/S3 等免驱方案）单独标出，便于判断
++                    put("cdc_acm", JsonPrimitive(d.javaClass.simpleName == "CdcAcmSerialDriver"))
++                })
++            }
++        })
++        if (drivers.isEmpty()) {
++            put("hint", JsonPrimitive(
++                "未发现 USB 串口设备。请确认：①OTG 转接头已插好；②设备已上电；" +
++                    "③若是 RP2040 / ESP32-S2/S3，其 USB 口需工作在 CDC 模式（Arduino 里通常是默认的）。"
++            ))
++        }
++    }
++}
++
++// ────────────────────────── 端口状态表 ──────────────────────────
++
++/**
++ * 已打开端口的注册表（进程级）。
++ *
++ * 读取走 [SerialInputOutputManager] 的**异步**回调，数据先进缓冲；
++ * `read` 从缓冲取走已有数据 —— 这样「读」不会因为设备没发数据而卡住，
++ * 也避免用阻塞式 `port.read()` 时反复超时。
++ */
++private object SerialPortRegistry {
++
++    private class OpenPort(
++        val id: String,
++        val device: UsbDevice,
++        val port: UsbSerialPort,
++        val connection: android.hardware.usb.UsbDeviceConnection,
++        val baud: Int,
++    ) {
++        val rx = ByteArrayOutputStream()
++        @Volatile var error: String? = null
++        @Volatile var txBytes: Long = 0
++        @Volatile var rxBytes: Long = 0
++        @Volatile var ioManager: SerialInputOutputManager? = null
++
++        fun appendData(data: ByteArray) {
++            synchronized(rx) {
++                if (rx.size() + data.size > MAX_RX_BUFFER) {
++                    // 超过上限时丢弃最旧的一半，保证不会无界增长
++                    val kept = rx.toByteArray().takeLast(MAX_RX_BUFFER / 2).toByteArray()
++                    rx.reset()
++                    rx.write(kept)
++                }
++                rx.write(data)
++                rxBytes += data.size
++            }
++        }
++
++        fun drain(): ByteArray = synchronized(rx) {
++            val all = rx.toByteArray()
++            rx.reset()
++            all
++        }
++    }
++
++    private val ports = ConcurrentHashMap<String, OpenPort>()
++
++    fun isOpen(id: String): Boolean = ports.containsKey(id)
++
++    /** 解析端口：显式给了 id 就用它；否则仅当恰好一个已打开时才接受 */
++    private fun resolve(id: String?): OpenPort {
++        if (!id.isNullOrBlank()) {
++            return ports[id] ?: error("端口未打开：$id（先用 action=list 看设备，再 action=open）")
++        }
++        if (ports.size == 1) return ports.values.first()
++        if (ports.isEmpty()) error("当前没有已打开的端口")
++        error("有多个端口已打开（${ports.keys.joinToString()}），请显式指定 port")
++    }
++
++    /** 等待用户确认 USB 权限弹窗 */
++    private suspend fun ensurePermission(context: Context, device: UsbDevice): Boolean {
++        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
++        if (usbManager.hasPermission(device)) return true
++
++        val deferred = CompletableDeferred<Boolean>()
++        val receiver = object : BroadcastReceiver() {
++            override fun onReceive(c: Context, intent: Intent) {
++                if (intent.action != ACTION_USB_PERMISSION) return
++                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
++                deferred.complete(granted)
++            }
++        }
++        // Android 14+ 要求显式声明导出标志；用接收者本身不会跨应用，故选 NOT_EXPORTED
++        ContextCompat.registerReceiver(
++            context,
++            receiver,
++            IntentFilter(ACTION_USB_PERMISSION),
++            ContextCompat.RECEIVER_NOT_EXPORTED,
++        )
++        return try {
++            val intent = Intent(ACTION_USB_PERMISSION).setPackage(context.packageName)
++            // ★必须用 FLAG_MUTABLE：系统要往这个 Intent 里写入 EXTRA_PERMISSION_GRANTED。
++            //   用 IMMUTABLE 会导致回调里读不到结果（这是 Android 12+ 的已知约束）。
++            val flags = PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
++            val pi = PendingIntent.getBroadcast(context, device.deviceId, intent, flags)
++            usbManager.requestPermission(device, pi)
++            withTimeoutOrNull(PERMISSION_TIMEOUT_MS) { deferred.await() } ?: false
++        } finally {
++            runCatching { context.unregisterReceiver(receiver) }
++        }
++    }
++
++    suspend fun open(
++        context: Context,
++        id: String,
++        baud: Int,
++        dataBits: Int,
++        stopBits: Int,
++        parity: String,
++    ): kotlinx.serialization.json.JsonObject = withContext(Dispatchers.IO) {
++        ports[id]?.let {
++            return@withContext buildJsonObject {
++                put("ok", JsonPrimitive(true))
++                put("already_open", JsonPrimitive(true))
++                put("id", JsonPrimitive(it.id))
++                put("baud", JsonPrimitive(it.baud))
++            }
++        }
++
++        val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
++        val driver = UsbSerialProber.getDefaultProber().findAllDrivers(usbManager)
++            .firstOrNull { it.device.deviceName == id }
++            ?: error("找不到设备：$id（用 action=list 查看当前可用设备；设备可能已被拔出）")
++
++        if (!ensurePermission(context, driver.device)) {
++            error("未获得 USB 权限（用户拒绝，或弹窗超时未确认）。请重试并允许访问该 USB 设备。")
++        }
++
++        val connection = usbManager.openDevice(driver.device)
++            ?: error("无法打开 USB 设备（可能被其它应用占用）")
++        val port = driver.ports.firstOrNull() ?: run {
++            connection.close()
++            error("该设备没有可用端口")
++        }
++
++        val parityValue = when (parity) {
++            "none" -> UsbSerialPort.PARITY_NONE
++            "odd" -> UsbSerialPort.PARITY_ODD
++            "even" -> UsbSerialPort.PARITY_EVEN
++            else -> run { connection.close(); error("不支持的 parity：$parity（none | odd | even）") }
++        }
++        val stopBitsValue = when (stopBits) {
++            1 -> UsbSerialPort.STOPBITS_1
++            2 -> UsbSerialPort.STOPBITS_2
++            else -> run { connection.close(); error("不支持的 stop_bits：$stopBits（1 | 2）") }
++        }
++
++        try {
++            port.open(connection)
++            port.setParameters(baud, dataBits, stopBitsValue, parityValue)
++            // DTR/RTS 置位：CDC 设备（如 RP2040）常以此判断「主机已连接」才开始发数据
++            // 用显式方法名而非 Kotlin 属性语法：Java 的 setDTR/setRTS 会被 Kotlin 属性化，
++            // 但属性名（dtr / isDTR）在不同库版本下可能不同，方法调用形式更稳。
++            runCatching { port.setDTR(true); port.setRTS(true) }
++        } catch (t: Throwable) {
++            runCatching { port.close() }
++            runCatching { connection.close() }
++            throw IllegalStateException("打开端口失败：${t.javaClass.simpleName}: ${t.message}", t)
++        }
++
++        val openPort = OpenPort(id, driver.device, port, connection, baud)
++        val manager = SerialInputOutputManager(port, object : SerialInputOutputManager.Listener {
++            override fun onNewData(data: ByteArray) = openPort.appendData(data)
++
++            override fun onRunError(e: Exception) {
++                openPort.error = "${e.javaClass.simpleName}: ${e.message}"
++                Log.w(TAG, "串口读取线程结束：$id", e)
++            }
++        })
++        manager.start()
++        openPort.ioManager = manager
++        ports[id] = openPort
++
++        Log.i(TAG, "opened $id @ $baud, ${dataBits}${if (parity != "none") parity.first().uppercase() else ""}$stopBits")
++
++        buildJsonObject {
++            put("ok", JsonPrimitive(true))
++            put("id", JsonPrimitive(id))
++            put("baud", JsonPrimitive(baud))
++            put("data_bits", JsonPrimitive(dataBits))
++            put("stop_bits", JsonPrimitive(stopBits))
++            put("parity", JsonPrimitive(parity))
++            put("chip", JsonPrimitive(driver.javaClass.simpleName.replace("SerialDriver", "")))
++            put("hint", JsonPrimitive("端口已保持打开，可直接 read/write。完成后再 action=close。"))
++        }
++    }
++
++    /**
++     * 读取缓冲里的数据；[timeoutMs] > 0 时最多等待这么久（有数据就提前返回）。
++     *
++     * 用 `delay` 而非 Thread.sleep —— 工具的 execute 本身是 suspend 的，
++     * 挂起比占住线程更合适（等待期间不阻塞调度器）。
++     */
++    suspend fun read(
++        id: String?,
++        mode: String,
++        timeoutMs: Long,
++        maxBytes: Int,
++    ): kotlinx.serialization.json.JsonObject {
++        val p = resolve(id)
++        val deadline = System.currentTimeMillis() + timeoutMs
++        var data: ByteArray
++        while (true) {
++            data = p.drain()
++            if (data.isNotEmpty() || System.currentTimeMillis() >= deadline) break
++            kotlinx.coroutines.delay(20)
++        }
++        val bytes = if (data.size > maxBytes) data.copyOf(maxBytes) else data
++        val truncated = data.size > bytes.size
++
++        return buildJsonObject {
++            put("id", JsonPrimitive(p.id))
++            put("bytes", JsonPrimitive(bytes.size))
++            if (truncated) put("truncated_from", JsonPrimitive(data.size))
++            put("mode", JsonPrimitive(mode))
++            put("data", JsonPrimitive(formatBytes(bytes, mode)))
++            put("total_rx", JsonPrimitive(p.rxBytes))
++            p.error?.let { put("reader_error", JsonPrimitive(it)) }
++            if (bytes.isEmpty()) put("hint", JsonPrimitive("本次没有新数据。可增大 timeout_ms 等待，或检查设备是否在发送。"))
++        }
++    }
++
++    fun write(id: String?, mode: String, body: String, timeoutMs: Int):
++        kotlinx.serialization.json.JsonObject {
++        val p = resolve(id)
++        val bytes = when (mode) {
++            "text" -> body.toByteArray(Charsets.UTF_8)
++            "hex", "hex_compact", "dump" -> parseHex(body)
++            else -> error("不支持的 mode：$mode（text | hex | hex_compact）")
++        }
++        if (bytes.isEmpty()) error("要写入的数据为空")
++        return try {
++            p.port.write(bytes, timeoutMs)
++            p.txBytes += bytes.size
++            buildJsonObject {
++                put("ok", JsonPrimitive(true))
++                put("id", JsonPrimitive(p.id))
++                put("bytes", JsonPrimitive(bytes.size))
++                put("sent", JsonPrimitive(formatBytes(bytes, if (mode == "text") "text" else "hex")))
++                put("total_tx", JsonPrimitive(p.txBytes))
++            }
++        } catch (t: Throwable) {
++            buildJsonObject {
++                put("ok", JsonPrimitive(false))
++                put("id", JsonPrimitive(p.id))
++                put("error", JsonPrimitive("${t.javaClass.simpleName}: ${t.message}"))
++            }
++        }
++    }
++
++    fun status(id: String?): kotlinx.serialization.json.JsonObject {
++        val all = ports.values
++        val target = if (!id.isNullOrBlank()) resolve(id) else null
++        return buildJsonObject {
++            put("open_count", JsonPrimitive(all.size))
++            if (target != null) {
++                put("id", JsonPrimitive(target.id))
++                put("baud", JsonPrimitive(target.baud))
++                put("rx_bytes", JsonPrimitive(target.rxBytes))
++                put("tx_bytes", JsonPrimitive(target.txBytes))
++                put("buffered_bytes", JsonPrimitive(synchronized(target.rx) { target.rx.size() }))
++                target.error?.let { put("reader_error", JsonPrimitive(it)) }
++            }
++            put("ports", buildJsonArray {
++                all.forEach { p ->
++                    add(buildJsonObject {
++                        put("id", JsonPrimitive(p.id))
++                        put("baud", JsonPrimitive(p.baud))
++                        put("buffered_bytes", JsonPrimitive(synchronized(p.rx) { p.rx.size() }))
++                    })
++                }
++            })
++        }
++    }
++
++    fun close(id: String?): kotlinx.serialization.json.JsonObject {
++        val all = ports.values.toList()
++        val targets = if (!id.isNullOrBlank()) listOf(resolve(id)) else all
++        if (targets.isEmpty()) {
++            return buildJsonObject { put("ok", JsonPrimitive(true)); put("closed", JsonPrimitive(0)) }
++        }
++        var n = 0
++        targets.forEach { p ->
++            runCatching { p.ioManager?.stop() }
++            runCatching { p.port.close() }
++            runCatching { p.connection.close() }
++            ports.remove(p.id)
++            n++
++            Log.i(TAG, "closed ${p.id}")
++        }
++        return buildJsonObject {
++            put("ok", JsonPrimitive(true))
++            put("closed", JsonPrimitive(n))
++        }
++    }
++}
++
++// ────────────────────────── 数据格式 ──────────────────────────
++
++/** 按模式格式化字节 */
++private fun formatBytes(bytes: ByteArray, mode: String): String = when (mode) {
++    "text" -> bytes.toString(Charsets.UTF_8)
++    "hex_compact" -> "0x" + bytes.joinToString("") { "%02X".format(it) }
++    "dump" -> hexDump(bytes)
++    else -> bytes.joinToString(" ") { "0x%02X".format(it) }
++}
++
++/** 经典 hexdump：偏移 + 16 字节十六进制 + ASCII */
++private fun hexDump(bytes: ByteArray): String {
++    val sb = StringBuilder()
++    var offset = 0
++    while (offset < bytes.size) {
++        val chunk = bytes.copyOfRange(offset, minOf(offset + 16, bytes.size))
++        sb.append("%08X  ".format(offset))
++        for (i in 0 until 16) {
++            sb.append(if (i < chunk.size) "%02X ".format(chunk[i]) else "   ")
++            if (i == 7) sb.append(' ')
++        }
++        sb.append(" |")
++        chunk.forEach { b ->
++            val c = b.toInt().toChar()
++            sb.append(if (c in ' '..'~') c else '.')
++        }
++        sb.append("|\n")
++        offset += 16
++    }
++    return sb.toString().trimEnd('\n')
++}
++
++/**
++ * 解析十六进制输入。
++ *
++ * 容忍这些写法（都是从实际使用习惯里来的）：
++ *   "0xAB 0xC1 0x23" / "AB C1 23" / "ABC123" / "AB,C1,23" / "ab-c1-23"
++ */
++private fun parseHex(input: String): ByteArray {
++    val cleaned = input
++        .replace(Regex("0[xX]"), "")
++        .replace(Regex("[,;:\\-\\s]"), "")
++    if (cleaned.isEmpty()) return ByteArray(0)
++    if (cleaned.length % 2 != 0) {
++        throw IllegalArgumentException("十六进制字符串长度必须是偶数（当前 ${cleaned.length} 个字符）：$input")
++    }
++    val bad = cleaned.firstOrNull { !it.isDigit() && it.lowercaseChar() !in 'a'..'f' }
++    if (bad != null) {
++        throw IllegalArgumentException("包含非十六进制字符 '$bad'：$input")
++    }
++    return ByteArray(cleaned.length / 2) {
++        cleaned.substring(it * 2, it * 2 + 2).toInt(16).toByte()
++    }
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt
 index d35762f..a576600 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt
@@ -18748,10 +19904,10 @@ index 2eeb597..dceaac3 100644
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt
 new file mode 100644
-index 0000000..50db5b5
+index 0000000..a4fc023
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantProgrammingToolsPage.kt
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,155 @@
 +package me.rerere.rikkahub.ui.pages.assistant.detail
 +
 +import androidx.compose.foundation.layout.Arrangement
@@ -18824,6 +19980,12 @@ index 0000000..50db5b5
 +    val lintTitle = stringResource(R.string.programming_code_linter)
 +    val lintDesc = stringResource(R.string.programming_code_linter_desc)
 +    val lintChecked = assistant.localTools.contains(LocalToolOption.CodeLinter)
++    val serialTitle = stringResource(R.string.programming_serial_port)
++    val serialDesc = stringResource(R.string.programming_serial_port_desc)
++    val serialChecked = assistant.localTools.contains(LocalToolOption.SerialPort)
++    val midiTitle = stringResource(R.string.programming_midi)
++    val midiDesc = stringResource(R.string.programming_midi_desc)
++    val midiChecked = assistant.localTools.contains(LocalToolOption.Midi)
 +
 +    Scaffold(
 +        topBar = {
@@ -18874,6 +20036,26 @@ index 0000000..50db5b5
 +                        Switch(
 +                            checked = lintChecked,
 +                            onCheckedChange = { toggle(LocalToolOption.CodeLinter, it) },
++                        )
++                    },
++                )
++                item(
++                    headlineContent = { Text(serialTitle) },
++                    supportingContent = { Text(serialDesc) },
++                    trailingContent = {
++                        Switch(
++                            checked = serialChecked,
++                            onCheckedChange = { toggle(LocalToolOption.SerialPort, it) },
++                        )
++                    },
++                )
++                item(
++                    headlineContent = { Text(midiTitle) },
++                    supportingContent = { Text(midiDesc) },
++                    trailingContent = {
++                        Switch(
++                            checked = midiChecked,
++                            onCheckedChange = { toggle(LocalToolOption.Midi, it) },
 +                        )
 +                    },
 +                )
@@ -20393,10 +21575,10 @@ index ba9a6ee..d0e1d65 100644
              if (config.requestPromotedOngoing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                  setRequestPromotedOngoing(true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
-index 5708616..3ea97d8 100644
+index 5708616..7ec65e5 100644
 --- a/app/src/main/keepRules/rikkahub.keep
 +++ b/app/src/main/keepRules/rikkahub.keep
-@@ -28,6 +28,78 @@
+@@ -28,6 +28,85 @@
  -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
  -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
  
@@ -20467,6 +21649,13 @@ index 5708616..3ea97d8 100644
 +-dontwarn com.googlecode.javaewah.**
 +-dontwarn org.apache.http.**
 +-dontwarn org.ietf.jgss.**
++
++# ── usb-serial-for-android（串口工具）────────────────────────────────
++# 库内部通过 UsbSerialProber 的驱动表按设备 VID/PID 匹配驱动实现类。
++# 这些类是代码里直接引用的（不是字符串反射），理论上 R8 能保住；
++# 但为稳妥仍整体 keep —— 串口驱动的失败只在运行期暴露，代价高，不值得冒险。
++-keep class com.hoho.android.usbserial.** { *; }
++-dontwarn com.hoho.android.usbserial.**
 +
 +# BouncyCastle 内部大量使用反射/可选 API，放宽警告
 +-dontwarn org.bouncycastle.**
@@ -38526,7 +39715,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..593a105 100644
+index 8cb3cf1..68800d8 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -38538,7 +39727,7 @@ index 8cb3cf1..593a105 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,117 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,123 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -38655,9 +39844,15 @@ index 8cb3cf1..593a105 100644
 +  <string name="programming_syntax_checker_desc">只解析不执行的语法检查。JS / Python / JSON / XML / HTML 用真解析器，其它语言做结构检查</string>
 +  <string name="programming_code_linter">代码检查器</string>
 +  <string name="programming_code_linter_desc">质量规则：超长行、尾随空白、TODO 标记、调试输出残留、硬编码凭据、空 catch 块等</string>
++
++  <string name="programming_serial_port">串口工具</string>
++  <string name="programming_serial_port_desc">USB 转串口：免驱 CDC-ACM（RP2040 / ESP32-S2/S3）以及 CH340 / CP2102 / FTDI。支持 HEX 与文本两种模式读写</string>
++
++  <string name="programming_midi">MIDI 工具</string>
++  <string name="programming_midi_desc">用 Android 原生 MIDI API 收发 MIDI 数据 —— 免驱、无需额外权限</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..8a272a9 100644
+index 47ddab2..fe8be6f 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -38671,7 +39866,7 @@ index 47ddab2..8a272a9 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,117 @@
+@@ -1815,4 +1817,123 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -38788,6 +39983,12 @@ index 47ddab2..8a272a9 100644
 +  <string name="programming_syntax_checker_desc">Parse-only syntax check (never executes). JS / Python / JSON / XML / HTML use real parsers; other languages get a structure check</string>
 +  <string name="programming_code_linter">Code linter</string>
 +  <string name="programming_code_linter_desc">Quality rules: long lines, trailing whitespace, TODO markers, leftover debug output, hardcoded secrets, empty catch blocks</string>
++
++  <string name="programming_serial_port">Serial port</string>
++  <string name="programming_serial_port_desc">USB serial: driver-free CDC-ACM (RP2040 / ESP32-S2/S3) plus CH340 / CP2102 / FTDI. Read and write in hex or text</string>
++
++  <string name="programming_midi">MIDI</string>
++  <string name="programming_midi_desc">List and talk to MIDI devices via the built-in Android MIDI API — driver-free, no extra permission</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -41014,10 +42215,10 @@ index 164b3af..2c4689d 100644
  kotlin.code.style=official
  android.nonTransitiveRClass=true
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index d597c01..dd05ce9 100644
+index d597c01..10d77d9 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -66,9 +66,26 @@ slf4j = "2.0.18"
+@@ -66,9 +66,31 @@ slf4j = "2.0.18"
  sqlite-android = "-SNAPSHOT"
  termux = "0.118.0"
  diffutils = "4.17"
@@ -41034,6 +42235,10 @@ index d597c01..dd05ce9 100644
 +# 需要 R8 keep —— JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
 +# 静态分析看不到（与 JSch 把类名放进配置字符串是同类问题，见 keepRules 注释）。
 +jgit = "7.8.0.202609011348-r"
++# usb-serial-for-android：USB 转串口（MIT，JitPack）。
++# 覆盖 **CDC-ACM**（RP2040 / ESP32-S2/S3 的原生 USB 串口即此类，属免驱方案）、
++# 以及 CH34x / CP21xx / FTDI / PL2303 等常见桥接芯片。
++usb-serial = "3.8.1"
  
  [libraries]
  android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
@@ -41041,6 +42246,7 @@ index d597c01..dd05ce9 100644
 +bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
 +commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 +jgit = { module = "org.eclipse.jgit:org.eclipse.jgit", version.ref = "jgit" }
++usb-serial = { module = "com.github.mik3y:usb-serial-for-android", version.ref = "usb-serial" }
  kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
  kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
  androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

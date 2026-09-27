@@ -158,6 +158,26 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("code_linter")
     data object CodeLinter : LocalToolOption()
+
+    /**
+     * 串口工具（USB 转串口）。
+     *
+     * 优先覆盖**免驱**的 USB 模拟串口（CDC-ACM）：RP2040 / ESP32-S2 / ESP32-S3 等；
+     * 同时也支持 CH340 / CP2102 / FTDI / PL2303 桥接芯片。
+     */
+    @Serializable
+    @SerialName("serial_port")
+    data object SerialPort : LocalToolOption()
+
+    /**
+     * MIDI 工具。
+     *
+     * 基于 Android 原生 `android.media.midi` —— **零依赖、免驱、无需权限**。
+     * USB MIDI 是标准设备类，系统直接识别；虚拟 MIDI 端口也能看到。
+     */
+    @Serializable
+    @SerialName("midi")
+    data object Midi : LocalToolOption()
 }
 
 class LocalTools(
@@ -508,6 +528,12 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.CodeLinter)) {
             tools.add(createLintTool(context))
+        }
+        if (options.contains(LocalToolOption.SerialPort)) {
+            tools.add(createSerialTool(context))
+        }
+        if (options.contains(LocalToolOption.Midi)) {
+            tools.add(createMidiTool(context))
         }
         return tools
     }
