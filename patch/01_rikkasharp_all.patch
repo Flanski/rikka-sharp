@@ -12872,10 +12872,10 @@ index 1054dcd..0000000
 -⑦ Greer: 每张牌都是故事的一个角色/事件,
 -  功能含义优先于象征含义
 diff --git a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
-index e688510..a19df56 100644
+index e688510..d6c97de 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
-@@ -44,6 +44,14 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
+@@ -44,6 +44,22 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
  const val CHAT_GENERATION_FOREGROUND_CHANNEL_ID = "chat_generation_foreground"
  const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
  
@@ -12887,10 +12887,18 @@ index e688510..a19df56 100644
 + */
 +const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
 +
++/**
++ * 「模型正在执行工具」的活动通知渠道。
++ *
++ * 重要性 LOW：这是**告知性**的（让用户瞥一眼就知道 AI 在做什么），
++ * 不需要像授权请求那样打断用户。
++ */
++const val TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID = "tool_activity"
++
  class RikkaHubApp : Application() {
      private fun trace(msg: String) {
          try {
-@@ -201,6 +209,16 @@ class RikkaHubApp : Application() {
+@@ -201,6 +217,27 @@ class RikkaHubApp : Application() {
              .build()
          notificationManager.createNotificationChannel(webServerChannel)
  
@@ -12903,6 +12911,17 @@ index e688510..a19df56 100644
 +            .setVibrationEnabled(true)
 +            .build()
 +        notificationManager.createNotificationChannel(toolApprovalChannel)
++
++        val toolActivityChannel = NotificationChannelCompat
++            .Builder(
++                TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID,
++                NotificationManagerCompat.IMPORTANCE_LOW
++            )
++            .setName(getString(R.string.notification_channel_tool_activity))
++            .setVibrationEnabled(false)
++            .setShowBadge(false)
++            .build()
++        notificationManager.createNotificationChannel(toolActivityChannel)
 +
          val generationForegroundChannel = NotificationChannelCompat
              .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
@@ -16531,10 +16550,10 @@ index 76f057e..9bb5538 100644
          GenMediaRepository(get())
      }
 diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
-index 56e4410..868d71d 100644
+index 56e4410..e145d17 100644
 --- a/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
-@@ -12,16 +12,23 @@ import androidx.lifecycle.ProcessLifecycleOwner
+@@ -12,16 +12,24 @@ import androidx.lifecycle.ProcessLifecycleOwner
  import kotlinx.coroutines.Dispatchers
  import kotlinx.coroutines.flow.MutableStateFlow
  import kotlinx.coroutines.launch
@@ -16546,6 +16565,7 @@ index 56e4410..868d71d 100644
  import me.rerere.rikkahub.AppScope
  import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
  import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
++import me.rerere.rikkahub.TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID
 +import me.rerere.rikkahub.TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID
  import me.rerere.rikkahub.R
  import me.rerere.rikkahub.RouteActivity
@@ -16558,7 +16578,7 @@ index 56e4410..868d71d 100644
  import me.rerere.rikkahub.utils.cancelNotification
  import me.rerere.rikkahub.utils.sendNotification
  import java.util.concurrent.ConcurrentHashMap
-@@ -62,6 +69,7 @@ class ChatNotificationManager(
+@@ -62,6 +70,7 @@ class ChatNotificationManager(
                  when (event) {
                      is AppEvent.ChatGenerationUpdate -> handleGenerationUpdate(event)
                      is AppEvent.ChatGenerationEnded -> handleGenerationEnded(event)
@@ -16566,7 +16586,100 @@ index 56e4410..868d71d 100644
                      else -> {}
                  }
              }
-@@ -190,6 +198,93 @@ class ChatNotificationManager(
+@@ -69,6 +78,14 @@ class ChatNotificationManager(
+     }
+ 
+     private fun handleGenerationUpdate(event: AppEvent.ChatGenerationUpdate) {
++        // 工具活动通知：让用户知道「AI 正在做什么操作」。
++        // 独立于 Live Update 的开关与节流 —— 它自带去重（同一个 toolCallId 只通知一次），
++        // 且即使关闭了 Live Update 也应当有意义。
++        if (!isForeground.value) {
++            notifyToolActivityIfNeeded(event)
++        }
++
++        // ── 以下为原有的 Live Update 通知逻辑 ──
+         if (isForeground.value) return
+         val displaySetting = settingsStore.settingsFlow.value.displaySetting
+         if (!displaySetting.enableNotificationOnMessageGeneration) return
+@@ -84,6 +101,8 @@ class ChatNotificationManager(
+ 
+     private fun handleGenerationEnded(event: AppEvent.ChatGenerationEnded) {
+         cancelLiveUpdateNotification(event.conversationId)
++        // 生成结束后移除活动通知：它的作用是「此刻在做什么」，事情做完就没意义了
++        cancelToolActivityNotification(event.conversationId)
+ 
+         val contentPreview = event.contentPreview ?: return
+         if (isForeground.value) return
+@@ -109,6 +128,68 @@ class ChatNotificationManager(
+         }
+     }
+ 
++    /**
++     * 每个会话已通知过的工具调用 id。
++     *
++     * 生成过程中消息会**反复推送**（每来一个 chunk 就更新一次），
++     * 若不去重就会把同一个工具通知几十遍。
++     */
++    private val notifiedToolCalls = ConcurrentHashMap<Uuid, MutableSet<String>>()
++
++    /**
++     * 有工具被执行时发一条活动通知，让用户不打开应用也能看到 AI 在做什么。
++     *
++     * 内容取**最近一个工具**的名称 + 参数摘要（用 BigTextStyle，可展开），
++     * 并在副标题给出累计数量 —— 这样既有信息量，又不会因工具很多而冗长。
++     */
++    private fun notifyToolActivityIfNeeded(event: AppEvent.ChatGenerationUpdate) {
++        val displaySetting = settingsStore.settingsFlow.value.displaySetting
++        if (!displaySetting.enableNotificationOnMessageGeneration) return
++
++        val tools = event.lastMessage.parts.filterIsInstance<UIMessagePart.Tool>()
++        if (tools.isEmpty()) return
++
++        val seen = notifiedToolCalls.getOrPut(event.conversationId) { java.util.Collections.synchronizedSet(mutableSetOf()) }
++        // 是否出现了此前没通知过的工具
++        val hasFresh = tools.any { it.toolCallId !in seen }
++        if (!hasFresh) return
++        tools.forEach { seen.add(it.toolCallId) }
++
++        val last = tools.last()
++        val summary = summarizeToolInput(last.toolName, last.input)
++        val executedCount = tools.count { it.isExecuted }
++        val pendingCount = tools.count { it.isPending }
++
++        context.sendNotification(
++            channelId = TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID,
++            notificationId = getToolActivityNotificationId(event.conversationId),
++        ) {
++            title = context.getString(R.string.notification_tool_activity_title, event.senderName)
++            content = if (summary.isBlank()) last.toolName else "${last.toolName}\n$summary"
++            subText = context.getString(
++                R.string.notification_tool_activity_subtext,
++                executedCount,
++                pendingCount,
++            )
++            autoCancel = true
++            // 更新频繁：用 onlyAlertOnce 避免每次都响/振动
++            onlyAlertOnce = true
++            useBigTextStyle = true
++            category = NotificationCompat.CATEGORY_PROGRESS
++            contentIntent = getPendingIntent(context, event.conversationId)
++        }
++    }
++
++    private fun getToolActivityNotificationId(conversationId: Uuid): Int {
++        // 与 Live Update(+10000) / Completed(+20000) 错开，避免互相覆盖
++        return conversationId.hashCode() + 30000
++    }
++
++    private fun cancelToolActivityNotification(conversationId: Uuid) {
++        notifiedToolCalls.remove(conversationId)
++        context.cancelNotification(getToolActivityNotificationId(conversationId))
++    }
++
+     private fun getLiveUpdateNotificationId(conversationId: Uuid): Int {
+         return conversationId.hashCode() + 10000
+     }
+@@ -190,6 +271,93 @@ class ChatNotificationManager(
          context.cancelNotification(getLiveUpdateNotificationId(conversationId))
      }
  
@@ -36977,7 +37090,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..61d55d0 100644
+index 8cb3cf1..437ee47 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -36989,7 +37102,7 @@ index 8cb3cf1..61d55d0 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,101 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,105 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -37090,9 +37203,13 @@ index 8cb3cf1..61d55d0 100644
 +
 +  <string name="assistant_page_local_tools_download">下载工具</string>
 +  <string name="assistant_page_local_tools_download_desc">HTTP 下载与仓库快照下载，支持同步或后台（异步）两种模式</string>
++
++  <string name="notification_channel_tool_activity">工具活动</string>
++  <string name="notification_tool_activity_title">%1$s 正在执行操作</string>
++  <string name="notification_tool_activity_subtext">已完成 %1$d 项 · 待批准 %2$d 项</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..da24384 100644
+index 47ddab2..0188e36 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -37106,7 +37223,7 @@ index 47ddab2..da24384 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,101 @@
+@@ -1815,4 +1817,105 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -37207,6 +37324,10 @@ index 47ddab2..da24384 100644
 +
 +  <string name="assistant_page_local_tools_download">Download tools</string>
 +  <string name="assistant_page_local_tools_download_desc">HTTP downloads and repository snapshots, with sync or background (async) modes</string>
++
++  <string name="notification_channel_tool_activity">Tool activity</string>
++  <string name="notification_tool_activity_title">%1$s is running tools</string>
++  <string name="notification_tool_activity_subtext">%1$d done · %2$d awaiting approval</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644

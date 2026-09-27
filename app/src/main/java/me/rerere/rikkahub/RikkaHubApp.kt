@@ -52,6 +52,14 @@ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
  */
 const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
 
+/**
+ * 「模型正在执行工具」的活动通知渠道。
+ *
+ * 重要性 LOW：这是**告知性**的（让用户瞥一眼就知道 AI 在做什么），
+ * 不需要像授权请求那样打断用户。
+ */
+const val TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID = "tool_activity"
+
 class RikkaHubApp : Application() {
     private fun trace(msg: String) {
         try {
@@ -218,6 +226,17 @@ class RikkaHubApp : Application() {
             .setVibrationEnabled(true)
             .build()
         notificationManager.createNotificationChannel(toolApprovalChannel)
+
+        val toolActivityChannel = NotificationChannelCompat
+            .Builder(
+                TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID,
+                NotificationManagerCompat.IMPORTANCE_LOW
+            )
+            .setName(getString(R.string.notification_channel_tool_activity))
+            .setVibrationEnabled(false)
+            .setShowBadge(false)
+            .build()
+        notificationManager.createNotificationChannel(toolActivityChannel)
 
         val generationForegroundChannel = NotificationChannelCompat
             .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)

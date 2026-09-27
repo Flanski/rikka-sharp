@@ -1914,4 +1914,8 @@
 
   <string name="assistant_page_local_tools_download">Download tools</string>
   <string name="assistant_page_local_tools_download_desc">HTTP downloads and repository snapshots, with sync or background (async) modes</string>
+
+  <string name="notification_channel_tool_activity">Tool activity</string>
+  <string name="notification_tool_activity_title">%1$s is running tools</string>
+  <string name="notification_tool_activity_subtext">%1$d done · %2$d awaiting approval</string>
 </resources>

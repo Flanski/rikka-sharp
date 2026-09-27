@@ -20,6 +20,7 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
+import me.rerere.rikkahub.TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.RouteActivity
@@ -77,6 +78,14 @@ class ChatNotificationManager(
     }
 
     private fun handleGenerationUpdate(event: AppEvent.ChatGenerationUpdate) {
+        // 工具活动通知：让用户知道「AI 正在做什么操作」。
+        // 独立于 Live Update 的开关与节流 —— 它自带去重（同一个 toolCallId 只通知一次），
+        // 且即使关闭了 Live Update 也应当有意义。
+        if (!isForeground.value) {
+            notifyToolActivityIfNeeded(event)
+        }
+
+        // ── 以下为原有的 Live Update 通知逻辑 ──
         if (isForeground.value) return
         val displaySetting = settingsStore.settingsFlow.value.displaySetting
         if (!displaySetting.enableNotificationOnMessageGeneration) return
@@ -92,6 +101,8 @@ class ChatNotificationManager(
 
     private fun handleGenerationEnded(event: AppEvent.ChatGenerationEnded) {
         cancelLiveUpdateNotification(event.conversationId)
+        // 生成结束后移除活动通知：它的作用是「此刻在做什么」，事情做完就没意义了
+        cancelToolActivityNotification(event.conversationId)
 
         val contentPreview = event.contentPreview ?: return
         if (isForeground.value) return
@@ -115,6 +126,68 @@ class ChatNotificationManager(
             category = NotificationCompat.CATEGORY_MESSAGE
             contentIntent = getPendingIntent(context, conversationId)
         }
+    }
+
+    /**
+     * 每个会话已通知过的工具调用 id。
+     *
+     * 生成过程中消息会**反复推送**（每来一个 chunk 就更新一次），
+     * 若不去重就会把同一个工具通知几十遍。
+     */
+    private val notifiedToolCalls = ConcurrentHashMap<Uuid, MutableSet<String>>()
+
+    /**
+     * 有工具被执行时发一条活动通知，让用户不打开应用也能看到 AI 在做什么。
+     *
+     * 内容取**最近一个工具**的名称 + 参数摘要（用 BigTextStyle，可展开），
+     * 并在副标题给出累计数量 —— 这样既有信息量，又不会因工具很多而冗长。
+     */
+    private fun notifyToolActivityIfNeeded(event: AppEvent.ChatGenerationUpdate) {
+        val displaySetting = settingsStore.settingsFlow.value.displaySetting
+        if (!displaySetting.enableNotificationOnMessageGeneration) return
+
+        val tools = event.lastMessage.parts.filterIsInstance<UIMessagePart.Tool>()
+        if (tools.isEmpty()) return
+
+        val seen = notifiedToolCalls.getOrPut(event.conversationId) { java.util.Collections.synchronizedSet(mutableSetOf()) }
+        // 是否出现了此前没通知过的工具
+        val hasFresh = tools.any { it.toolCallId !in seen }
+        if (!hasFresh) return
+        tools.forEach { seen.add(it.toolCallId) }
+
+        val last = tools.last()
+        val summary = summarizeToolInput(last.toolName, last.input)
+        val executedCount = tools.count { it.isExecuted }
+        val pendingCount = tools.count { it.isPending }
+
+        context.sendNotification(
+            channelId = TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID,
+            notificationId = getToolActivityNotificationId(event.conversationId),
+        ) {
+            title = context.getString(R.string.notification_tool_activity_title, event.senderName)
+            content = if (summary.isBlank()) last.toolName else "${last.toolName}\n$summary"
+            subText = context.getString(
+                R.string.notification_tool_activity_subtext,
+                executedCount,
+                pendingCount,
+            )
+            autoCancel = true
+            // 更新频繁：用 onlyAlertOnce 避免每次都响/振动
+            onlyAlertOnce = true
+            useBigTextStyle = true
+            category = NotificationCompat.CATEGORY_PROGRESS
+            contentIntent = getPendingIntent(context, event.conversationId)
+        }
+    }
+
+    private fun getToolActivityNotificationId(conversationId: Uuid): Int {
+        // 与 Live Update(+10000) / Completed(+20000) 错开，避免互相覆盖
+        return conversationId.hashCode() + 30000
+    }
+
+    private fun cancelToolActivityNotification(conversationId: Uuid) {
+        notifiedToolCalls.remove(conversationId)
+        context.cancelNotification(getToolActivityNotificationId(conversationId))
     }
 
     private fun getLiveUpdateNotificationId(conversationId: Uuid): Int {

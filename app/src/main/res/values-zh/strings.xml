@@ -1914,4 +1914,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
 
   <string name="assistant_page_local_tools_download">下载工具</string>
   <string name="assistant_page_local_tools_download_desc">HTTP 下载与仓库快照下载，支持同步或后台（异步）两种模式</string>
+
+  <string name="notification_channel_tool_activity">工具活动</string>
+  <string name="notification_tool_activity_title">%1$s 正在执行操作</string>
+  <string name="notification_tool_activity_subtext">已完成 %1$d 项 · 待批准 %2$d 项</string>
 </resources>
