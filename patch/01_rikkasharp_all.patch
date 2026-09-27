@@ -17107,10 +17107,10 @@ index 8e9bd52..1754265 100644
              .edit(commit = true) {
                  putBoolean(KEY_CRASHED, true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
-index 5708616..4852de9 100644
+index 5708616..0e53662 100644
 --- a/app/src/main/keepRules/rikkahub.keep
 +++ b/app/src/main/keepRules/rikkahub.keep
-@@ -28,6 +28,35 @@
+@@ -28,6 +28,52 @@
  -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
  -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
  
@@ -17138,6 +17138,23 @@ index 5708616..4852de9 100644
 +-dontwarn org.apache.logging.log4j.**
 +-dontwarn org.ietf.jgss.**
 +-dontwarn org.newsclub.net.unix.**
++
++# ── sherpa-onnx（本地 TTS）────────────────────────────────────────
++# **必须整体 keep，且不能混淆字段名。**
++#
++# native 侧（JNI）是按**字段名**读取 Kotlin 配置对象的，例如：
++#     jfieldID fid = GetFieldID(cls, "ruleFsts", "Ljava/lang/String;");
++#     GetObjectField(obj, fid);
++# 一旦 R8 把字段名混淆（实测被改成 a / b / c），GetFieldID 返回 NULL，
++# native 侧随即解引用空指针 → SIGSEGV → **进程直接消失**：
++#   · 没有 Java 异常（不是 Exception/Error）
++#   · 因此 CrashHandler 的 uncaught 处理器与崩溃页都不会触发
++#   · TtsController 里对 synthesize/play 的 try-catch 也捕获不到
++# 用户看到的就是「播放语音时闪退」。
++#
++# 排查代价说明：这个 bug 无法用 C API 复现 —— C 版本用结构体传参、
++# 不做任何字段名查找，所以底层怎么测都是好的；而 JNI 版本才会中招。
++-keep class com.k2fsa.sherpa.onnx.** { *; }
 +
 +# BouncyCastle 内部大量使用反射/可选 API，放宽警告
 +-dontwarn org.bouncycastle.**
