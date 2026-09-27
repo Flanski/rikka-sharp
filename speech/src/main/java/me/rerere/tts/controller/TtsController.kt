@@ -119,12 +119,16 @@ class TtsController(
      * 后台预热当前 provider（见 [TTSProvider.warmUp]）。
      * 用独立的 job，不阻塞朗读；若用户抢先朗读，合成会自然排在预热之后（同一把 native 锁）。
      */
-    fun warmUp(provider: TTSProviderSetting = currentProvider ?: return) {
+    fun warmUp(provider: TTSProviderSetting? = null) {
+        // 注意：不能写成 `provider: TTSProviderSetting = currentProvider ?: return`
+        // —— 默认参数表达式里禁止 return（Kotlin 限制，编译报
+        //    "'return' is prohibited here"）。改为函数体内解析。
+        val target = provider ?: currentProvider ?: return
         warmUpJob?.cancel()
         warmUpJob = scope.launch {
             _isWarmingUp.update { true }
             try {
-                ttsManager.warmUp(provider)
+                ttsManager.warmUp(target)
             } finally {
                 _isWarmingUp.update { false }
             }
