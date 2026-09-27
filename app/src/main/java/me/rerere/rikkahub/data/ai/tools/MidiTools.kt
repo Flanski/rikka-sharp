@@ -150,7 +150,8 @@ private fun typeName(type: Int): String = when (type) {
     MidiDeviceInfo.TYPE_USB -> "usb"
     MidiDeviceInfo.TYPE_BLUETOOTH -> "bluetooth"
     MidiDeviceInfo.TYPE_VIRTUAL -> "virtual"
-    MidiDeviceInfo.TYPE_BUILTIN -> "builtin"
+    // 注意：MidiDeviceInfo **没有** TYPE_BUILTIN —— 先前我凭印象写了它，导致编译失败。
+    // 已对照 AOSP 源码确认，实际只有 TYPE_USB(1) / TYPE_VIRTUAL(2) / TYPE_BLUETOOTH(3)。
     else -> "type$type"
 }
 
@@ -221,7 +222,15 @@ private object MidiRegistry {
         @Volatile var error: String? = null
         @Volatile var rxBytes: Long = 0
         @Volatile var txBytes: Long = 0
-        lateinit var receiver: MidiReceiver
+        /**
+         * MIDI 接收器。
+         *
+         * ★不能用 `lateinit var`：关闭设备时需要在**另一个类**（MidiRegistry）里判断
+         * 「是否已赋值」，而 `::receiver.isInitialized` 会访问 lateinit 的 backing field，
+         * Kotlin 不允许跨类这样做（错误：Backing field ... is not accessible at this point）。
+         * 改为可空 + `?.let` 既满足需求，语义也更直白。
+         */
+        @Volatile var receiver: MidiReceiver? = null
 
         fun append(data: ByteArray, count: Int) {
             synchronized(rx) {
@@ -310,7 +319,7 @@ private object MidiRegistry {
 
                     override fun onFlush() { /* 设备要求丢弃未处理数据：缓冲区已在 drain 后自然清空 */ }
                 }
-                runCatching { outputPort.connect(open.receiver) }.onFailure {
+                runCatching { open.receiver?.let { outputPort.connect(it) } }.onFailure {
                     open.error = "连接接收器失败：${it.message}"
                     Log.w(TAG, "connect receiver failed", it)
                 }
@@ -384,7 +393,10 @@ private object MidiRegistry {
             }
             if (mode != "hex") {
                 put("messages", buildJsonArray {
-                    decodeMidi(data).forEach { add(it) }
+                    // decodeMidi 返回 List<String>，而 JsonArrayBuilder.add 的成员函数签名是
+                    // add(JsonElement)（add(String) 是需显式 import 的扩展函数）。
+                    // 这里显式包成 JsonPrimitive，意图更清楚、也不依赖 import。
+                    decodeMidi(data).forEach { add(JsonPrimitive(it)) }
                 })
             }
             put("total_rx", JsonPrimitive(d.rxBytes))
@@ -426,7 +438,8 @@ private object MidiRegistry {
         }
         var n = 0
         targets.forEach { d ->
-            if (d::receiver.isInitialized) runCatching { d.outputPort?.disconnect(d.receiver) }
+            // receiver 可空，直接 ?.let 即可（不必也不能用 isInitialized 跨类判断）
+            d.receiver?.let { r -> runCatching { d.outputPort?.disconnect(r) } }
             runCatching { d.inputPort?.close() }
             runCatching { d.outputPort?.close() }
             runCatching { d.device.close() }

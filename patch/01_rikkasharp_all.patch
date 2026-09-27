@@ -15397,10 +15397,10 @@ index dc0ab1a..04c2173 100644
  }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
 new file mode 100644
-index 0000000..ca4b9b4
+index 0000000..59b2d3c
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
-@@ -0,0 +1,586 @@
+@@ -0,0 +1,599 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
@@ -15553,7 +15553,8 @@ index 0000000..ca4b9b4
 +    MidiDeviceInfo.TYPE_USB -> "usb"
 +    MidiDeviceInfo.TYPE_BLUETOOTH -> "bluetooth"
 +    MidiDeviceInfo.TYPE_VIRTUAL -> "virtual"
-+    MidiDeviceInfo.TYPE_BUILTIN -> "builtin"
++    // 注意：MidiDeviceInfo **没有** TYPE_BUILTIN —— 先前我凭印象写了它，导致编译失败。
++    // 已对照 AOSP 源码确认，实际只有 TYPE_USB(1) / TYPE_VIRTUAL(2) / TYPE_BLUETOOTH(3)。
 +    else -> "type$type"
 +}
 +
@@ -15624,7 +15625,15 @@ index 0000000..ca4b9b4
 +        @Volatile var error: String? = null
 +        @Volatile var rxBytes: Long = 0
 +        @Volatile var txBytes: Long = 0
-+        lateinit var receiver: MidiReceiver
++        /**
++         * MIDI 接收器。
++         *
++         * ★不能用 `lateinit var`：关闭设备时需要在**另一个类**（MidiRegistry）里判断
++         * 「是否已赋值」，而 `::receiver.isInitialized` 会访问 lateinit 的 backing field，
++         * Kotlin 不允许跨类这样做（错误：Backing field ... is not accessible at this point）。
++         * 改为可空 + `?.let` 既满足需求，语义也更直白。
++         */
++        @Volatile var receiver: MidiReceiver? = null
 +
 +        fun append(data: ByteArray, count: Int) {
 +            synchronized(rx) {
@@ -15713,7 +15722,7 @@ index 0000000..ca4b9b4
 +
 +                    override fun onFlush() { /* 设备要求丢弃未处理数据：缓冲区已在 drain 后自然清空 */ }
 +                }
-+                runCatching { outputPort.connect(open.receiver) }.onFailure {
++                runCatching { open.receiver?.let { outputPort.connect(it) } }.onFailure {
 +                    open.error = "连接接收器失败：${it.message}"
 +                    Log.w(TAG, "connect receiver failed", it)
 +                }
@@ -15787,7 +15796,10 @@ index 0000000..ca4b9b4
 +            }
 +            if (mode != "hex") {
 +                put("messages", buildJsonArray {
-+                    decodeMidi(data).forEach { add(it) }
++                    // decodeMidi 返回 List<String>，而 JsonArrayBuilder.add 的成员函数签名是
++                    // add(JsonElement)（add(String) 是需显式 import 的扩展函数）。
++                    // 这里显式包成 JsonPrimitive，意图更清楚、也不依赖 import。
++                    decodeMidi(data).forEach { add(JsonPrimitive(it)) }
 +                })
 +            }
 +            put("total_rx", JsonPrimitive(d.rxBytes))
@@ -15829,7 +15841,8 @@ index 0000000..ca4b9b4
 +        }
 +        var n = 0
 +        targets.forEach { d ->
-+            if (d::receiver.isInitialized) runCatching { d.outputPort?.disconnect(d.receiver) }
++            // receiver 可空，直接 ?.let 即可（不必也不能用 isInitialized 跨类判断）
++            d.receiver?.let { r -> runCatching { d.outputPort?.disconnect(r) } }
 +            runCatching { d.inputPort?.close() }
 +            runCatching { d.outputPort?.close() }
 +            runCatching { d.device.close() }
@@ -22471,10 +22484,10 @@ index ba9a6ee..d0e1d65 100644
              if (config.requestPromotedOngoing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                  setRequestPromotedOngoing(true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
-index 5708616..7ec65e5 100644
+index 5708616..6d5f295 100644
 --- a/app/src/main/keepRules/rikkahub.keep
 +++ b/app/src/main/keepRules/rikkahub.keep
-@@ -28,6 +28,85 @@
+@@ -28,6 +28,94 @@
  -keep class me.rerere.rikkahub.data.ai.python.PythonBridge { *; }
  -keep class me.rerere.rikkahub.data.ai.python.JsBridge { *; }
  
@@ -22552,6 +22565,15 @@ index 5708616..7ec65e5 100644
 +# 但为稳妥仍整体 keep —— 串口驱动的失败只在运行期暴露，代价高，不值得冒险。
 +-keep class com.hoho.android.usbserial.** { *; }
 +-dontwarn com.hoho.android.usbserial.**
++
++# JGit 引用了 Android 上**不存在**的 Java SE 类，R8 会报 "Missing class" 而失败。
++# 这些只在特定功能路径用到（JMX 监控 MBean、GC 的进程锁），Android 上不会执行到，
++# 因此 dontwarn 即可 —— 不需要、也无法提供这些类。
++#   实测缺失清单：java.lang.ProcessHandle（Java 9+ API，Android 无）
++#                + javax.management.*（整个 JMX 包，共 10 个类）
++-dontwarn java.lang.ProcessHandle
++-dontwarn javax.management.**
++-dontwarn java.lang.management.**
 +
 +# BouncyCastle 内部大量使用反射/可选 API，放宽警告
 +-dontwarn org.bouncycastle.**
