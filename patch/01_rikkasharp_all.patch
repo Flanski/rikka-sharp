@@ -13130,10 +13130,10 @@ index 8abf47c..0c75ff0 100644
      fun evalJavascript(library: String, code: String): String = runBlocking {
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt
 new file mode 100644
-index 0000000..1d9a1f9
+index 0000000..7043f2f
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt
-@@ -0,0 +1,208 @@
+@@ -0,0 +1,263 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
@@ -13280,14 +13280,36 @@ index 0000000..1d9a1f9
 +                put("technology", JsonPrimitive(it))
 +            }
 +
++            // ── 其它可用字段（常量名已对照 AOSP BatteryManager.java 的 21 个 EXTRA_* 核对）──
++            // 这些在低版本广播里可能不存在，getIntExtra 会返回默认值 → 就不写该字段，
++            // 避免用 0 冒充「循环次数为 0」这类误导信息。
++            i.getIntExtra(BatteryManager.EXTRA_CYCLE_COUNT, -1).takeIf { it >= 0 }
++                ?.let { put("cycle_count", JsonPrimitive(it)) }
++            i.getIntExtra(BatteryManager.EXTRA_CHARGE_COUNTER, Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
++                ?.let { put("extras_charge_counter", JsonPrimitive(it)) }
++            i.getIntExtra(BatteryManager.EXTRA_MAX_CHARGING_CURRENT, Int.MIN_VALUE).takeIf { it > 0 }
++                ?.let { put("max_charging_current_ma", JsonPrimitive(it)) }
++            i.getIntExtra(BatteryManager.EXTRA_MAX_CHARGING_VOLTAGE, Int.MIN_VALUE).takeIf { it > 0 }
++                ?.let { put("max_charging_voltage_mv", JsonPrimitive(it)) }
++            i.getBooleanExtra(BatteryManager.EXTRA_BATTERY_LOW, false).takeIf { it }
++                ?.let { put("battery_low", JsonPrimitive(true)) }
++            i.getBooleanExtra(BatteryManager.EXTRA_PRESENT, true).takeIf { !it }
++                ?.let { put("battery_present", JsonPrimitive(false)) }
++
 +            // ── 容量等级（API 28+ 的粗粒度指示：low/medium/high）──
 +            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++                // ★常量名已对照 AOSP BatteryManager.java 核对 —— 完整清单只有 7 个：
++                //   UNSUPPORTED(-1) / UNKNOWN(0) / CRITICAL(1) / LOW(2) / NORMAL(3) / HIGH(4) / FULL(5)
++                //   先前我写的 BATTERY_CAPACITY_LEVEL_MEDIUM **并不存在**（正确的是 NORMAL），
++                //   且漏了 CRITICAL / UNKNOWN。
 +                when (i.getIntExtra(BatteryManager.EXTRA_CAPACITY_LEVEL, Int.MIN_VALUE)) {
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_CRITICAL -> put("capacity_level", JsonPrimitive("critical"))
 +                    BatteryManager.BATTERY_CAPACITY_LEVEL_LOW -> put("capacity_level", JsonPrimitive("low"))
-+                    BatteryManager.BATTERY_CAPACITY_LEVEL_MEDIUM -> put("capacity_level", JsonPrimitive("medium"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_NORMAL -> put("capacity_level", JsonPrimitive("normal"))
 +                    BatteryManager.BATTERY_CAPACITY_LEVEL_HIGH -> put("capacity_level", JsonPrimitive("high"))
 +                    BatteryManager.BATTERY_CAPACITY_LEVEL_FULL -> put("capacity_level", JsonPrimitive("full"))
-+                    BatteryManager.BATTERY_CAPACITY_LEVEL_NORMAL -> put("capacity_level", JsonPrimitive("normal"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_UNKNOWN -> put("capacity_level", JsonPrimitive("unknown"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_UNSUPPORTED -> put("capacity_level", JsonPrimitive("unsupported"))
 +                    else -> {}
 +                }
 +            }
@@ -13313,6 +13335,39 @@ index 0000000..1d9a1f9
 +            }
 +            prop(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.let {
 +                put("capacity_property", JsonPrimitive(it))
++            }
++            prop(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE)?.let {
++                put("current_average_raw", JsonPrimitive(it))
++                put("current_average_ua_as_ma", JsonPrimitive(it / 1000.0))
++            }
++            prop(BatteryManager.BATTERY_PROPERTY_STATUS)?.let {
++                put("status_property", JsonPrimitive(it))
++            }
++
++            // ── API 34+ 才有的电池信息 ──
++            // 这些属性在低版本上 getIntProperty 会抛异常，故都用 runCatching 包裹；
++            // 拿不到就不写该字段（而不是写 0 让人误解）。
++            if (Build.VERSION.SDK_INT >= 34) {
++                @Suppress("NewApi")
++                runCatching {
++                    val bm2 = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
++                    bm2.getIntProperty(BatteryManager.BATTERY_PROPERTY_STATE_OF_HEALTH)
++                        .takeIf { it != Int.MIN_VALUE && it != 0 }
++                        ?.let { put("state_of_health", JsonPrimitive(it)) }
++                    bm2.getIntProperty(BatteryManager.BATTERY_PROPERTY_MANUFACTURING_DATE)
++                        .takeIf { it > 0 }
++                        ?.let { put("manufacturing_date_epoch_s", JsonPrimitive(it)) }
++                    bm2.getIntProperty(BatteryManager.BATTERY_PROPERTY_FIRST_USAGE_DATE)
++                        .takeIf { it > 0 }
++                        ?.let { put("first_usage_date_epoch_s", JsonPrimitive(it)) }
++                    bm2.getIntProperty(BatteryManager.BATTERY_PROPERTY_SERIAL_NUMBER)
++                        .takeIf { it != Int.MIN_VALUE && it != 0 }
++                        ?.let { put("serial_number", JsonPrimitive(it)) }
++                }.onFailure {
++                    put("api34_properties_note", JsonPrimitive(
++                        "部分 API 34+ 电池属性不可用：${it.javaClass.simpleName}"
++                    ))
++                }
 +            }
 +        }
 +    }
