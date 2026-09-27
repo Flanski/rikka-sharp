@@ -276,8 +276,23 @@ internal object SherpaTtsCache {
             ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
         val tokens = File(dir, "tokens.txt").absolutePath
         val lexicon = File(dir, "lexicon.txt").let { if (it.isFile) it.absolutePath else "" }
-        // 中文模型常带 dict/ 目录（jieba 词典等），没有就留空
-        val dataDir = File(dir, "dict").let { if (it.isDirectory) it.absolutePath else "" }
+
+        // ★ data_dir 只在其**确实是 espeak-ng 数据目录**时才设置 —— 判据是存在 phontab。
+        //
+        // 踩过的坑：部分中文模型（如 vits-zh-hf-theresa / 刻晴 / 优菈 等 804 speakers 系列）
+        // 目录下有个 `dict/`，里面放的是 **jieba 中文分词词典**（jieba.dict.utf8 / idf.utf8 /
+        // hmm_model.utf8 …），**不是** VITS 的 espeak-ng data_dir。
+        // 早期实现见到 dict/ 就当作 data_dir 传入，sherpa-onnx 随即在校验时报
+        //   offline-tts-vits-model-config.cc:Validate: '/…/dict/phontab' does not exist
+        // 创建随之失败；在 App 内表现为**播放时直接闪退**（无 Java 异常、无崩溃 Toast）。
+        // aishell3 因为**没有** dict/ 目录而不受影响，所以只在角色模型上暴露。
+        //
+        // 实测（设备 Termux + C API，同一个 theresa 模型）：
+        //   传 data_dir=dict  → 创建失败
+        //   不传 data_dir     → 创建成功，sampleRate=22050、numSpeakers=804、合成正常
+        val dataDir = File(dir, "dict").let {
+            if (it.isDirectory && File(it, "phontab").isFile) it.absolutePath else ""
+        }
 
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
@@ -312,7 +327,20 @@ internal object SherpaTtsCache {
         )
 
         Log.i(TAG, "loading OfflineTts: model=${modelFile.name}, threads=${setting.numThreads}, dir=${dir.absolutePath}")
-        val tts = OfflineTts(config = config)
+        // OfflineTts 构造在 native 侧失败时会抛 IllegalArgumentException
+        // （Tts.kt 里的 require(ptr != 0L)）。这里统一转成带排查指引的异常，
+        // 避免上层只拿到一句 "Invalid OfflineTtsConfig"。
+        val tts = try {
+            OfflineTts(config = config)
+        } catch (e: Throwable) {
+            throw IllegalStateException(
+                "本地 TTS 模型加载失败：${dir.name}\n" +
+                    "模型文件：${modelFile.name}\n" +
+                    "可能原因：模型文件不完整（重新下载）、或该模型的配置不被当前 sherpa-onnx 版本支持。\n" +
+                    "原始错误：${e.message}",
+                e,
+            )
+        }
         cached = tts
         cachedKey = key
         Log.i(TAG, "OfflineTts loaded: sampleRate=${tts.sampleRate()}, speakers=${tts.numSpeakers()}")
