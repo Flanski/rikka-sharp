@@ -38112,10 +38112,10 @@ index 18a0061..a48c7da 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..2234113
+index 0000000..71c3597
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,331 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -38152,8 +38152,10 @@ index 0000000..2234113
 + *  - **韵律（"语气"）**：VITS 的 `noiseScale` / `noiseScaleW` 控制合成的随机性，
 + *    调高会让语调起伏更自然、更少机械感；再配合 `speed`（语速）与
 + *    `silenceScale`（句间停顿）可表达不同情绪倾向。
-+ *  - **流式**：通过 `generateWithConfigAndCallback` 边合成边回传 PCM，
-+ *    无需等整段合成完（长文本首字延迟明显更低）。
++ *  - **一次性合成**：当前用非流式 `generateWithConfig`。
++ *    （曾用带回调的流式版本 `generateWithConfigAndCallback`，但 App 内播放时崩溃；
++ *      底层 C API 已排除 .so/模型/并发/多线程/规则文件等因素，故先规避 JNI 回调路径。
++ *      待确认稳定后可再评估恢复流式。）
 + *
 + * 注意（能力边界，勿误传）：VITS/Kokoro 这类模型**不支持内联情感标记**
 + * （不像 ChatTTS 的 `[laugh]`）。所谓"带语气"是通过上面三个维度 + AI 用
@@ -38187,26 +38189,24 @@ index 0000000..2234113
 +            throw IllegalStateException(error)
 +        }
 +
-+        // 注意：以下所有操作（加载模型 / 查询说话人 / 合成）都在同一把锁内串行执行。
-+        // 见 SherpaTtsCache.nativeLock 的说明 —— 并发使用同一 OfflineTts 会导致 native 崩溃。
-+        var sampleRate = 0
-+        var numSpeakers = 0
-+        var sid = 0
++        diag(context, "TTS", "generateSpeech 开始 dir=${dir.absolutePath} text=${request.text.take(20)}")
++
++        var pcmResult: ByteArray? = null
++        var outSampleRate = 0
 +        val chunkMeta = mutableMapOf<String, String>()
 +
-+        // JNI 调用是阻塞的，放到 IO 线程；回调里用 trySend 逐步推给消费者
++        // JNI 调用是阻塞的，放到 IO 线程
 +        withContext(Dispatchers.IO) {
 +          SherpaTtsCache.withNative {
-+            // native 崩溃（SIGSEGV）不会被 try-catch 捕获，因此逐步埋点，
-+            // 崩溃后可据此判断"执行到哪一步"。日志写入外部私有目录，
-+            // 位置：Android/data/me.rerere.rikkasharp/files/tts_diag.log
-+            diag(context, "TTS", "准备加载模型 dir=${dir.absolutePath} threads=${providerSetting.numThreads}")
++            diag(context, "TTS", "准备加载模型 threads=${providerSetting.numThreads}")
 +            val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
-+            diag(context, "TTS", "模型加载完成")
-+            sampleRate = tts.sampleRate()
-+            numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
++            diag(context, "TTS", "模型就绪")
++
++            val sr = tts.sampleRate()
++            val numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
 +            // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
-+            sid = if (numSpeakers > 0) providerSetting.speakerId.coerceIn(0, numSpeakers - 1) else 0
++            val sid = if (numSpeakers > 0) providerSetting.speakerId.coerceIn(0, numSpeakers - 1) else 0
++            outSampleRate = sr
 +            chunkMeta.putAll(
 +                mapOf(
 +                    "provider" to "sherpa-onnx",
@@ -38222,53 +38222,54 @@ index 0000000..2234113
 +                sid = sid,
 +                silenceScale = providerSetting.silenceScale,
 +            )
-+            var emitted = 0
-+            var stopped = false
-+            diag(context, "TTS", "开始合成 text=${request.text.take(30)} sid=$sid speed=${providerSetting.speed} silence=${providerSetting.silenceScale}")
 +
-+            tts.generateWithConfigAndCallback(request.text, gen) { samples ->
-+                if (stopped) return@generateWithConfigAndCallback 1
-+                val pcm = floatToPcm16(samples)
-+                if (pcm.isEmpty()) {
-+                    0
-+                } else {
-+                    val ok = trySend(
-+                        AudioChunk(
-+                            data = pcm,
-+                            format = AudioFormat.PCM,
-+                            sampleRate = sampleRate,
-+                            isLast = false,
-+                            metadata = chunkMeta,
-+                        )
-+                    ).isSuccess
-+                    if (!ok) {
-+                        // 下游已取消（例如用户停止播放），通知 native 侧提前收尾
-+                        stopped = true
-+                        1
-+                    } else {
-+                        emitted++
-+                        0
-+                    }
-+                }
-+            }
++            // ★ 改用**非流式** generateWithConfig，不再使用带回调的流式版本。
++            //
++            // 依据：在设备 Termux 里用 C API 直接测过 sherpa-onnx 底层 ——
++            //   模型加载 / 单次合成 / 4 线程并发 / num_threads=2 /
++            //   4 个 rule_fsts / 173MB 的 rule_far 全部通过，未崩溃。
++            // 但 App 仍崩，说明差异在 **JNI 路径**（静态版 .so 与动态版 c-api.so 是不同构建）。
++            // 带回调的 JNI 版本会从 native 线程回调进 Kotlin，是唯一未验证的路径，
++            // 因此先改用无回调的版本以规避风险 —— 代价是失去流式（首字延迟略高），
++            // 收益是把崩溃面收敛到最小。等确认可用后再考虑恢复流式。
++            diag(context, "TTS", "调用 generateWithConfig（非流式）sid=$sid speed=${providerSetting.speed}")
++            val audio = tts.generateWithConfig(request.text, gen)
++            diag(context, "TTS", "合成返回 samples=${audio.samples.size} sampleRate=${audio.sampleRate}")
 +
-+            Log.d(TAG, "generateSpeech: emitted=$emitted chunks, sampleRate=$sampleRate, sid=$sid")
-+            diag(context, "TTS", "合成结束 emitted=$emitted sampleRate=$sampleRate stopped=$stopped")
-+            trySend(
++            val pcm = floatToPcm16(audio.samples)
++            diag(context, "TTS", "转 PCM 完成 bytes=${pcm.size}")
++            pcmResult = pcm
++            outSampleRate = audio.sampleRate
++          }
++        }
++
++        val pcm = pcmResult
++        // sampleRate=0 会生成非法的 WAV 头（AudioPlayer.pcmToWav 直接采用该值），
++        // 兜底为 22050（VITS 中文模型常见采样率之一）
++        if (outSampleRate <= 0) outSampleRate = 22050
++        if (pcm != null && pcm.isNotEmpty()) {
++            send(
 +                AudioChunk(
-+                    data = ByteArray(0),
++                    data = pcm,
 +                    format = AudioFormat.PCM,
-+                    sampleRate = sampleRate,
-+                    isLast = true,
++                    sampleRate = outSampleRate,
++                    isLast = false,
 +                    metadata = chunkMeta,
 +                )
 +            )
-+          }
++        } else {
++            diag(context, "TTS", "警告：合成结果为空")
 +        }
-+    // channelFlow 默认容量是 RENDEZVOUS（0），此时 trySend 在消费者尚未就绪
-+    // 或消费稍慢时会**直接失败**；而 native 回调是同步的、不能挂起等待，
-+    // 一旦失败我的实现就会停止生成 → 结果是空/不完整音频。
-+    // 用无界缓冲吸收这种速度差（音频总量有限，不会无限增长）。
++        send(
++            AudioChunk(
++                data = ByteArray(0),
++                format = AudioFormat.PCM,
++                sampleRate = outSampleRate,
++                isLast = true,
++                metadata = chunkMeta,
++            )
++        )
++        diag(context, "TTS", "generateSpeech 结束")
 +    }.buffer(Channel.UNLIMITED)
 +
 +    /**
