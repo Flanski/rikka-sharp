@@ -12,16 +12,23 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
+import me.rerere.rikkahub.TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
+import me.rerere.rikkahub.data.event.ToolApprovalRequest
+import me.rerere.rikkahub.utils.JsonInstant
+import me.rerere.rikkahub.utils.NotificationAction
 import me.rerere.rikkahub.utils.cancelNotification
 import me.rerere.rikkahub.utils.sendNotification
 import java.util.concurrent.ConcurrentHashMap
@@ -62,6 +69,7 @@ class ChatNotificationManager(
                 when (event) {
                     is AppEvent.ChatGenerationUpdate -> handleGenerationUpdate(event)
                     is AppEvent.ChatGenerationEnded -> handleGenerationEnded(event)
+                    is AppEvent.ToolApprovalRequested -> handleToolApprovalRequested(event)
                     else -> {}
                 }
             }
@@ -188,6 +196,93 @@ class ChatNotificationManager(
     private fun cancelLiveUpdateNotification(conversationId: Uuid) {
         liveUpdateLastSentAt.remove(conversationId)
         context.cancelNotification(getLiveUpdateNotificationId(conversationId))
+    }
+
+    /**
+     * 待批准的工具 → 逐个发通知（带「同意 / 拒绝」按钮）。
+     *
+     * 只在**后台**发：应用在前台时用户能直接看到消息气泡里的批准按钮，
+     * 再弹通知属于打扰（与 Live Update 通知的策略一致）。
+     */
+    private fun handleToolApprovalRequested(event: AppEvent.ToolApprovalRequested) {
+        if (isForeground.value) return
+        event.requests.forEach { request ->
+            sendToolApprovalNotification(event.conversationId, event.senderName, request)
+        }
+    }
+
+    private fun sendToolApprovalNotification(
+        conversationId: Uuid,
+        senderName: String,
+        request: ToolApprovalRequest,
+    ) {
+        val summary = summarizeToolInput(request.toolName, request.inputJson)
+        val allowText = context.getString(R.string.notification_tool_approval_allow)
+        val denyText = context.getString(R.string.notification_tool_approval_deny)
+        val icon = R.drawable.small_icon
+
+        context.sendNotification(
+            channelId = TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID,
+            notificationId = ToolApprovalReceiver.notificationId(request.toolCallId),
+        ) {
+            title = context.getString(
+                R.string.notification_tool_approval_title,
+                senderName,
+                request.toolName,
+            )
+            content = summary
+            subText = context.getString(R.string.notification_tool_approval_subtext)
+            smallIcon = icon
+            autoCancel = true
+            // 不设 ongoing：用户也可能从应用内处理，通知应当可被划掉
+            ongoing = false
+            useDefaults = true
+            useBigTextStyle = true
+            category = NotificationCompat.CATEGORY_REMINDER
+            contentIntent = getPendingIntent(context, conversationId)
+            actions = listOf(
+                NotificationAction(
+                    icon = icon,
+                    title = allowText,
+                    intent = ToolApprovalReceiver.approvalPendingIntent(
+                        context, conversationId, request.toolCallId, approved = true,
+                    ),
+                ),
+                NotificationAction(
+                    icon = icon,
+                    title = denyText,
+                    intent = ToolApprovalReceiver.approvalPendingIntent(
+                        context, conversationId, request.toolCallId, approved = false,
+                    ),
+                ),
+            )
+        }
+    }
+
+    /**
+     * 把工具参数转成人类可读的一行摘要。
+     *
+     * 优先取该工具**最关键的字段**（例如 shell 命令的 `command`、SSH 的主机名），
+     * 让用户在通知里一眼看清「模型打算做什么」；取不到才回退为原始 JSON 截断
+     * （保证任何工具都有可读内容，即使参数结构变化）。
+     */
+    private fun summarizeToolInput(toolName: String, inputJson: String): String {
+        val obj = runCatching { JsonInstant.parseToJsonElement(inputJson).jsonObject }.getOrNull()
+            ?: return inputJson.take(300)
+
+        val preferred = when (toolName) {
+            "execute_command" -> listOf("command")
+            "ssh_exec" -> listOf("host", "command")
+            "ssh_upload" -> listOf("local_path", "remote_path", "host")
+            "ssh_download" -> listOf("remote_path", "local_path", "host")
+            "get_sensors" -> listOf("sensors")
+            else -> emptyList()
+        }
+        val parts = preferred.mapNotNull { key ->
+            obj[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { "$key: $it" }
+        }
+        return if (parts.isNotEmpty()) parts.joinToString("\n").take(400)
+        else inputJson.take(400)
     }
 
     private fun getPendingIntent(context: Context, conversationId: Uuid): PendingIntent {

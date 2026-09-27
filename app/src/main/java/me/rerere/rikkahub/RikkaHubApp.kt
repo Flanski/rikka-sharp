@@ -44,6 +44,14 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
 const val CHAT_GENERATION_FOREGROUND_CHANNEL_ID = "chat_generation_foreground"
 const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
 
+/**
+ * 工具授权请求的通知渠道。
+ *
+ * 重要性设为 HIGH：模型会**一直等待**用户决定才继续生成，
+ * 若通知不醒目（静默/沉底），用户可能长时间以为卡住了。
+ */
+const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
+
 class RikkaHubApp : Application() {
     private fun trace(msg: String) {
         try {
@@ -200,6 +208,16 @@ class RikkaHubApp : Application() {
             .setShowBadge(false)
             .build()
         notificationManager.createNotificationChannel(webServerChannel)
+
+        val toolApprovalChannel = NotificationChannelCompat
+            .Builder(
+                TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID,
+                NotificationManagerCompat.IMPORTANCE_HIGH
+            )
+            .setName(getString(R.string.notification_channel_tool_approval))
+            .setVibrationEnabled(true)
+            .build()
+        notificationManager.createNotificationChannel(toolApprovalChannel)
 
         val generationForegroundChannel = NotificationChannelCompat
             .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)

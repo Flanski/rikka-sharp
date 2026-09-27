@@ -1903,4 +1903,12 @@
   <string name="assistant_page_tool_approval_ssh_upload">SSH: upload files</string>
   <string name="assistant_page_tool_approval_ssh_download">SSH: download files</string>
   <string name="assistant_page_tool_approval_sensors">Read device sensors</string>
+
+  <!-- 工具授权通知 -->
+  <string name="notification_channel_tool_approval">Tool approval</string>
+  <string name="notification_tool_approval_title">%1$s wants to run %2$s</string>
+  <string name="notification_tool_approval_subtext">Waiting for your decision</string>
+  <string name="notification_tool_approval_allow">Allow</string>
+  <string name="notification_tool_approval_deny">Deny</string>
+  <string name="notification_tool_approval_denied_reason">Denied from notification</string>
 </resources>

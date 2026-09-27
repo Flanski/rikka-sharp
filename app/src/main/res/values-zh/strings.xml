@@ -1903,4 +1903,12 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="assistant_page_tool_approval_ssh_upload">SSH：上传文件</string>
   <string name="assistant_page_tool_approval_ssh_download">SSH：下载文件</string>
   <string name="assistant_page_tool_approval_sensors">读取设备传感器</string>
+
+  <!-- 工具授权通知 -->
+  <string name="notification_channel_tool_approval">工具授权</string>
+  <string name="notification_tool_approval_title">%1$s 请求执行 %2$s</string>
+  <string name="notification_tool_approval_subtext">等待你的决定</string>
+  <string name="notification_tool_approval_allow">同意</string>
+  <string name="notification_tool_approval_deny">拒绝</string>
+  <string name="notification_tool_approval_denied_reason">用户从通知中拒绝</string>
 </resources>

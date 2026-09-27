@@ -177,6 +177,13 @@
         android:value="androidx.startup"
         tools:node="remove" />
     </provider>
+    <!-- 工具授权通知上的「同意 / 拒绝」按钮回调。
+         由本应用的 PendingIntent 触发，不需要外部应用访问，故 exported=false。 -->
+    <receiver
+      android:name=".service.ToolApprovalReceiver"
+      android:enabled="true"
+      android:exported="false" />
+
   </application>
 
 </manifest>

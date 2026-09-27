@@ -13,6 +13,20 @@ import androidx.core.app.NotificationManagerCompat
 import me.rerere.rikkahub.R
 
 /**
+ * 通知上的一个操作按钮（`addAction`）。
+ *
+ * 用途：让用户**不打开应用**就能对通知做出决定 —— 例如工具授权的「同意 / 拒绝」。
+ * 点击后由 [intent]（通常是 BroadcastReceiver 的 PendingIntent）处理。
+ */
+data class NotificationAction(
+    /** 按钮图标。系统只取 alpha 通道，故用现成的单色小图标即可 */
+    val icon: Int,
+    /** 按钮文字 */
+    val title: String,
+    val intent: PendingIntent,
+)
+
+/**
  * 通知构建器的配置 DSL
  */
 class NotificationConfig {
@@ -34,6 +48,9 @@ class NotificationConfig {
 
     // 默认通知效果
     var useDefaults: Boolean = false
+
+    /** 操作按钮（系统最多显示 3 个，超出部分不显示） */
+    var actions: List<NotificationAction> = emptyList()
 }
 
 object NotificationUtil {
@@ -102,6 +119,11 @@ object NotificationUtil {
 
             if (config.useDefaults) {
                 setDefaults(NotificationCompat.DEFAULT_ALL)
+            }
+
+            // 操作按钮 —— 让用户直接在通知上做决定（如工具授权的同意/拒绝）
+            config.actions.forEach { action ->
+                addAction(action.icon, action.title, action.intent)
             }
 
             // Android 15+ Live Update 支持

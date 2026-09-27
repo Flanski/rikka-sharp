@@ -1472,7 +1472,7 @@ index d910308..3b0b591 100644
        },
        "oauth_client": [],
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 51e0037..803e02c 100644
+index 51e0037..dddbd73 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -11,6 +11,10 @@
@@ -1486,6 +1486,20 @@ index 51e0037..803e02c 100644
    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+@@ -173,6 +177,13 @@
+         android:value="androidx.startup"
+         tools:node="remove" />
+     </provider>
++    <!-- 工具授权通知上的「同意 / 拒绝」按钮回调。
++         由本应用的 PendingIntent 触发，不需要外部应用访问，故 exported=false。 -->
++    <receiver
++      android:name=".service.ToolApprovalReceiver"
++      android:enabled="true"
++      android:exported="false" />
++
+   </application>
+ 
+ </manifest>
 diff --git "a/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md" "b/app/src/main/assets/mingli/\344\272\272\347\261\273\345\233\276.md"
 deleted file mode 100644
 index 20f5f82..0000000
@@ -12854,6 +12868,42 @@ index 1054dcd..0000000
 -  speed系数修正节奏(fast=日/周, slow=季度/年)
 -⑦ Greer: 每张牌都是故事的一个角色/事件,
 -  功能含义优先于象征含义
+diff --git a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
+index e688510..a19df56 100644
+--- a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
++++ b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
+@@ -44,6 +44,14 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
+ const val CHAT_GENERATION_FOREGROUND_CHANNEL_ID = "chat_generation_foreground"
+ const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
+ 
++/**
++ * 工具授权请求的通知渠道。
++ *
++ * 重要性设为 HIGH：模型会**一直等待**用户决定才继续生成，
++ * 若通知不醒目（静默/沉底），用户可能长时间以为卡住了。
++ */
++const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
++
+ class RikkaHubApp : Application() {
+     private fun trace(msg: String) {
+         try {
+@@ -201,6 +209,16 @@ class RikkaHubApp : Application() {
+             .build()
+         notificationManager.createNotificationChannel(webServerChannel)
+ 
++        val toolApprovalChannel = NotificationChannelCompat
++            .Builder(
++                TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID,
++                NotificationManagerCompat.IMPORTANCE_HIGH
++            )
++            .setName(getString(R.string.notification_channel_tool_approval))
++            .setVibrationEnabled(true)
++            .build()
++        notificationManager.createNotificationChannel(toolApprovalChannel)
++
+         val generationForegroundChannel = NotificationChannelCompat
+             .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
+             .setName(getString(R.string.notification_channel_generation_foreground))
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 index eecc60c..390b813 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
@@ -15137,6 +15187,46 @@ index 8439d28..e973d87 100644
      TTSProviderSetting.SystemTTS(
          id = DEFAULT_SYSTEM_TTS_ID,
          name = "",
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt b/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
+index 769daae..32a5680 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
+@@ -21,6 +21,19 @@ sealed class AppEvent {
+         val senderName: String,
+     ) : AppEvent()
+ 
++    /**
++     * 有工具在执行前需要用户批准。
++     *
++     * 发出后由 `ChatNotificationManager` 转成带「同意 / 拒绝」按钮的通知：
++     * 模型此时**已暂停**（`GenerationHandler` 检测到 Pending 就 break），
++     * 等用户在通知或应用内做出选择后才会继续。
++     */
++    data class ToolApprovalRequested(
++        val conversationId: Uuid,
++        val senderName: String,
++        val requests: List<ToolApprovalRequest>,
++    ) : AppEvent()
++
+     /**
+      * 聊天生成结束（完成、失败或取消）。
+      * [contentPreview] 为 null 时仅取消 Live Update 通知，不发送完成通知。
+@@ -31,3 +44,15 @@ sealed class AppEvent {
+         val contentPreview: String?,
+     ) : AppEvent()
+ }
++
++/**
++ * 一条待批准的工具调用（用于通知展示）。
++ *
++ * [inputJson] 是工具原始参数，展示时才做摘要 —— 事件本身保持「不加工」，
++ * 这样摘要策略变化不需要改发送方。
++ */
++data class ToolApprovalRequest(
++    val toolCallId: String,
++    val toolName: String,
++    val inputJson: String,
++)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 index 422028c..63824fa 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
@@ -15781,11 +15871,149 @@ index 76f057e..9bb5538 100644
      single {
          GenMediaRepository(get())
      }
+diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
+index 56e4410..868d71d 100644
+--- a/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
++++ b/app/src/main/java/me/rerere/rikkahub/service/ChatNotificationManager.kt
+@@ -12,16 +12,23 @@ import androidx.lifecycle.ProcessLifecycleOwner
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.flow.MutableStateFlow
+ import kotlinx.coroutines.launch
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.jsonObject
+ import me.rerere.ai.ui.UIMessage
+ import me.rerere.ai.ui.UIMessagePart
+ import me.rerere.rikkahub.AppScope
+ import me.rerere.rikkahub.CHAT_COMPLETED_NOTIFICATION_CHANNEL_ID
+ import me.rerere.rikkahub.CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID
++import me.rerere.rikkahub.TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID
+ import me.rerere.rikkahub.R
+ import me.rerere.rikkahub.RouteActivity
+ import me.rerere.rikkahub.data.datastore.SettingsStore
+ import me.rerere.rikkahub.data.event.AppEvent
+ import me.rerere.rikkahub.data.event.AppEventBus
++import me.rerere.rikkahub.data.event.ToolApprovalRequest
++import me.rerere.rikkahub.utils.JsonInstant
++import me.rerere.rikkahub.utils.NotificationAction
+ import me.rerere.rikkahub.utils.cancelNotification
+ import me.rerere.rikkahub.utils.sendNotification
+ import java.util.concurrent.ConcurrentHashMap
+@@ -62,6 +69,7 @@ class ChatNotificationManager(
+                 when (event) {
+                     is AppEvent.ChatGenerationUpdate -> handleGenerationUpdate(event)
+                     is AppEvent.ChatGenerationEnded -> handleGenerationEnded(event)
++                    is AppEvent.ToolApprovalRequested -> handleToolApprovalRequested(event)
+                     else -> {}
+                 }
+             }
+@@ -190,6 +198,93 @@ class ChatNotificationManager(
+         context.cancelNotification(getLiveUpdateNotificationId(conversationId))
+     }
+ 
++    /**
++     * 待批准的工具 → 逐个发通知（带「同意 / 拒绝」按钮）。
++     *
++     * 只在**后台**发：应用在前台时用户能直接看到消息气泡里的批准按钮，
++     * 再弹通知属于打扰（与 Live Update 通知的策略一致）。
++     */
++    private fun handleToolApprovalRequested(event: AppEvent.ToolApprovalRequested) {
++        if (isForeground.value) return
++        event.requests.forEach { request ->
++            sendToolApprovalNotification(event.conversationId, event.senderName, request)
++        }
++    }
++
++    private fun sendToolApprovalNotification(
++        conversationId: Uuid,
++        senderName: String,
++        request: ToolApprovalRequest,
++    ) {
++        val summary = summarizeToolInput(request.toolName, request.inputJson)
++        val allowText = context.getString(R.string.notification_tool_approval_allow)
++        val denyText = context.getString(R.string.notification_tool_approval_deny)
++        val icon = R.drawable.small_icon
++
++        context.sendNotification(
++            channelId = TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID,
++            notificationId = ToolApprovalReceiver.notificationId(request.toolCallId),
++        ) {
++            title = context.getString(
++                R.string.notification_tool_approval_title,
++                senderName,
++                request.toolName,
++            )
++            content = summary
++            subText = context.getString(R.string.notification_tool_approval_subtext)
++            smallIcon = icon
++            autoCancel = true
++            // 不设 ongoing：用户也可能从应用内处理，通知应当可被划掉
++            ongoing = false
++            useDefaults = true
++            useBigTextStyle = true
++            category = NotificationCompat.CATEGORY_REMINDER
++            contentIntent = getPendingIntent(context, conversationId)
++            actions = listOf(
++                NotificationAction(
++                    icon = icon,
++                    title = allowText,
++                    intent = ToolApprovalReceiver.approvalPendingIntent(
++                        context, conversationId, request.toolCallId, approved = true,
++                    ),
++                ),
++                NotificationAction(
++                    icon = icon,
++                    title = denyText,
++                    intent = ToolApprovalReceiver.approvalPendingIntent(
++                        context, conversationId, request.toolCallId, approved = false,
++                    ),
++                ),
++            )
++        }
++    }
++
++    /**
++     * 把工具参数转成人类可读的一行摘要。
++     *
++     * 优先取该工具**最关键的字段**（例如 shell 命令的 `command`、SSH 的主机名），
++     * 让用户在通知里一眼看清「模型打算做什么」；取不到才回退为原始 JSON 截断
++     * （保证任何工具都有可读内容，即使参数结构变化）。
++     */
++    private fun summarizeToolInput(toolName: String, inputJson: String): String {
++        val obj = runCatching { JsonInstant.parseToJsonElement(inputJson).jsonObject }.getOrNull()
++            ?: return inputJson.take(300)
++
++        val preferred = when (toolName) {
++            "execute_command" -> listOf("command")
++            "ssh_exec" -> listOf("host", "command")
++            "ssh_upload" -> listOf("local_path", "remote_path", "host")
++            "ssh_download" -> listOf("remote_path", "local_path", "host")
++            "get_sensors" -> listOf("sensors")
++            else -> emptyList()
++        }
++        val parts = preferred.mapNotNull { key ->
++            obj[key]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }?.let { "$key: $it" }
++        }
++        return if (parts.isNotEmpty()) parts.joinToString("\n").take(400)
++        else inputJson.take(400)
++    }
++
+     private fun getPendingIntent(context: Context, conversationId: Uuid): PendingIntent {
+         val intent = Intent(context, RouteActivity::class.java).apply {
+             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
 diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-index 00e409b..70bea01 100644
+index 00e409b..4587787 100644
 --- a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-@@ -75,14 +75,18 @@ import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
+@@ -7,6 +7,7 @@ import android.content.Intent
+ import android.util.Log
+ import me.rerere.rikkahub.data.db.AppDatabase
+ import me.rerere.rikkahub.data.event.AppEvent
++import me.rerere.rikkahub.data.event.ToolApprovalRequest
+ import me.rerere.rikkahub.data.event.AppEventBus
+ import org.koin.java.KoinJavaComponent
+ import androidx.core.app.NotificationCompat
+@@ -75,14 +76,18 @@ import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
  import me.rerere.rikkahub.data.ai.tools.createSkillTools
  import me.rerere.rikkahub.data.ai.tools.createFileTools
  import me.rerere.rikkahub.data.ai.tools.createShellTools
@@ -15806,7 +16034,7 @@ index 00e409b..70bea01 100644
  import me.rerere.rikkahub.data.files.SkillManager
  import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
  import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
-@@ -112,6 +116,7 @@ import me.rerere.rikkahub.data.model.GenerationType
+@@ -112,6 +117,7 @@ import me.rerere.rikkahub.data.model.GenerationType
  import me.rerere.rikkahub.data.model.toMessageNode
  import me.rerere.rikkahub.data.repository.ConversationRepository
  import me.rerere.rikkahub.data.repository.MemoryRepository
@@ -15814,7 +16042,7 @@ index 00e409b..70bea01 100644
  import me.rerere.rikkahub.data.repository.WorkspaceRepository
  import me.rerere.rikkahub.web.BadRequestException
  import me.rerere.rikkahub.web.NotFoundException
-@@ -136,8 +141,22 @@ internal fun backgroundTextGenerationParams(
+@@ -136,8 +142,22 @@ internal fun backgroundTextGenerationParams(
  
  private const val TAG = "ChatService"
  
@@ -15839,7 +16067,7 @@ index 00e409b..70bea01 100644
  }
  
  data class ChatError(
-@@ -200,6 +219,11 @@ class ChatService(
+@@ -200,6 +220,11 @@ class ChatService(
          KoinJavaComponent.get<AppDatabase>(AppDatabase::class.java)
      }
  
@@ -15851,7 +16079,7 @@ index 00e409b..70bea01 100644
      // 错误状态
      private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
      val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
-@@ -1031,7 +1055,7 @@ class ChatService(
+@@ -1031,7 +1056,7 @@ class ChatService(
          } else {
              model.displayName
          }
@@ -15860,7 +16088,7 @@ index 00e409b..70bea01 100644
  
          runCatching {
  
-@@ -1120,16 +1144,11 @@ class ChatService(
+@@ -1120,16 +1145,11 @@ class ChatService(
                      addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
                      addAll(localTools.getTools(assistant.localTools))
                      if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
@@ -15878,7 +16106,7 @@ index 00e409b..70bea01 100644
                      if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                          add(createDatabaseQueryTool(database))
                      }
-@@ -1137,6 +1156,16 @@ class ChatService(
+@@ -1137,6 +1157,16 @@ class ChatService(
                          add(createCalculatorTool(context))
                      }
                      add(createWebFetchTool())
@@ -15895,7 +16123,36 @@ index 00e409b..70bea01 100644
                      if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                          addAll(createTaskTools())
                      }
-@@ -1503,7 +1532,7 @@ class ChatService(
+@@ -1222,6 +1252,28 @@ class ChatService(
+                             appEventBus.tryEmit(
+                                 AppEvent.ChatGenerationUpdate(conversationId, lastMessage, senderName)
+                             )
++
++                            // 有待批准的工具 → 发授权请求事件。
++                            // 此时模型**已经暂停**（GenerationHandler 见到 Pending 就 break），
++                            // 若不主动提醒，用户可能一直以为还在生成 —— 实际是在等他决定。
++                            val pendingTools = lastMessage.parts
++                                .filterIsInstance<UIMessagePart.Tool>()
++                                .filter { it.isPending }
++                            if (pendingTools.isNotEmpty()) {
++                                appEventBus.tryEmit(
++                                    AppEvent.ToolApprovalRequested(
++                                        conversationId = conversationId,
++                                        senderName = senderName,
++                                        requests = pendingTools.map { tool ->
++                                            ToolApprovalRequest(
++                                                toolCallId = tool.toolCallId,
++                                                toolName = tool.toolName,
++                                                inputJson = tool.input,
++                                            )
++                                        },
++                                    )
++                                )
++                            }
+                         }
+                     }
+                 }
+@@ -1503,7 +1555,7 @@ class ChatService(
                  }
                  addAll(localTools.getTools(assistant.localTools))
                  if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
@@ -15904,7 +16161,7 @@ index 00e409b..70bea01 100644
                  }
                  if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                      add(createDatabaseQueryTool(database))
-@@ -1512,6 +1541,16 @@ class ChatService(
+@@ -1512,6 +1564,16 @@ class ChatService(
                      add(createCalculatorTool(context))
                  }
                  add(createWebFetchTool())
@@ -15921,7 +16178,7 @@ index 00e409b..70bea01 100644
                  if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                      addAll(createTaskTools())
                  }
-@@ -1670,11 +1709,16 @@ class ChatService(
+@@ -1670,11 +1732,16 @@ class ChatService(
              putExtra(GenerationForegroundService.EXTRA_TITLE, title)
              putExtra(GenerationForegroundService.EXTRA_CONVERSATION_ID, conversationId)
          }
@@ -15943,7 +16200,7 @@ index 00e409b..70bea01 100644
      }
  
      private fun updateGenerationForeground(text: String) {
-@@ -1682,14 +1726,26 @@ class ChatService(
+@@ -1682,14 +1749,26 @@ class ChatService(
              action = GenerationForegroundService.ACTION_UPDATE
              putExtra(GenerationForegroundService.EXTRA_TEXT, text.take(200))
          }
@@ -15972,6 +16229,110 @@ index 00e409b..70bea01 100644
      }
  
      // endregion
+diff --git a/app/src/main/java/me/rerere/rikkahub/service/ToolApprovalReceiver.kt b/app/src/main/java/me/rerere/rikkahub/service/ToolApprovalReceiver.kt
+new file mode 100644
+index 0000000..38f18b4
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/service/ToolApprovalReceiver.kt
+@@ -0,0 +1,98 @@
++package me.rerere.rikkahub.service
++
++import android.app.PendingIntent
++import android.content.BroadcastReceiver
++import android.content.Context
++import android.content.Intent
++import android.util.Log
++import me.rerere.rikkahub.R
++import me.rerere.rikkahub.utils.cancelNotification
++import org.koin.java.KoinJavaComponent
++import kotlin.uuid.Uuid
++
++private const val TAG = "ToolApprovalReceiver"
++
++/**
++ * 处理通知上「同意 / 拒绝」按钮的点击。
++ *
++ * ── 为什么需要它 ──
++ * 工具授权时模型会**暂停等待**用户决定（见 `GenerationHandler` 的 Pending 分支）。
++ * 如果用户当时不在应用内，只靠消息气泡里的按钮就无从下手 ——
++ * 于是通过通知提供入口，让用户不打开应用也能做出决定。
++ *
++ * ── 与 UI 的关系 ──
++ * 两条路径最终都汇到同一个地方：[ChatService.handleToolApproval]。
++ * 区别只是调用方（Compose 按钮 vs 本 Receiver），行为完全一致。
++ *
++ * ── 生命周期 ──
++ * `handleToolApproval` 内部用 `appScope.launch` 异步执行并立即返回，
++ * 因此无需 `goAsync()` —— onReceive 返回后工作仍在继续进行。
++ */
++class ToolApprovalReceiver : BroadcastReceiver() {
++
++    override fun onReceive(context: Context, intent: Intent) {
++        if (intent.action != ACTION_TOOL_APPROVAL) return
++
++        val conversationId = intent.getStringExtra(EXTRA_CONVERSATION_ID)
++        val toolCallId = intent.getStringExtra(EXTRA_TOOL_CALL_ID)
++        val approved = intent.getBooleanExtra(EXTRA_APPROVED, false)
++        if (conversationId.isNullOrBlank() || toolCallId.isNullOrBlank()) {
++            Log.w(TAG, "缺少必要参数，忽略")
++            return
++        }
++
++        runCatching {
++            // ChatService 在 AppModule 里注册为 single，可直接取到同一个实例
++            // 与项目其它处一致地用 KoinJavaComponent.get<具体类型>(clazz)
++            val chatService = KoinJavaComponent.get<ChatService>(ChatService::class.java)
++            chatService.handleToolApproval(
++                conversationId = Uuid.parse(conversationId),
++                toolCallId = toolCallId,
++                approved = approved,
++                reason = if (approved) "" else context.getString(R.string.notification_tool_approval_denied_reason),
++            )
++        }.onFailure {
++            Log.e(TAG, "处理工具授权失败", it)
++        }
++
++        // 无论成功与否都移除通知 —— 用户已经做出了选择，留着会误导
++        context.cancelNotification(notificationId(toolCallId))
++    }
++
++    companion object {
++        const val ACTION_TOOL_APPROVAL = "me.rerere.rikkahub.action.TOOL_APPROVAL"
++        const val EXTRA_CONVERSATION_ID = "conversationId"
++        const val EXTRA_TOOL_CALL_ID = "toolCallId"
++        const val EXTRA_APPROVED = "approved"
++
++        /**
++         * 每个工具调用一个通知。
++         *
++         * 之所以不按会话合并成一个通知：多个待批准工具时，用户点一次「同意」
++         * 无法表达「同意哪一个」，语义会含糊。逐个通知可以让决定精确到具体调用。
++         */
++        fun notificationId(toolCallId: String): Int = toolCallId.hashCode()
++
++        /** 构造「同意 / 拒绝」按钮的 PendingIntent */
++        fun approvalPendingIntent(
++            context: Context,
++            conversationId: Uuid,
++            toolCallId: String,
++            approved: Boolean,
++        ): PendingIntent {
++            val intent = Intent(context, ToolApprovalReceiver::class.java).apply {
++                action = ACTION_TOOL_APPROVAL
++                putExtra(EXTRA_CONVERSATION_ID, conversationId.toString())
++                putExtra(EXTRA_TOOL_CALL_ID, toolCallId)
++                putExtra(EXTRA_APPROVED, approved)
++            }
++            return PendingIntent.getBroadcast(
++                context,
++                // requestCode 必须区分「同意」与「拒绝」，否则后者会覆盖前者的 extras
++                (toolCallId + if (approved) "|y" else "|n").hashCode(),
++                intent,
++                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
++            )
++        }
++    }
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt b/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
 index e2f1a20..61380f0 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/components/ai/SearchPicker.kt
@@ -17787,6 +18148,53 @@ index 8e9bd52..1754265 100644
          context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
              .edit(commit = true) {
                  putBoolean(KEY_CRASHED, true)
+diff --git a/app/src/main/java/me/rerere/rikkahub/utils/NotificationUtil.kt b/app/src/main/java/me/rerere/rikkahub/utils/NotificationUtil.kt
+index ba9a6ee..d0e1d65 100644
+--- a/app/src/main/java/me/rerere/rikkahub/utils/NotificationUtil.kt
++++ b/app/src/main/java/me/rerere/rikkahub/utils/NotificationUtil.kt
+@@ -12,6 +12,20 @@ import androidx.core.app.NotificationCompat
+ import androidx.core.app.NotificationManagerCompat
+ import me.rerere.rikkahub.R
+ 
++/**
++ * 通知上的一个操作按钮（`addAction`）。
++ *
++ * 用途：让用户**不打开应用**就能对通知做出决定 —— 例如工具授权的「同意 / 拒绝」。
++ * 点击后由 [intent]（通常是 BroadcastReceiver 的 PendingIntent）处理。
++ */
++data class NotificationAction(
++    /** 按钮图标。系统只取 alpha 通道，故用现成的单色小图标即可 */
++    val icon: Int,
++    /** 按钮文字 */
++    val title: String,
++    val intent: PendingIntent,
++)
++
+ /**
+  * 通知构建器的配置 DSL
+  */
+@@ -34,6 +48,9 @@ class NotificationConfig {
+ 
+     // 默认通知效果
+     var useDefaults: Boolean = false
++
++    /** 操作按钮（系统最多显示 3 个，超出部分不显示） */
++    var actions: List<NotificationAction> = emptyList()
+ }
+ 
+ object NotificationUtil {
+@@ -104,6 +121,11 @@ object NotificationUtil {
+                 setDefaults(NotificationCompat.DEFAULT_ALL)
+             }
+ 
++            // 操作按钮 —— 让用户直接在通知上做决定（如工具授权的同意/拒绝）
++            config.actions.forEach { action ->
++                addAction(action.icon, action.title, action.intent)
++            }
++
+             // Android 15+ Live Update 支持
+             if (config.requestPromotedOngoing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+                 setRequestPromotedOngoing(true)
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
 index 5708616..0e53662 100644
 --- a/app/src/main/keepRules/rikkahub.keep
@@ -35895,7 +36303,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..333ef66 100644
+index 8cb3cf1..505e1d3 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -35907,7 +36315,7 @@ index 8cb3cf1..333ef66 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,90 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,98 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -35997,9 +36405,17 @@ index 8cb3cf1..333ef66 100644
 +  <string name="assistant_page_tool_approval_ssh_upload">SSH：上传文件</string>
 +  <string name="assistant_page_tool_approval_ssh_download">SSH：下载文件</string>
 +  <string name="assistant_page_tool_approval_sensors">读取设备传感器</string>
++
++  <!-- 工具授权通知 -->
++  <string name="notification_channel_tool_approval">工具授权</string>
++  <string name="notification_tool_approval_title">%1$s 请求执行 %2$s</string>
++  <string name="notification_tool_approval_subtext">等待你的决定</string>
++  <string name="notification_tool_approval_allow">同意</string>
++  <string name="notification_tool_approval_deny">拒绝</string>
++  <string name="notification_tool_approval_denied_reason">用户从通知中拒绝</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..7fae683 100644
+index 47ddab2..3432879 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -36013,7 +36429,7 @@ index 47ddab2..7fae683 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,90 @@
+@@ -1815,4 +1817,98 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -36103,6 +36519,14 @@ index 47ddab2..7fae683 100644
 +  <string name="assistant_page_tool_approval_ssh_upload">SSH: upload files</string>
 +  <string name="assistant_page_tool_approval_ssh_download">SSH: download files</string>
 +  <string name="assistant_page_tool_approval_sensors">Read device sensors</string>
++
++  <!-- 工具授权通知 -->
++  <string name="notification_channel_tool_approval">Tool approval</string>
++  <string name="notification_tool_approval_title">%1$s wants to run %2$s</string>
++  <string name="notification_tool_approval_subtext">Waiting for your decision</string>
++  <string name="notification_tool_approval_allow">Allow</string>
++  <string name="notification_tool_approval_deny">Deny</string>
++  <string name="notification_tool_approval_denied_reason">Denied from notification</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644

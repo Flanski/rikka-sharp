@@ -7,6 +7,7 @@ import android.content.Intent
 import android.util.Log
 import me.rerere.rikkahub.data.db.AppDatabase
 import me.rerere.rikkahub.data.event.AppEvent
+import me.rerere.rikkahub.data.event.ToolApprovalRequest
 import me.rerere.rikkahub.data.event.AppEventBus
 import org.koin.java.KoinJavaComponent
 import androidx.core.app.NotificationCompat
@@ -1251,6 +1252,28 @@ class ChatService(
                             appEventBus.tryEmit(
                                 AppEvent.ChatGenerationUpdate(conversationId, lastMessage, senderName)
                             )
+
+                            // 有待批准的工具 → 发授权请求事件。
+                            // 此时模型**已经暂停**（GenerationHandler 见到 Pending 就 break），
+                            // 若不主动提醒，用户可能一直以为还在生成 —— 实际是在等他决定。
+                            val pendingTools = lastMessage.parts
+                                .filterIsInstance<UIMessagePart.Tool>()
+                                .filter { it.isPending }
+                            if (pendingTools.isNotEmpty()) {
+                                appEventBus.tryEmit(
+                                    AppEvent.ToolApprovalRequested(
+                                        conversationId = conversationId,
+                                        senderName = senderName,
+                                        requests = pendingTools.map { tool ->
+                                            ToolApprovalRequest(
+                                                toolCallId = tool.toolCallId,
+                                                toolName = tool.toolName,
+                                                inputJson = tool.input,
+                                            )
+                                        },
+                                    )
+                                )
+                            }
                         }
                     }
                 }
