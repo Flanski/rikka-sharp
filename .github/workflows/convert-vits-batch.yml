@@ -155,13 +155,11 @@ jobs:
           [ "$COUNT" -gt 0 ] || { echo "::warning::没有产物可发布"; exit 0; }
 
           TAG="tts-models-v1"
+          # ★--notes 必须写成单行：多行字符串的续行会落在 YAML 块标量的第 0 列，
+          # 提前终止块标量 → workflow 文件解析失败（此前正是因此无法启动）。
+          NOTES="上游未发布的 VITS 角色模型（自 .pth 转换，供 App 内下载）。由 GitHub Actions 自动转换，与官方发布流程同源（产出 onnx 与官方同类文件大小仅差约 99 字节）。已实测：可被 sherpa-onnx 加载，并能用中文合成（cleaner 为 zh_ja_mixture_cleaners）。"
           gh release view "$TAG" >/dev/null 2>&1 || \
-            gh release create "$TAG" --title "VITS extra models" \
-              --notes "上游未发布的 VITS 角色模型（自 .pth 转换，供 App 内下载）。
-
-由 GitHub Actions 自动转换，与官方发布流程同源（产出 onnx 与官方同类文件大小仅差约 99 字节）。
-
-已实测：可被 sherpa-onnx 加载，并能用中文合成（cleaner 为 zh_ja_mixture_cleaners）。"
+            gh release create "$TAG" --title "VITS extra models" --notes "$NOTES"
 
           for f in staged/*.onnx; do
             b=$(basename "$f")

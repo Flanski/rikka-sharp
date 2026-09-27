@@ -3,6 +3,12 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
+    # 只改 workflow 文件或转换用脚本时不必重新编译 APK ——
+    # 这两类改动不影响产物，却会白跑一次约 20 分钟的构建。
+    # 注意：patch/** 与 speech/** 等**不能**忽略（它们直接决定 APK 内容）。
+    paths-ignore:
+      - '.github/**'
+      - 'tools/**'
   workflow_dispatch:
 
 jobs:
