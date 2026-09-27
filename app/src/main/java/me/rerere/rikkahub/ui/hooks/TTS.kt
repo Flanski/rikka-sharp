@@ -77,6 +77,12 @@ interface CustomTtsState {
     /** Flow indicating if the TTS is currently speaking. */
     val isSpeaking: StateFlow<Boolean>
 
+    /**
+     * 是否正在预热（加载本地模型）。
+     * 本地模型首次加载需数秒到数十秒，UI 可据此提示「加载模型中…」。
+     */
+    val isWarmingUp: StateFlow<Boolean>
+
     /** Flow holding any error message. */
     val error: StateFlow<String?>
 
@@ -133,6 +139,7 @@ private class CustomTtsStateImpl(
 
     override val isAvailable: StateFlow<Boolean> get() = controller.isAvailable
     override val isSpeaking: StateFlow<Boolean> get() = controller.isSpeaking
+    override val isWarmingUp: StateFlow<Boolean> get() = controller.isWarmingUp
     override val error: StateFlow<String?> get() = controller.error
     override val currentChunk: StateFlow<Int> get() = controller.currentChunk
     override val totalChunks: StateFlow<Int> get() = controller.totalChunks
@@ -141,6 +148,9 @@ private class CustomTtsStateImpl(
     fun updateProvider(provider: TTSProviderSetting?) {
         controller.setProvider(provider)
     }
+
+    /** 手动触发预热（例如模型刚下载完） */
+    fun warmUp() = controller.warmUp()
 
     override fun speak(text: String, flushCalled: Boolean) {
         val processed = text.stripMarkdown()

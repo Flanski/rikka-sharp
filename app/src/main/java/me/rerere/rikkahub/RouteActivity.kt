@@ -122,6 +122,7 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
 import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
+import me.rerere.rikkahub.ui.pages.setting.SherpaModelStorePage
 import me.rerere.rikkahub.ui.pages.setting.SettingSshPage
 import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
 import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
@@ -395,6 +396,10 @@ class RouteActivity : ComponentActivity() {
                                 AssistantSensorsPage(key.id)
                             }
 
+                            entry<Screen.SettingSherpaModels> {
+                                SherpaModelStorePage()
+                            }
+
                             entry<Screen.AssistantInjections> { key ->
                                 AssistantExtensionsPage(key.id)
                             }
@@ -660,6 +665,10 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data class AssistantSensors(val id: String) : Screen
+
+    /** 本地 TTS 模型仓库（全量列表 / 搜索 / 下载 / 删除） */
+    @Serializable
+    data object SettingSherpaModels : Screen
 
     @Serializable
     data class AssistantInjections(val id: String) : Screen

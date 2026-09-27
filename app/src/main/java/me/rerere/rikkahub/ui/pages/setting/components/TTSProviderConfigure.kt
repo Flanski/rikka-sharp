@@ -25,13 +25,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.ui.components.ui.FormItem
+import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
 import me.rerere.rikkahub.ui.components.ui.SelectTextField
 import me.rerere.tts.provider.TTSProviderSetting
 import me.rerere.tts.sherpa.SherpaInstallProgress
-import me.rerere.tts.sherpa.SherpaModelCatalog
-import me.rerere.tts.sherpa.SherpaModelInfo
 import me.rerere.tts.sherpa.SherpaModelManager
 
 @Composable
@@ -1239,6 +1239,7 @@ private fun SherpaOnnxTTSConfiguration(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val nav = LocalNavController.current
     val manager = remember { SherpaModelManager(context) }
 
     // 已安装列表需要在下载/删除后刷新
@@ -1277,52 +1278,38 @@ private fun SherpaOnnxTTSConfiguration(
         }
     }
 
-    // 可下载的模型列表
+    // 模型仓库入口：全量列表 / 搜索 / 刷新 / 下载 / 删除都放到独立页面，
+    // 设置页这里只保留「当前选用哪个」与入口，避免长列表淹没其他设置项。
     FormItem(
         label = { Text(stringResource(R.string.setting_tts_page_sherpa_download)) },
         description = { Text(stringResource(R.string.setting_tts_page_sherpa_download_desc)) }
     ) {
-        SherpaModelList(
-            manager = manager,
-            installedIds = installedIds,
-            installingId = installingId,
-            progress = progress,
-            onDownload = { model ->
-                errorText = null
-                doneText = null
-                installingId = model.id
-                progress = null
-                scope.launch {
-                    val result = manager.install(model) { onProgress ->
-                        // install 在 IO 线程回调；写到 State 是线程安全的
-                        progress = onProgress
-                    }
-                    result.onSuccess {
-                        // 首次安装后自动选中，省去用户再点一次
-                        if (setting.modelId.isBlank()) {
-                            onValueChange(setting.copy(modelId = model.id))
-                        }
-                        doneText = model.displayName
-                    }.onFailure {
-                        errorText = it.message ?: it.toString()
-                    }
-                    installingId = null
-                    progress = null
-                    refreshKey++
-                }
-            },
-            onDelete = { model ->
-                errorText = null
-                doneText = null
-                scope.launch {
-                    if (manager.delete(model)) {
-                        if (setting.modelId == model.id) onValueChange(setting.copy(modelId = ""))
-                    } else {
-                        errorText = "删除失败：${model.displayName}"
-                    }
-                    refreshKey++
-                }
-            },
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.sherpa_store_entry),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = stringResource(R.string.sherpa_store_entry_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = { nav.navigate(Screen.SettingSherpaModels) }) {
+                Text(stringResource(R.string.sherpa_store_entry))
+            }
+        }
+
+        Text(
+            text = stringResource(R.string.sherpa_store_vits_only),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.outline,
+            modifier = Modifier.padding(top = 6.dp),
         )
 
         errorText?.let {
@@ -1431,91 +1418,3 @@ private fun SherpaOnnxTTSConfiguration(
     }
 }
 
-/** 单个模型的列表项：名称 / 音色数 / 体积 / 状态 / 动作 */
-@Composable
-private fun SherpaModelList(
-    manager: SherpaModelManager,
-    installedIds: Set<String>,
-    installingId: String?,
-    progress: SherpaInstallProgress?,
-    onDownload: (SherpaModelInfo) -> Unit,
-    onDelete: (SherpaModelInfo) -> Unit,
-) {
-    // stringResource 是 @Composable，只能在 composable 上下文求值。
-    // 下面的 Column/forEach/buildString 的 lambda 都**不是** composable 上下文，
-    // 因此这里先取好字符串再传进去。
-    val voicesSuffix = stringResource(R.string.setting_tts_page_sherpa_voices_suffix)
-    val installedShort = stringResource(R.string.setting_tts_page_sherpa_installed_short)
-    val downloadLabel = stringResource(R.string.setting_tts_page_sherpa_download_btn)
-    val deleteLabel = stringResource(R.string.setting_tts_page_sherpa_delete)
-
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        SherpaModelCatalog.ALL.forEach { model ->
-            val installed = model.id in installedIds
-            val installing = installingId == model.id
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = model.displayName, style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = buildString {
-                            append(model.speakers)
-                            append(voicesSuffix)
-                            append(" · ")
-                            append("${model.sizeMb.toInt()}MB")
-                            if (installed) {
-                                append(" · ")
-                                append(installedShort)
-                            }
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    // 进度
-                    if (installing) {
-                        val p = progress
-                        val label = when (p) {
-                            is SherpaInstallProgress.Downloading ->
-                                "${(p.fraction * 100).toInt()}%  ${p.bytes / 1048576}MB / ${p.total / 1048576}MB"
-                            is SherpaInstallProgress.Extracting ->
-                                "解压中… ${p.bytesWritten / 1048576}MB"
-                            else -> "准备中…"
-                        }
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                }
-
-                when {
-                    installing -> {
-                        Text(
-                            text = "…",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                        )
-                    }
-                    installed -> {
-                        TextButton(onClick = { onDelete(model) }) {
-                            Text(deleteLabel)
-                        }
-                    }
-                    else -> {
-                        TextButton(
-                            onClick = { onDownload(model) },
-                            enabled = installingId == null,
-                        ) {
-                            Text(downloadLabel)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}

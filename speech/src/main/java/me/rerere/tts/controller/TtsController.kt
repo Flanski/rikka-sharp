@@ -32,7 +32,7 @@ private const val TAG = "TtsController"
  * - 对外 API 与原版兼容
  */
 class TtsController(
-    context: Context,
+    private val appContext: Context,
     private val ttsManager: TTSManager
 ) {
     // 协程作用域
@@ -41,7 +41,7 @@ class TtsController(
     // 组件
     private val chunker = TextChunker(maxChunkLength = 160)
     private val synthesizer = TtsSynthesizer(ttsManager)
-    private val audio = AudioPlayer(context)
+    private val audio = AudioPlayer(appContext)
 
     // Provider & 作业
     private var currentProvider: TTSProviderSetting? = null
@@ -67,6 +67,12 @@ class TtsController(
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
+
+    /** 预热（加载本地模型）进行中 —— 供 UI 提示「加载模型中…」 */
+    private val _isWarmingUp = MutableStateFlow(false)
+    val isWarmingUp: StateFlow<Boolean> = _isWarmingUp.asStateFlow()
+
+    private var warmUpJob: Job? = null
 
     private val _currentChunk = MutableStateFlow(0)
     val currentChunk: StateFlow<Int> = _currentChunk.asStateFlow()
@@ -95,9 +101,34 @@ class TtsController(
 
     /** 选择/取消选择 Provider */
     fun setProvider(provider: TTSProviderSetting?) {
+        val changed = provider != currentProvider
         currentProvider = provider
         _isAvailable.update { provider != null }
-        if (provider == null) stop()
+        if (provider == null) {
+            stop()
+            return
+        }
+        // 切到本地模型（或模型设置变化）时后台预热，把加载耗时挪到用户开口之前。
+        // 已加载时 warmUp 会立即返回，故重复触发无副作用。
+        if (changed || provider is TTSProviderSetting.SherpaOnnx) {
+            warmUp(provider)
+        }
+    }
+
+    /**
+     * 后台预热当前 provider（见 [TTSProvider.warmUp]）。
+     * 用独立的 job，不阻塞朗读；若用户抢先朗读，合成会自然排在预热之后（同一把 native 锁）。
+     */
+    fun warmUp(provider: TTSProviderSetting = currentProvider ?: return) {
+        warmUpJob?.cancel()
+        warmUpJob = scope.launch {
+            _isWarmingUp.update { true }
+            try {
+                ttsManager.warmUp(provider)
+            } finally {
+                _isWarmingUp.update { false }
+            }
+        }
     }
 
     /**
@@ -213,6 +244,7 @@ class TtsController(
     /** 释放资源 */
     fun dispose() {
         stop()
+        warmUpJob?.cancel()
         scope.cancel()
         audio.release()
     }

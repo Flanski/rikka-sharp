@@ -15,18 +15,26 @@ package me.rerere.tts.sherpa
  * ── 关于体积 ──
  * 除 aishell3 外均为 115MB 左右。模型不随 APK 分发，由用户在设置页按需下载。
  */
+/** 用于界面筛选的粗分类（由文件名推断，不追求精确语言识别） */
+enum class ModelCategory(val label: String) {
+    CHINESE("中文"),
+    ENGLISH("英文"),
+    MULTILINGUAL("多语言"),
+    OTHER("其它"),
+}
+
 data class SherpaModelInfo(
-    /** 稳定标识，同时用作本地目录名 */
+    /** 稳定标识，同时用作本地目录名（= 文件名去掉 .tar.bz2） */
     val id: String,
     /** 界面上显示的名称 */
     val displayName: String,
     /** release 资产文件名 */
     val fileName: String,
-    /** 压缩包字节数（实测） */
+    /** 压缩包字节数 */
     val sizeBytes: Long,
-    /** 解压后大小（约，用于提示用户留出空间） */
+    /** 解压后大小（估算，用于提示留出空间） */
     val extractedBytes: Long,
-    /** 该模型的说话人数（来自官方文档） */
+    /** 该模型的说话人数（0 = 未知，来自官方文档或 speakers.txt） */
     val speakers: Int,
     /** 简介 */
     val description: String,
@@ -35,8 +43,59 @@ data class SherpaModelInfo(
     val sizeMb: Float get() = sizeBytes / 1048576f
     val extractedMb: Float get() = extractedBytes / 1048576f
 
+    /** 由文件名推断分类 */
+    val category: ModelCategory get() = categoryOf(fileName)
+
     companion object {
         const val BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+
+        /**
+         * 已知模型的友好名称。只覆盖常用项；未命中的回退为文件名本身
+         * （在线刷新会带来 600+ 个模型，逐个起中文名不现实也没必要）。
+         */
+        private val DISPLAY_NAMES = mapOf(
+            "vits-zh-hf-keqing" to "刻晴（原神）",
+            "vits-zh-hf-eula" to "优菈（原神）",
+            "vits-zh-hf-theresa" to "德丽莎（崩坏3）",
+            "vits-zh-hf-bronya" to "布洛妮娅（崩坏3）",
+            "vits-zh-hf-zenyatta" to "禅雅塔（守望先锋）",
+            "vits-zh-hf-abyssinvoker" to "深渊召唤者（Dota2）",
+            "vits-zh-hf-echo" to "回声（守望先锋）",
+            "vits-zh-hf-doom" to "毁灭战士",
+            "vits-icefall-zh-aishell3" to "aishell3（通用中文，体积小）",
+            "vits-cantonese-hf-xiaomaiiwn" to "粤语（xiaomaiiwn）",
+            "vits-piper-zh_CN-huayan-medium" to "华研（piper 中文）",
+            "vits-piper-zh_CN-chaowen-medium" to "超文（piper 中文）",
+            "vits-piper-zh_CN-xiao_ya-medium" to "小雅（piper 中文）",
+            "vits-melo-tts-zh_en" to "MeloTTS（中英混读）",
+            "sherpa-onnx-vits-zh-ll" to "中文通用（ll）",
+            "vits-zh-aishell3" to "aishell3（完整版，140MB）",
+        )
+
+        /** 由 release 资产文件名构造条目（在线刷新用） */
+        fun fromFileName(fileName: String, sizeBytes: Long): SherpaModelInfo {
+            val id = fileName.removeSuffix(".tar.bz2")
+            val known = DISPLAY_NAMES[id]
+            return SherpaModelInfo(
+                id = id,
+                displayName = known ?: id,
+                fileName = fileName,
+                sizeBytes = sizeBytes,
+                extractedBytes = (sizeBytes * 3).coerceAtLeast(sizeBytes),
+                speakers = 0,
+                description = "",
+            )
+        }
+
+        fun categoryOf(fileName: String): ModelCategory {
+            val n = fileName.lowercase()
+            return when {
+                n.contains("melo") || n.contains("multi-lang") -> ModelCategory.MULTILINGUAL
+                Regex("zh|chinese|cantonese").containsMatchIn(n) -> ModelCategory.CHINESE
+                Regex("(^|-)en([_-]|$)|english|ljspeech|vctk").containsMatchIn(n) -> ModelCategory.ENGLISH
+                else -> ModelCategory.OTHER
+            }
+        }
     }
 }
 
@@ -127,7 +186,25 @@ object SherpaModelCatalog {
             description = "804 个说话人可选",
         ),
         SherpaModelInfo(
-            id = "aishell3",
+            id = "vits-cantonese-hf-xiaomaiiwn",
+            displayName = "粤语（xiaomaiiwn）",
+            fileName = "vits-cantonese-hf-xiaomaiiwn.tar.bz2",
+            sizeBytes = 108003328L,
+            extractedBytes = extracted(108003328L),
+            speakers = 0,
+            description = "粤语模型",
+        ),
+        SherpaModelInfo(
+            id = "vits-melo-tts-zh_en",
+            displayName = "MeloTTS（中英混读）",
+            fileName = "vits-melo-tts-zh_en.tar.bz2",
+            sizeBytes = 167006755L,
+            extractedBytes = extracted(167006755L),
+            speakers = 1,
+            description = "中英文混读（英文仅能读 lexicon.txt 里收录的词）",
+        ),
+        SherpaModelInfo(
+            id = "vits-icefall-zh-aishell3",
             displayName = "aishell3（通用中文，体积小）",
             fileName = "vits-icefall-zh-aishell3.tar.bz2",
             sizeBytes = 31559701L,

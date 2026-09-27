@@ -18,6 +18,7 @@ import me.rerere.tts.provider.providers.SystemTTSProvider
 import me.rerere.tts.provider.providers.XAITTSProvider
 
 class TTSManager(private val context: Context) {
+
     private val openAIProvider = OpenAITTSProvider()
     private val geminiProvider = GeminiTTSProvider()
     private val systemProvider = SystemTTSProvider()
@@ -30,6 +31,18 @@ class TTSManager(private val context: Context) {
     private val elevenLabsProvider = ElevenLabsTTSProvider()
     private val fishAudioProvider = FishAudioTTSProvider()
     private val sherpaOnnxProvider = SherpaOnnxTTSProvider()
+
+    /**
+     * 预热指定 provider（见 [TTSProvider.warmUp]）。失败会被吞掉，不影响正常朗读。
+     */
+    suspend fun warmUp(providerSetting: TTSProviderSetting) {
+        runCatching {
+            when (providerSetting) {
+                is TTSProviderSetting.SherpaOnnx -> sherpaOnnxProvider.warmUp(context, providerSetting)
+                else -> Unit
+            }
+        }.onFailure { android.util.Log.w("TTSManager", "warmUp failed", it) }
+    }
 
     fun generateSpeech(
         providerSetting: TTSProviderSetting,

@@ -1868,4 +1868,25 @@
   <string name="setting_tts_page_sherpa_installed_short">installed</string>
   <string name="setting_tts_page_sherpa_download_btn">Download</string>
   <string name="setting_tts_page_sherpa_delete">Delete</string>
+
+  <string name="tts_status_loading_model">Loading model…</string>
+  <string name="tts_status_synthesizing">Synthesizing…</string>
+
+  <!-- 本地 TTS 模型仓库 -->
+  <string name="sherpa_store_title">Local TTS models</string>
+  <string name="sherpa_store_refresh">Refresh</string>
+  <string name="sherpa_store_refreshed">Loaded %1$d models</string>
+  <string name="sherpa_store_search_hint">Search by name (e.g. keqing, zh, piper)</string>
+  <string name="sherpa_store_filter_all">All</string>
+  <string name="sherpa_store_count">%1$d / %2$d models</string>
+  <string name="sherpa_store_installed">Installed</string>
+  <string name="sherpa_store_download">Download</string>
+  <string name="sherpa_store_delete">Delete</string>
+  <string name="sherpa_store_use">Use</string>
+  <string name="sherpa_store_current">In use</string>
+  <string name="sherpa_store_install_done">%1$s installed</string>
+  <string name="sherpa_store_selected">Switched to %1$s</string>
+  <string name="sherpa_store_entry">Browse all models</string>
+  <string name="sherpa_store_entry_desc">Search, download, delete and switch models</string>
+  <string name="sherpa_store_vits_only">Only VITS-family models are supported for now. Kokoro / Matcha / Kitten need a different config and are therefore not listed.</string>
 </resources>

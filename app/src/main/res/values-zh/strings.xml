@@ -1868,4 +1868,25 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_tts_page_sherpa_installed_short">已安装</string>
   <string name="setting_tts_page_sherpa_download_btn">下载</string>
   <string name="setting_tts_page_sherpa_delete">删除</string>
+
+  <string name="tts_status_loading_model">加载模型中…</string>
+  <string name="tts_status_synthesizing">合成中…</string>
+
+  <!-- 本地 TTS 模型仓库 -->
+  <string name="sherpa_store_title">本地 TTS 模型</string>
+  <string name="sherpa_store_refresh">刷新</string>
+  <string name="sherpa_store_refreshed">已加载 %1$d 个模型</string>
+  <string name="sherpa_store_search_hint">按名称搜索（如 keqing、zh、piper）</string>
+  <string name="sherpa_store_filter_all">全部</string>
+  <string name="sherpa_store_count">%1$d / %2$d 个模型</string>
+  <string name="sherpa_store_installed">已安装</string>
+  <string name="sherpa_store_download">下载</string>
+  <string name="sherpa_store_delete">删除</string>
+  <string name="sherpa_store_use">使用</string>
+  <string name="sherpa_store_current">使用中</string>
+  <string name="sherpa_store_install_done">%1$s 已安装</string>
+  <string name="sherpa_store_selected">已切换到 %1$s</string>
+  <string name="sherpa_store_entry">浏览全部模型</string>
+  <string name="sherpa_store_entry_desc">搜索、下载、删除与切换模型</string>
+  <string name="sherpa_store_vits_only">目前仅支持 VITS 系列模型。Kokoro / Matcha / Kitten 需要不同的配置类，因此未列出。</string>
 </resources>

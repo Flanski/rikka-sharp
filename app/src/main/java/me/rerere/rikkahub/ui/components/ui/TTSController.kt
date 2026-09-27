@@ -23,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -58,7 +59,12 @@ fun TTSController() {
         visibility = isVisible
     ) {
         val playbackState by ttsState.playbackState.collectAsState()
+        val isWarmingUp by ttsState.isWarmingUp.collectAsState()
         var expand by remember { mutableStateOf(false) }
+        // stringResource 是 @Composable，必须在这里（composable 上下文）求值，
+        // 不能写进下面的 Row/AnimatedVisibility 等非 composable 的 lambda 里。
+        val warmingUpText = stringResource(R.string.tts_status_loading_model)
+        val synthesizingText = stringResource(R.string.tts_status_synthesizing)
         Surface(
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surface,
@@ -72,6 +78,22 @@ fun TTSController() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PlayPauseButton(playbackState = playbackState, ttsState = ttsState)
+
+                // 状态提示：本地模型加载需数秒到数十秒，期间给出明确文字反馈，
+                // 避免用户以为卡死（此前只有一个进度为 0 的圆环，不明显）。
+                val statusText = when {
+                    isWarmingUp -> warmingUpText
+                    playbackState.status == PlaybackStatus.Buffering -> synthesizingText
+                    else -> null
+                }
+                if (statusText != null) {
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                    )
+                }
 
                 IconButton(
                     onClick = {

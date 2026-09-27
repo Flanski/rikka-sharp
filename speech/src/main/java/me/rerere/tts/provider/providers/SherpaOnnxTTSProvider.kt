@@ -59,6 +59,46 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             - 只把要朗读的正文放进 text_to_speech 的 text 参数，不要包含说明文字
         """.trimIndent()
 
+    /**
+     * 预热：提前把 onnx 模型加载进 [SherpaTtsCache]。
+     *
+     * 本地模型首次加载要数秒到数十秒（theresa 121MB 实测约 20s），
+     * 提前加载后，用户第一次点朗读就能立即出声。
+     *
+     * 使用与合成**同一把锁**（withNative），因此：
+     *   · 不会与正在进行的合成并发访问 native
+     *   · 若用户抢先开始朗读，预热会先完成再进入合成（顺序正确，不会崩）
+     * 失败只记录日志、不抛出 —— 预热失败不该影响后续正常朗读。
+     */
+    override suspend fun warmUp(context: Context, providerSetting: TTSProviderSetting.SherpaOnnx) {
+        val dir = providerSetting.resolvedModelDir(context)
+        if (validateModelDir(dir) != null) {
+            diag(context, "TTS", "warmUp 跳过：模型未就绪 ${dir.absolutePath}")
+            return
+        }
+        withContext(Dispatchers.IO) {
+            runCatching {
+                SherpaTtsCache.withNative {
+                    val already = SherpaTtsCache.isLoaded(dir, providerSetting)
+                    if (already) {
+                        diag(context, "TTS", "warmUp 跳过：已加载")
+                        return@withNative
+                    }
+                    diag(context, "TTS", "warmUp 开始加载 ${dir.name}")
+                    val t0 = System.currentTimeMillis()
+                    val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
+                    val cost = System.currentTimeMillis() - t0
+                    diag(
+                        context, "TTS",
+                        "warmUp 完成 耗时=${cost}ms sampleRate=${tts.sampleRate()} speakers=${runCatching { tts.numSpeakers() }.getOrDefault(0)}"
+                    )
+                }
+            }.onFailure {
+                diag(context, "TTS", "warmUp 失败：${it.javaClass.simpleName}: ${it.message}")
+            }
+        }
+    }
+
     override fun generateSpeech(
         context: Context,
         providerSetting: TTSProviderSetting.SherpaOnnx,
@@ -272,6 +312,11 @@ internal object SherpaTtsCache {
 
     /** 在同一把锁内执行 native 操作。**不可重入**（内部不要再调 withNative）。 */
     suspend fun <T> withNative(block: () -> T): T = nativeLock.withLock { block() }
+
+    /** 判断某模型是否已加载（避免重复预热） */
+    @Synchronized
+    fun isLoaded(dir: File, setting: TTSProviderSetting.SherpaOnnx): Boolean =
+        cached != null && cachedKey == "${dir.absolutePath}|${setting.numThreads}"
 
     /** 模型被下载/删除/替换后调用，释放 native 实例并清空缓存 */
     suspend fun invalidateAll() = withNative { invalidateLocked() }

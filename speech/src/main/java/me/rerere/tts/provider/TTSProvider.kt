@@ -6,6 +6,19 @@ import me.rerere.tts.model.AudioChunk
 import me.rerere.tts.model.TTSRequest
 
 interface TTSProvider<T : TTSProviderSetting> {
+    /**
+     * 预热：把「首次朗读才付出的一次性开销」提前到用户刚打开/切换 TTS 时。
+     *
+     * 对本地模型（sherpa-onnx）而言，加载 onnx 需要数秒到数十秒（theresa 121MB 约 20s），
+     * 若等到按下朗读才开始，用户会先经历一段无反馈的等待。预热可把这段等待挪走。
+     *
+     * 默认空实现 —— 在线 provider 没有可预热的东西。
+     * 实现方需自行保证：可重复调用、失败不抛（预热失败不应影响后续正常朗读）。
+     */
+    suspend fun warmUp(context: Context, providerSetting: T) {
+        // 默认无操作
+    }
+
     fun generateSpeech(
         context: Context,
         providerSetting: T,
