@@ -32,6 +32,7 @@ import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
 import me.rerere.rikkahub.ui.components.ui.SelectTextField
 import me.rerere.tts.provider.TTSProviderSetting
 import me.rerere.tts.sherpa.SherpaInstallProgress
+import me.rerere.tts.sherpa.SherpaModelCatalog
 import me.rerere.tts.sherpa.SherpaModelManager
 
 @Composable
@@ -1271,7 +1272,23 @@ private fun SherpaOnnxTTSConfiguration(
                 // onOptionSelected(下拉选中)。模型 ID 是固定枚举，用 readOnly + 选中回调，
                 // 避免用户手输错值。此前误把选择回调写成 onValueChange —— 那样能编译，
                 // 但选模型不会生效（onValueChange 存在默认空实现，不会报错）。
-                onOptionSelected = { onValueChange(setting.copy(modelId = it)) },
+                onOptionSelected = { picked ->
+                    // 角色模型带「特色角色音色序号」，选中时一并设好。
+                    //
+                    // 为什么必须自动设：每个角色模型都是独立的 804 说话人模型，
+                    // 而**说话人在模型之间完全不对齐**（实测同 sid 跨模型的频谱相似度
+                    // 0.9353 ≈ 异 sid 跨模型 0.9335，同模型内则为 0.9773；
+                    // 跨模型同 sid 的基频差可达 27%）。
+                    // 所以「model + sid」必须成对使用：theresa + 193 才是德丽莎。
+                    // 早期 speakerId 默认 0，用户听到的其实是数据集里的其它说话人。
+                    val fav = SherpaModelCatalog.find(picked)?.featuredSid ?: -1
+                    onValueChange(
+                        setting.copy(
+                            modelId = picked,
+                            speakerId = if (fav >= 0) fav else setting.speakerId,
+                        )
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
                 readOnly = true,
             )
@@ -1341,6 +1358,37 @@ private fun SherpaOnnxTTSConfiguration(
             modifier = Modifier.fillMaxWidth(),
             label = stringResource(R.string.setting_tts_page_sherpa_speaker),
         )
+
+        // 当前模型若带特色角色，给出推荐音色与一键切换。
+        val currentModel = remember(setting.modelId) { SherpaModelCatalog.find(setting.modelId) }
+        val favSid = currentModel?.featuredSid ?: -1
+        if (favSid >= 0 && currentModel != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = stringResource(
+                        R.string.sherpa_speaker_recommended,
+                        currentModel.displayName,
+                        favSid,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (setting.speakerId == favSid) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                if (setting.speakerId != favSid) {
+                    TextButton(onClick = { onValueChange(setting.copy(speakerId = favSid)) }) {
+                        Text(stringResource(R.string.sherpa_speaker_use))
+                    }
+                }
+            }
+        }
     }
 
     FormItem(

@@ -38,6 +38,25 @@ data class SherpaModelInfo(
     val speakers: Int,
     /** 简介 */
     val description: String,
+    /**
+     * 该模型的「特色角色」音色序号；-1 表示无（通用模型）。
+     *
+     * ★为什么必须有这个字段：
+     * 每个角色模型都是独立的 804 说话人模型，**说话人在模型之间完全不对齐**
+     * （实测：同 sid 跨模型的频谱相似度 0.9353 ≈ 异 sid 跨模型 0.9335，
+     *   而同模型内为 0.9773；跨模型同 sid 的基频差可达 27%）。
+     * 因此角色音色必须「model + featuredSid」成对使用：
+     *   theresa 模型 + sid=193 → 德丽莎 ✓
+     *   theresa 模型 + sid=0   → 其它人（早期默认值取 0，导致音色对不上）
+     *
+     * 数值来自上游权威数据源 `csukuangfj/vits-models` 的
+     * `pretrained_models/info.json`（该文件给出每个角色在自己模型中的 sid）。
+     */
+    val featuredSid: Int = -1,
+    /** 角色出处，如「原神」「崩坏3」；通用模型为空 */
+    val source: String = "",
+    /** 模型语言（上游 info.json 的 language 字段） */
+    val language: String = "Chinese",
 ) {
     val url: String get() = "$BASE_URL/$fileName"
     val sizeMb: Float get() = sizeBytes / 1048576f
@@ -57,11 +76,11 @@ data class SherpaModelInfo(
             "vits-zh-hf-keqing" to "刻晴（原神）",
             "vits-zh-hf-eula" to "优菈（原神）",
             "vits-zh-hf-theresa" to "德丽莎（崩坏3）",
-            "vits-zh-hf-bronya" to "布洛妮娅（崩坏3）",
-            "vits-zh-hf-zenyatta" to "禅雅塔（守望先锋）",
-            "vits-zh-hf-abyssinvoker" to "深渊召唤者（Dota2）",
-            "vits-zh-hf-echo" to "回声（守望先锋）",
-            "vits-zh-hf-doom" to "毁灭战士",
+            "vits-zh-hf-bronya" to "理之律者（崩坏3）",
+            "vits-zh-hf-zenyatta" to "禅雅塔（守望先锋2）",
+            "vits-zh-hf-abyssinvoker" to "深渊使徒（原神）",
+            "vits-zh-hf-echo" to "回声（守望先锋2）",
+            "vits-zh-hf-doom" to "末日铁拳（守望先锋2）",
             "vits-icefall-zh-aishell3" to "aishell3（通用中文，体积小）",
             "vits-cantonese-hf-xiaomaiiwn" to "粤语（xiaomaiiwn）",
             "vits-piper-zh_CN-huayan-medium" to "华研（piper 中文）",
@@ -111,8 +130,45 @@ object SherpaModelCatalog {
      */
     private fun extracted(compressed: Long) = (compressed * 6).toLong()
 
-    /** 游戏/角色音色（用户主要诉求）+ 通用模型 */
+    /**
+     * 内置清单。
+     *
+     * 分两类：
+     *  A. **角色音色**（8 个，全部为上游已发布且标注 Chinese 的模型）
+     *     —— 每个都是独立的 804 说话人模型，[SherpaModelInfo.featuredSid] 是该角色在其中的序号。
+     *  B. **通用模型** —— 无特色角色（featuredSid = -1）。
+     *
+     * ── 关于「为什么只有 8 个角色」──
+     * 上游源数据集（HF Space `csukuangfj/vits-models`）共 **38 个角色**，其中
+     * **只有 8 个标注为 Chinese，且这 8 个恰好全部已被 sherpa-onnx 打包发布**。
+     * 其余 30 个标注 Japanese（含原神的神里绫华/纳西妲、星穹铁道的卡芙卡/黑塔），
+     * **上游未提供现成 onnx**，需要自行用其转换脚本从 .pth 导出。
+     * 也就是说：**中文角色一个没漏，缺的是日语角色**。
+     */
     val ALL: List<SherpaModelInfo> = listOf(
+        /* ───────── A. 角色音色（sid 来自上游 info.json）───────── */
+        SherpaModelInfo(
+            id = "theresa",
+            displayName = "德丽莎（崩坏3）",
+            fileName = "vits-zh-hf-theresa.tar.bz2",
+            sizeBytes = 120596617L,
+            extractedBytes = extracted(120596617L),
+            speakers = 804,
+            description = "崩坏3 德丽莎。选中后会自动把音色设为 193",
+            featuredSid = 193,
+            source = "崩坏3",
+        ),
+        SherpaModelInfo(
+            id = "bronya",
+            displayName = "理之律者（崩坏3）",
+            fileName = "vits-zh-hf-bronya.tar.bz2",
+            sizeBytes = 120595102L,
+            extractedBytes = extracted(120595102L),
+            speakers = 804,
+            description = "崩坏3 理之律者（布洛妮娅）。选中后会自动把音色设为 193",
+            featuredSid = 193,
+            source = "崩坏3",
+        ),
         SherpaModelInfo(
             id = "keqing",
             displayName = "刻晴（原神）",
@@ -120,7 +176,9 @@ object SherpaModelCatalog {
             sizeBytes = 120592220L,
             extractedBytes = extracted(120592220L),
             speakers = 804,
-            description = "原神 刻晴 音色，804 个说话人可选",
+            description = "原神 刻晴。选中后会自动把音色设为 115",
+            featuredSid = 115,
+            source = "原神",
         ),
         SherpaModelInfo(
             id = "eula",
@@ -129,61 +187,64 @@ object SherpaModelCatalog {
             sizeBytes = 120562119L,
             extractedBytes = extracted(120562119L),
             speakers = 804,
-            description = "原神 优菈 音色，804 个说话人可选",
-        ),
-        SherpaModelInfo(
-            id = "theresa",
-            displayName = "德丽莎（崩坏3）",
-            fileName = "vits-zh-hf-theresa.tar.bz2",
-            sizeBytes = 120596617L,
-            extractedBytes = extracted(120596617L),
-            speakers = 804,
-            description = "崩坏3 德丽莎 音色，804 个说话人可选",
-        ),
-        SherpaModelInfo(
-            id = "bronya",
-            displayName = "布洛妮娅（崩坏3）",
-            fileName = "vits-zh-hf-bronya.tar.bz2",
-            sizeBytes = 120595102L,
-            extractedBytes = extracted(120595102L),
-            speakers = 804,
-            description = "崩坏3 布洛妮娅 音色，804 个说话人可选",
-        ),
-        SherpaModelInfo(
-            id = "zenyatta",
-            displayName = "禅雅塔（守望先锋）",
-            fileName = "vits-zh-hf-zenyatta.tar.bz2",
-            sizeBytes = 120588994L,
-            extractedBytes = extracted(120588994L),
-            speakers = 804,
-            description = "守望先锋 禅雅塔 音色，804 个说话人可选",
+            description = "原神 优菈。选中后会自动把音色设为 124",
+            featuredSid = 124,
+            source = "原神",
         ),
         SherpaModelInfo(
             id = "abyssinvoker",
-            displayName = "深渊召唤者（Dota2）",
+            displayName = "深渊使徒（原神）",
             fileName = "vits-zh-hf-abyssinvoker.tar.bz2",
             sizeBytes = 120579632L,
             extractedBytes = extracted(120579632L),
             speakers = 804,
-            description = "Dota2 深渊召唤者 音色，804 个说话人可选",
+            description = "原神 深渊使徒。选中后会自动把音色设为 94",
+            featuredSid = 94,
+            source = "原神",
+        ),
+        SherpaModelInfo(
+            id = "zenyatta",
+            displayName = "禅雅塔（守望先锋2）",
+            fileName = "vits-zh-hf-zenyatta.tar.bz2",
+            sizeBytes = 120588994L,
+            extractedBytes = extracted(120588994L),
+            speakers = 804,
+            description = "守望先锋2 禅雅塔。选中后会自动把音色设为 93",
+            featuredSid = 93,
+            source = "守望先锋2",
         ),
         SherpaModelInfo(
             id = "echo",
-            displayName = "回声（守望先锋）",
+            displayName = "回声（守望先锋2）",
             fileName = "vits-zh-hf-echo.tar.bz2",
             sizeBytes = 120559956L,
             extractedBytes = extracted(120559956L),
             speakers = 804,
-            description = "守望先锋 回声 音色，804 个说话人可选",
+            description = "守望先锋2 回声。选中后会自动把音色设为 93",
+            featuredSid = 93,
+            source = "守望先锋2",
         ),
         SherpaModelInfo(
             id = "doom",
-            displayName = "毁灭战士",
+            displayName = "末日铁拳（守望先锋2）",
             fileName = "vits-zh-hf-doom.tar.bz2",
             sizeBytes = 120556412L,
             extractedBytes = extracted(120556412L),
             speakers = 804,
-            description = "804 个说话人可选",
+            description = "守望先锋2 末日铁拳。选中后会自动把音色设为 93",
+            featuredSid = 93,
+            source = "守望先锋2",
+        ),
+
+        /* ───────── B. 通用模型 ───────── */
+        SherpaModelInfo(
+            id = "vits-icefall-zh-aishell3",
+            displayName = "aishell3（通用中文，体积小）",
+            fileName = "vits-icefall-zh-aishell3.tar.bz2",
+            sizeBytes = 31559701L,
+            extractedBytes = extracted(31559701L),
+            speakers = 174,
+            description = "通用中文女声数据集，174 个说话人。体积只有角色模型的三分之一，建议先用它验证效果",
         ),
         SherpaModelInfo(
             id = "vits-cantonese-hf-xiaomaiiwn",
@@ -202,15 +263,6 @@ object SherpaModelCatalog {
             extractedBytes = extracted(167006755L),
             speakers = 1,
             description = "中英文混读（英文仅能读 lexicon.txt 里收录的词）",
-        ),
-        SherpaModelInfo(
-            id = "vits-icefall-zh-aishell3",
-            displayName = "aishell3（通用中文，体积小）",
-            fileName = "vits-icefall-zh-aishell3.tar.bz2",
-            sizeBytes = 31559701L,
-            extractedBytes = extracted(31559701L),
-            speakers = 174,
-            description = "通用中文女声数据集，174 个说话人。体积只有其它模型的三分之一，建议先用它验证效果",
         ),
     )
 

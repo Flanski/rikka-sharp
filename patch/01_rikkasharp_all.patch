@@ -16765,10 +16765,10 @@ index 0000000..6bccb56
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt
 new file mode 100644
-index 0000000..5c7b92c
+index 0000000..3dc7251
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,405 @@
 +package me.rerere.rikkahub.ui.pages.setting
 +
 +import androidx.compose.foundation.layout.Arrangement
@@ -17005,7 +17005,14 @@ index 0000000..5c7b92c
 +                                    val p = provider
 +                                    if (p != null) {
 +                                        val newList = settings.ttsProviders.map {
-+                                            if (it.id == p.id) (it as TTSProviderSetting.SherpaOnnx).copy(modelId = model.id) else it
++                                            if (it.id == p.id) {
++                                                val s = it as TTSProviderSetting.SherpaOnnx
++                                                // 一并设好角色音色（说话人在模型间不对齐，model+sid 必须成对）
++                                                s.copy(
++                                                    modelId = model.id,
++                                                    speakerId = if (model.featuredSid >= 0) model.featuredSid else s.speakerId,
++                                                )
++                                            } else it
 +                                        }
 +                                        vm.updateSettings(settings.copy(ttsProviders = newList))
 +                                    }
@@ -17035,7 +17042,13 @@ index 0000000..5c7b92c
 +                            // 显式 label：同一函数传了多个 lambda，用 @SherpaModelRow 会有歧义
 +                            val p = provider ?: return@useModel
 +                            val newList = settings.ttsProviders.map {
-+                                if (it.id == p.id) (it as TTSProviderSetting.SherpaOnnx).copy(modelId = model.id) else it
++                                if (it.id == p.id) {
++                                    val s = it as TTSProviderSetting.SherpaOnnx
++                                    s.copy(
++                                        modelId = model.id,
++                                        speakerId = if (model.featuredSid >= 0) model.featuredSid else s.speakerId,
++                                    )
++                                } else it
 +                            }
 +                            vm.updateSettings(settings.copy(ttsProviders = newList))
 +                            message = context.getString(R.string.sherpa_store_selected, model.displayName)
@@ -17083,7 +17096,14 @@ index 0000000..5c7b92c
 +                            text = buildString {
 +                                append(model.sizeMb.toInt())
 +                                append("MB")
-+                                if (model.speakers > 0) {
++                                if (model.source.isNotBlank()) {
++                                    append(" · ")
++                                    append(model.source)
++                                }
++                                if (model.featuredSid >= 0) {
++                                    append(" · 角色音色 sid=")
++                                    append(model.featuredSid)
++                                } else if (model.speakers > 0) {
 +                                    append(" · ")
 +                                    append(model.speakers)
 +                                    append(" 音色")
@@ -17155,10 +17175,10 @@ index 0000000..5c7b92c
 +    }
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-index b5c48c5..ae652a3 100644
+index b5c48c5..ccbfb0b 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-@@ -1,22 +1,38 @@
+@@ -1,22 +1,39 @@
  package me.rerere.rikkahub.ui.pages.setting.components
  
  import androidx.compose.foundation.layout.Arrangement
@@ -17193,11 +17213,12 @@ index b5c48c5..ae652a3 100644
  import me.rerere.rikkahub.ui.components.ui.SelectTextField
  import me.rerere.tts.provider.TTSProviderSetting
 +import me.rerere.tts.sherpa.SherpaInstallProgress
++import me.rerere.tts.sherpa.SherpaModelCatalog
 +import me.rerere.tts.sherpa.SherpaModelManager
  
  @Composable
  fun TTSProviderConfigure(
-@@ -48,6 +64,7 @@ fun TTSProviderConfigure(
+@@ -48,6 +65,7 @@ fun TTSProviderConfigure(
                      is TTSProviderSetting.Step -> "Step"
                      is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                      is TTSProviderSetting.FishAudio -> "Fish Audio"
@@ -17205,7 +17226,7 @@ index b5c48c5..ae652a3 100644
                  },
                  options = providers,
                  readOnly = true,
-@@ -56,6 +73,7 @@ fun TTSProviderConfigure(
+@@ -56,6 +74,7 @@ fun TTSProviderConfigure(
                      when (providerClass) {
                          TTSProviderSetting.OpenAI::class -> "OpenAI"
                          TTSProviderSetting.Gemini::class -> "Gemini"
@@ -17213,7 +17234,7 @@ index b5c48c5..ae652a3 100644
                          TTSProviderSetting.SystemTTS::class -> "System TTS"
                          TTSProviderSetting.MiniMax::class -> "MiniMax"
                          TTSProviderSetting.Qwen::class -> "Qwen"
-@@ -80,6 +98,7 @@ fun TTSProviderConfigure(
+@@ -80,6 +99,7 @@ fun TTSProviderConfigure(
                              name = "Gemini TTS"
                          )
  
@@ -17221,7 +17242,7 @@ index b5c48c5..ae652a3 100644
                          TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
                              id = setting.id,
                              name = "System TTS"
-@@ -160,6 +179,7 @@ fun TTSProviderConfigure(
+@@ -160,6 +180,7 @@ fun TTSProviderConfigure(
              is TTSProviderSetting.ElevenLabs -> ElevenLabsTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.FishAudio -> FishAudioTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.Step -> StepTTSConfiguration(setting, onValueChange)
@@ -17229,7 +17250,7 @@ index b5c48c5..ae652a3 100644
          }
      }
  }
-@@ -1201,3 +1221,200 @@ private fun StepTTSConfiguration(
+@@ -1201,3 +1222,247 @@ private fun StepTTSConfiguration(
          )
      }
  }
@@ -17283,7 +17304,23 @@ index b5c48c5..ae652a3 100644
 +                // onOptionSelected(下拉选中)。模型 ID 是固定枚举，用 readOnly + 选中回调，
 +                // 避免用户手输错值。此前误把选择回调写成 onValueChange —— 那样能编译，
 +                // 但选模型不会生效（onValueChange 存在默认空实现，不会报错）。
-+                onOptionSelected = { onValueChange(setting.copy(modelId = it)) },
++                onOptionSelected = { picked ->
++                    // 角色模型带「特色角色音色序号」，选中时一并设好。
++                    //
++                    // 为什么必须自动设：每个角色模型都是独立的 804 说话人模型，
++                    // 而**说话人在模型之间完全不对齐**（实测同 sid 跨模型的频谱相似度
++                    // 0.9353 ≈ 异 sid 跨模型 0.9335，同模型内则为 0.9773；
++                    // 跨模型同 sid 的基频差可达 27%）。
++                    // 所以「model + sid」必须成对使用：theresa + 193 才是德丽莎。
++                    // 早期 speakerId 默认 0，用户听到的其实是数据集里的其它说话人。
++                    val fav = SherpaModelCatalog.find(picked)?.featuredSid ?: -1
++                    onValueChange(
++                        setting.copy(
++                            modelId = picked,
++                            speakerId = if (fav >= 0) fav else setting.speakerId,
++                        )
++                    )
++                },
 +                modifier = Modifier.fillMaxWidth(),
 +                readOnly = true,
 +            )
@@ -17353,6 +17390,37 @@ index b5c48c5..ae652a3 100644
 +            modifier = Modifier.fillMaxWidth(),
 +            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
 +        )
++
++        // 当前模型若带特色角色，给出推荐音色与一键切换。
++        val currentModel = remember(setting.modelId) { SherpaModelCatalog.find(setting.modelId) }
++        val favSid = currentModel?.featuredSid ?: -1
++        if (favSid >= 0 && currentModel != null) {
++            Row(
++                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
++                horizontalArrangement = Arrangement.SpaceBetween,
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                Text(
++                    text = stringResource(
++                        R.string.sherpa_speaker_recommended,
++                        currentModel.displayName,
++                        favSid,
++                    ),
++                    style = MaterialTheme.typography.bodySmall,
++                    color = if (setting.speakerId == favSid) {
++                        MaterialTheme.colorScheme.primary
++                    } else {
++                        MaterialTheme.colorScheme.error
++                    },
++                    modifier = Modifier.weight(1f),
++                )
++                if (setting.speakerId != favSid) {
++                    TextButton(onClick = { onValueChange(setting.copy(speakerId = favSid)) }) {
++                        Text(stringResource(R.string.sherpa_speaker_use))
++                    }
++                }
++            }
++        }
 +    }
 +
 +    FormItem(
@@ -35597,7 +35665,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..a31122e 100644
+index 8cb3cf1..51924e4 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -35609,7 +35677,7 @@ index 8cb3cf1..a31122e 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,76 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,79 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -35685,9 +35753,12 @@ index 8cb3cf1..a31122e 100644
 +  <string name="sherpa_store_entry">浏览全部模型</string>
 +  <string name="sherpa_store_entry_desc">搜索、下载、删除与切换模型</string>
 +  <string name="sherpa_store_vits_only">目前仅支持 VITS 系列模型。Kokoro / Matcha / Kitten 需要不同的配置类，因此未列出。</string>
++
++  <string name="sherpa_speaker_recommended">推荐音色：%1$s（sid %2$d）</string>
++  <string name="sherpa_speaker_use">使用</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..406fa83 100644
+index 47ddab2..b228d4a 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -35701,7 +35772,7 @@ index 47ddab2..406fa83 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,76 @@
+@@ -1815,4 +1817,79 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -35777,6 +35848,9 @@ index 47ddab2..406fa83 100644
 +  <string name="sherpa_store_entry">Browse all models</string>
 +  <string name="sherpa_store_entry_desc">Search, download, delete and switch models</string>
 +  <string name="sherpa_store_vits_only">Only VITS-family models are supported for now. Kokoro / Matcha / Kitten need a different config and are therefore not listed.</string>
++
++  <string name="sherpa_speaker_recommended">Recommended: %1$s (sid %2$d)</string>
++  <string name="sherpa_speaker_use">Use</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -39126,10 +39200,10 @@ index 0000000..35c35df
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
 new file mode 100644
-index 0000000..fc5b702
+index 0000000..d1f56a0
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,270 @@
 +package me.rerere.tts.sherpa
 +
 +/**
@@ -39170,6 +39244,25 @@ index 0000000..fc5b702
 +    val speakers: Int,
 +    /** 简介 */
 +    val description: String,
++    /**
++     * 该模型的「特色角色」音色序号；-1 表示无（通用模型）。
++     *
++     * ★为什么必须有这个字段：
++     * 每个角色模型都是独立的 804 说话人模型，**说话人在模型之间完全不对齐**
++     * （实测：同 sid 跨模型的频谱相似度 0.9353 ≈ 异 sid 跨模型 0.9335，
++     *   而同模型内为 0.9773；跨模型同 sid 的基频差可达 27%）。
++     * 因此角色音色必须「model + featuredSid」成对使用：
++     *   theresa 模型 + sid=193 → 德丽莎 ✓
++     *   theresa 模型 + sid=0   → 其它人（早期默认值取 0，导致音色对不上）
++     *
++     * 数值来自上游权威数据源 `csukuangfj/vits-models` 的
++     * `pretrained_models/info.json`（该文件给出每个角色在自己模型中的 sid）。
++     */
++    val featuredSid: Int = -1,
++    /** 角色出处，如「原神」「崩坏3」；通用模型为空 */
++    val source: String = "",
++    /** 模型语言（上游 info.json 的 language 字段） */
++    val language: String = "Chinese",
 +) {
 +    val url: String get() = "$BASE_URL/$fileName"
 +    val sizeMb: Float get() = sizeBytes / 1048576f
@@ -39189,11 +39282,11 @@ index 0000000..fc5b702
 +            "vits-zh-hf-keqing" to "刻晴（原神）",
 +            "vits-zh-hf-eula" to "优菈（原神）",
 +            "vits-zh-hf-theresa" to "德丽莎（崩坏3）",
-+            "vits-zh-hf-bronya" to "布洛妮娅（崩坏3）",
-+            "vits-zh-hf-zenyatta" to "禅雅塔（守望先锋）",
-+            "vits-zh-hf-abyssinvoker" to "深渊召唤者（Dota2）",
-+            "vits-zh-hf-echo" to "回声（守望先锋）",
-+            "vits-zh-hf-doom" to "毁灭战士",
++            "vits-zh-hf-bronya" to "理之律者（崩坏3）",
++            "vits-zh-hf-zenyatta" to "禅雅塔（守望先锋2）",
++            "vits-zh-hf-abyssinvoker" to "深渊使徒（原神）",
++            "vits-zh-hf-echo" to "回声（守望先锋2）",
++            "vits-zh-hf-doom" to "末日铁拳（守望先锋2）",
 +            "vits-icefall-zh-aishell3" to "aishell3（通用中文，体积小）",
 +            "vits-cantonese-hf-xiaomaiiwn" to "粤语（xiaomaiiwn）",
 +            "vits-piper-zh_CN-huayan-medium" to "华研（piper 中文）",
@@ -39243,8 +39336,45 @@ index 0000000..fc5b702
 +     */
 +    private fun extracted(compressed: Long) = (compressed * 6).toLong()
 +
-+    /** 游戏/角色音色（用户主要诉求）+ 通用模型 */
++    /**
++     * 内置清单。
++     *
++     * 分两类：
++     *  A. **角色音色**（8 个，全部为上游已发布且标注 Chinese 的模型）
++     *     —— 每个都是独立的 804 说话人模型，[SherpaModelInfo.featuredSid] 是该角色在其中的序号。
++     *  B. **通用模型** —— 无特色角色（featuredSid = -1）。
++     *
++     * ── 关于「为什么只有 8 个角色」──
++     * 上游源数据集（HF Space `csukuangfj/vits-models`）共 **38 个角色**，其中
++     * **只有 8 个标注为 Chinese，且这 8 个恰好全部已被 sherpa-onnx 打包发布**。
++     * 其余 30 个标注 Japanese（含原神的神里绫华/纳西妲、星穹铁道的卡芙卡/黑塔），
++     * **上游未提供现成 onnx**，需要自行用其转换脚本从 .pth 导出。
++     * 也就是说：**中文角色一个没漏，缺的是日语角色**。
++     */
 +    val ALL: List<SherpaModelInfo> = listOf(
++        /* ───────── A. 角色音色（sid 来自上游 info.json）───────── */
++        SherpaModelInfo(
++            id = "theresa",
++            displayName = "德丽莎（崩坏3）",
++            fileName = "vits-zh-hf-theresa.tar.bz2",
++            sizeBytes = 120596617L,
++            extractedBytes = extracted(120596617L),
++            speakers = 804,
++            description = "崩坏3 德丽莎。选中后会自动把音色设为 193",
++            featuredSid = 193,
++            source = "崩坏3",
++        ),
++        SherpaModelInfo(
++            id = "bronya",
++            displayName = "理之律者（崩坏3）",
++            fileName = "vits-zh-hf-bronya.tar.bz2",
++            sizeBytes = 120595102L,
++            extractedBytes = extracted(120595102L),
++            speakers = 804,
++            description = "崩坏3 理之律者（布洛妮娅）。选中后会自动把音色设为 193",
++            featuredSid = 193,
++            source = "崩坏3",
++        ),
 +        SherpaModelInfo(
 +            id = "keqing",
 +            displayName = "刻晴（原神）",
@@ -39252,7 +39382,9 @@ index 0000000..fc5b702
 +            sizeBytes = 120592220L,
 +            extractedBytes = extracted(120592220L),
 +            speakers = 804,
-+            description = "原神 刻晴 音色，804 个说话人可选",
++            description = "原神 刻晴。选中后会自动把音色设为 115",
++            featuredSid = 115,
++            source = "原神",
 +        ),
 +        SherpaModelInfo(
 +            id = "eula",
@@ -39261,61 +39393,64 @@ index 0000000..fc5b702
 +            sizeBytes = 120562119L,
 +            extractedBytes = extracted(120562119L),
 +            speakers = 804,
-+            description = "原神 优菈 音色，804 个说话人可选",
-+        ),
-+        SherpaModelInfo(
-+            id = "theresa",
-+            displayName = "德丽莎（崩坏3）",
-+            fileName = "vits-zh-hf-theresa.tar.bz2",
-+            sizeBytes = 120596617L,
-+            extractedBytes = extracted(120596617L),
-+            speakers = 804,
-+            description = "崩坏3 德丽莎 音色，804 个说话人可选",
-+        ),
-+        SherpaModelInfo(
-+            id = "bronya",
-+            displayName = "布洛妮娅（崩坏3）",
-+            fileName = "vits-zh-hf-bronya.tar.bz2",
-+            sizeBytes = 120595102L,
-+            extractedBytes = extracted(120595102L),
-+            speakers = 804,
-+            description = "崩坏3 布洛妮娅 音色，804 个说话人可选",
-+        ),
-+        SherpaModelInfo(
-+            id = "zenyatta",
-+            displayName = "禅雅塔（守望先锋）",
-+            fileName = "vits-zh-hf-zenyatta.tar.bz2",
-+            sizeBytes = 120588994L,
-+            extractedBytes = extracted(120588994L),
-+            speakers = 804,
-+            description = "守望先锋 禅雅塔 音色，804 个说话人可选",
++            description = "原神 优菈。选中后会自动把音色设为 124",
++            featuredSid = 124,
++            source = "原神",
 +        ),
 +        SherpaModelInfo(
 +            id = "abyssinvoker",
-+            displayName = "深渊召唤者（Dota2）",
++            displayName = "深渊使徒（原神）",
 +            fileName = "vits-zh-hf-abyssinvoker.tar.bz2",
 +            sizeBytes = 120579632L,
 +            extractedBytes = extracted(120579632L),
 +            speakers = 804,
-+            description = "Dota2 深渊召唤者 音色，804 个说话人可选",
++            description = "原神 深渊使徒。选中后会自动把音色设为 94",
++            featuredSid = 94,
++            source = "原神",
++        ),
++        SherpaModelInfo(
++            id = "zenyatta",
++            displayName = "禅雅塔（守望先锋2）",
++            fileName = "vits-zh-hf-zenyatta.tar.bz2",
++            sizeBytes = 120588994L,
++            extractedBytes = extracted(120588994L),
++            speakers = 804,
++            description = "守望先锋2 禅雅塔。选中后会自动把音色设为 93",
++            featuredSid = 93,
++            source = "守望先锋2",
 +        ),
 +        SherpaModelInfo(
 +            id = "echo",
-+            displayName = "回声（守望先锋）",
++            displayName = "回声（守望先锋2）",
 +            fileName = "vits-zh-hf-echo.tar.bz2",
 +            sizeBytes = 120559956L,
 +            extractedBytes = extracted(120559956L),
 +            speakers = 804,
-+            description = "守望先锋 回声 音色，804 个说话人可选",
++            description = "守望先锋2 回声。选中后会自动把音色设为 93",
++            featuredSid = 93,
++            source = "守望先锋2",
 +        ),
 +        SherpaModelInfo(
 +            id = "doom",
-+            displayName = "毁灭战士",
++            displayName = "末日铁拳（守望先锋2）",
 +            fileName = "vits-zh-hf-doom.tar.bz2",
 +            sizeBytes = 120556412L,
 +            extractedBytes = extracted(120556412L),
 +            speakers = 804,
-+            description = "804 个说话人可选",
++            description = "守望先锋2 末日铁拳。选中后会自动把音色设为 93",
++            featuredSid = 93,
++            source = "守望先锋2",
++        ),
++
++        /* ───────── B. 通用模型 ───────── */
++        SherpaModelInfo(
++            id = "vits-icefall-zh-aishell3",
++            displayName = "aishell3（通用中文，体积小）",
++            fileName = "vits-icefall-zh-aishell3.tar.bz2",
++            sizeBytes = 31559701L,
++            extractedBytes = extracted(31559701L),
++            speakers = 174,
++            description = "通用中文女声数据集，174 个说话人。体积只有角色模型的三分之一，建议先用它验证效果",
 +        ),
 +        SherpaModelInfo(
 +            id = "vits-cantonese-hf-xiaomaiiwn",
@@ -39334,15 +39469,6 @@ index 0000000..fc5b702
 +            extractedBytes = extracted(167006755L),
 +            speakers = 1,
 +            description = "中英文混读（英文仅能读 lexicon.txt 里收录的词）",
-+        ),
-+        SherpaModelInfo(
-+            id = "vits-icefall-zh-aishell3",
-+            displayName = "aishell3（通用中文，体积小）",
-+            fileName = "vits-icefall-zh-aishell3.tar.bz2",
-+            sizeBytes = 31559701L,
-+            extractedBytes = extracted(31559701L),
-+            speakers = 174,
-+            description = "通用中文女声数据集，174 个说话人。体积只有其它模型的三分之一，建议先用它验证效果",
 +        ),
 +    )
 +

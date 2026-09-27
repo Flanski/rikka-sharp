@@ -1889,4 +1889,7 @@
   <string name="sherpa_store_entry">Browse all models</string>
   <string name="sherpa_store_entry_desc">Search, download, delete and switch models</string>
   <string name="sherpa_store_vits_only">Only VITS-family models are supported for now. Kokoro / Matcha / Kitten need a different config and are therefore not listed.</string>
+
+  <string name="sherpa_speaker_recommended">Recommended: %1$s (sid %2$d)</string>
+  <string name="sherpa_speaker_use">Use</string>
 </resources>

@@ -234,7 +234,14 @@ fun SherpaModelStorePage() {
                                     val p = provider
                                     if (p != null) {
                                         val newList = settings.ttsProviders.map {
-                                            if (it.id == p.id) (it as TTSProviderSetting.SherpaOnnx).copy(modelId = model.id) else it
+                                            if (it.id == p.id) {
+                                                val s = it as TTSProviderSetting.SherpaOnnx
+                                                // 一并设好角色音色（说话人在模型间不对齐，model+sid 必须成对）
+                                                s.copy(
+                                                    modelId = model.id,
+                                                    speakerId = if (model.featuredSid >= 0) model.featuredSid else s.speakerId,
+                                                )
+                                            } else it
                                         }
                                         vm.updateSettings(settings.copy(ttsProviders = newList))
                                     }
@@ -264,7 +271,13 @@ fun SherpaModelStorePage() {
                             // 显式 label：同一函数传了多个 lambda，用 @SherpaModelRow 会有歧义
                             val p = provider ?: return@useModel
                             val newList = settings.ttsProviders.map {
-                                if (it.id == p.id) (it as TTSProviderSetting.SherpaOnnx).copy(modelId = model.id) else it
+                                if (it.id == p.id) {
+                                    val s = it as TTSProviderSetting.SherpaOnnx
+                                    s.copy(
+                                        modelId = model.id,
+                                        speakerId = if (model.featuredSid >= 0) model.featuredSid else s.speakerId,
+                                    )
+                                } else it
                             }
                             vm.updateSettings(settings.copy(ttsProviders = newList))
                             message = context.getString(R.string.sherpa_store_selected, model.displayName)
@@ -312,7 +325,14 @@ private fun SherpaModelRow(
                             text = buildString {
                                 append(model.sizeMb.toInt())
                                 append("MB")
-                                if (model.speakers > 0) {
+                                if (model.source.isNotBlank()) {
+                                    append(" · ")
+                                    append(model.source)
+                                }
+                                if (model.featuredSid >= 0) {
+                                    append(" · 角色音色 sid=")
+                                    append(model.featuredSid)
+                                } else if (model.speakers > 0) {
                                     append(" · ")
                                     append(model.speakers)
                                     append(" 音色")

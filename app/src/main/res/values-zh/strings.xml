@@ -1889,4 +1889,7 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="sherpa_store_entry">浏览全部模型</string>
   <string name="sherpa_store_entry_desc">搜索、下载、删除与切换模型</string>
   <string name="sherpa_store_vits_only">目前仅支持 VITS 系列模型。Kokoro / Matcha / Kitten 需要不同的配置类，因此未列出。</string>
+
+  <string name="sherpa_speaker_recommended">推荐音色：%1$s（sid %2$d）</string>
+  <string name="sherpa_speaker_use">使用</string>
 </resources>
