@@ -75,6 +75,7 @@ import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
 import me.rerere.rikkahub.data.ai.tools.createSkillTools
 import me.rerere.rikkahub.data.ai.tools.createFileTools
 import me.rerere.rikkahub.data.ai.tools.createShellTools
+import me.rerere.rikkahub.data.ai.tools.resolveLocalToolApproval
 import me.rerere.rikkahub.data.ai.tools.createPythonTool
 import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
 import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
@@ -1143,7 +1144,7 @@ class ChatService(
                     addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
                     addAll(localTools.getTools(assistant.localTools))
                     if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
-                        addAll(createShellTools())
+                        addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                     }
                     if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
                         add(createPythonTool(context, assistant.toolExecTimeout))
@@ -1160,10 +1161,10 @@ class ChatService(
                     add(createGithubSearchTool())
                     add(createWikipediaSearchTool())
                     if (assistant.localTools.contains(LocalToolOption.SshClient)) {
-                        addAll(createSshTools(sshHostRepository))
+                        addAll(createSshTools(sshHostRepository) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                     }
                     if (assistant.localTools.contains(LocalToolOption.Sensors)) {
-                        add(createSensorTool(context, assistant.enabledSensors))
+                        add(createSensorTool(context, assistant.enabledSensors) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                     }
                     if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                         addAll(createTaskTools())
@@ -1531,7 +1532,7 @@ class ChatService(
                 }
                 addAll(localTools.getTools(assistant.localTools))
                 if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
-                    addAll(createShellTools())
+                    addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                 }
                 if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                     add(createDatabaseQueryTool(database))
@@ -1545,10 +1546,10 @@ class ChatService(
                 add(createGithubSearchTool())
                 add(createWikipediaSearchTool())
                 if (assistant.localTools.contains(LocalToolOption.SshClient)) {
-                    addAll(createSshTools(sshHostRepository))
+                    addAll(createSshTools(sshHostRepository) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                 }
                 if (assistant.localTools.contains(LocalToolOption.Sensors)) {
-                    add(createSensorTool(context, assistant.enabledSensors))
+                    add(createSensorTool(context, assistant.enabledSensors) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                 }
                 if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                     addAll(createTaskTools())

@@ -1894,4 +1894,13 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="sherpa_speaker_use">使用</string>
 
   <string name="sherpa_store_filter_characters">角色音色</string>
+
+  <!-- 工具授权 -->
+  <string name="assistant_page_tool_approval">工具授权</string>
+  <string name="assistant_page_tool_approval_desc">以下工具会改动设备、触碰远程主机或读取隐私数据。默认在执行前请求你的批准；关闭后模型将直接执行，风险由你自行承担。</string>
+  <string name="assistant_page_tool_approval_shell">执行 Shell 命令</string>
+  <string name="assistant_page_tool_approval_ssh_exec">SSH：执行命令</string>
+  <string name="assistant_page_tool_approval_ssh_upload">SSH：上传文件</string>
+  <string name="assistant_page_tool_approval_ssh_download">SSH：下载文件</string>
+  <string name="assistant_page_tool_approval_sensors">读取设备传感器</string>
 </resources>

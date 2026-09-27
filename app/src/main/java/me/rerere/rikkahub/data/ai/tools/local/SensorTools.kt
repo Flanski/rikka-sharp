@@ -220,7 +220,11 @@ private fun sensorUnit(type: Int): String = when (type) {
 /**
  * 设备传感器工具。只返回 [enabledKeys] 里放行的传感器。
  */
-fun createSensorTool(context: Context, enabledKeys: Set<String>): Tool = Tool(
+fun createSensorTool(
+    context: Context,
+    enabledKeys: Set<String>,
+    needsApproval: (String) -> Boolean,
+): Tool = Tool(
     name = "get_sensors",
     description = """
         Read the device's physical sensors. Only sensors the user has allowed are readable.
@@ -250,7 +254,8 @@ fun createSensorTool(context: Context, enabledKeys: Set<String>): Tool = Tool(
         - Location returns the most recent cached fix and its age; it is not a live GPS fix.
         - Rotation vector / orientation describe device attitude; use them for compass-like questions.
     """.trimIndent().replace("\n", " "),
-    needsApproval = { false },
+    // 默认需要授权 —— 传感器涉及隐私（位置、运动、环境等）
+    needsApproval = { needsApproval("get_sensors") },
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {

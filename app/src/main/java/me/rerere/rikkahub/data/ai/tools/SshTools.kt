@@ -34,11 +34,16 @@ private fun hostProperty(description: String) = buildJsonObject {
     put("description", description)
 }
 
-fun createSshTools(repository: SshHostRepository): List<Tool> = listOf(
+fun createSshTools(
+    repository: SshHostRepository,
+    needsApproval: (String) -> Boolean,
+): List<Tool> = listOf(
+    // 只读工具：ssh_hosts / ssh_ls 不需要授权
     createSshHostsTool(repository),
-    createSshExecTool(repository),
-    createSshUploadTool(repository),
-    createSshDownloadTool(repository),
+    // 写操作：对**远程主机**产生影响，默认需要授权
+    createSshExecTool(repository, needsApproval),
+    createSshUploadTool(repository, needsApproval),
+    createSshDownloadTool(repository, needsApproval),
     createSshLsTool(repository),
 )
 
@@ -134,7 +139,10 @@ private fun runSshHosts(repo: SshHostRepository): List<UIMessagePart> {
 
 // ────────────────────────── 2. ssh_exec ──────────────────────────
 
-private fun createSshExecTool(repo: SshHostRepository): Tool = Tool(
+private fun createSshExecTool(
+    repo: SshHostRepository,
+    needsApproval: (String) -> Boolean,
+): Tool = Tool(
     name = "ssh_exec",
     description = """
         Run one shell command on a configured SSH host and return stdout, stderr and the exit code.
@@ -153,7 +161,8 @@ private fun createSshExecTool(repo: SshHostRepository): Tool = Tool(
         Do NOT send interactive commands (vim, top, ssh into another host, password prompts) —
         they will block until timeout. Prefer non-interactive flags (e.g. `git --no-pager log`).
     """.trimIndent().replace("\n", " "),
-    needsApproval = { false },
+    // 默认需要授权：对远程主机的写操作
+    needsApproval = { needsApproval("ssh_exec") },
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -208,7 +217,10 @@ private suspend fun runSshExec(repo: SshHostRepository, args: JsonElement): List
 
 // ────────────────────────── 3. ssh_upload ──────────────────────────
 
-private fun createSshUploadTool(repo: SshHostRepository): Tool = Tool(
+private fun createSshUploadTool(
+    repo: SshHostRepository,
+    needsApproval: (String) -> Boolean,
+): Tool = Tool(
     name = "ssh_upload",
     description = """
         Upload a local file to a configured SSH host over SFTP.
@@ -223,7 +235,8 @@ private fun createSshUploadTool(repo: SshHostRepository): Tool = Tool(
         Local files usually live under /workspace (the assistant workspace) — build the artifact
         there first, then upload it.
     """.trimIndent().replace("\n", " "),
-    needsApproval = { false },
+    // 默认需要授权：对远程主机的写操作
+    needsApproval = { needsApproval("ssh_upload") },
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -268,7 +281,10 @@ private suspend fun runSshUpload(repo: SshHostRepository, args: JsonElement): Li
 
 // ────────────────────────── 4. ssh_download ──────────────────────────
 
-private fun createSshDownloadTool(repo: SshHostRepository): Tool = Tool(
+private fun createSshDownloadTool(
+    repo: SshHostRepository,
+    needsApproval: (String) -> Boolean,
+): Tool = Tool(
     name = "ssh_download",
     description = """
         Download a file from a configured SSH host to the local device over SFTP.
@@ -282,7 +298,8 @@ private fun createSshDownloadTool(repo: SshHostRepository): Tool = Tool(
         Response: {host, remote_path, local_path, size_bytes, ok, error?}
         After downloading, read the file with workspace_read_file / file tools.
     """.trimIndent().replace("\n", " "),
-    needsApproval = { false },
+    // 默认需要授权：对远程主机的写操作
+    needsApproval = { needsApproval("ssh_download") },
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {

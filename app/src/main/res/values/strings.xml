@@ -1894,4 +1894,13 @@
   <string name="sherpa_speaker_use">Use</string>
 
   <string name="sherpa_store_filter_characters">Characters</string>
+
+  <!-- 工具授权 -->
+  <string name="assistant_page_tool_approval">Tool approval</string>
+  <string name="assistant_page_tool_approval_desc">These tools modify the device, touch remote hosts, or access private data. They ask for your approval before running by default. Turning one off lets the model run it directly — you take on the risk.</string>
+  <string name="assistant_page_tool_approval_shell">Run shell commands</string>
+  <string name="assistant_page_tool_approval_ssh_exec">SSH: run commands</string>
+  <string name="assistant_page_tool_approval_ssh_upload">SSH: upload files</string>
+  <string name="assistant_page_tool_approval_ssh_download">SSH: download files</string>
+  <string name="assistant_page_tool_approval_sensors">Read device sensors</string>
 </resources>

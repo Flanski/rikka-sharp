@@ -73,6 +73,18 @@ data class Assistant(
     val toolExecTimeout: Int = 120,                     // 单工具执行超时(秒)
     val jsTimeout: Int = 15,                            // JavaScript引擎超时(秒)
     val shellTimeout: Int = 60,                         // Shell命令超时(秒)
+
+    /**
+     * 工具审批的用户覆盖项（toolName -> 是否需要用户授权）。
+     *
+     * 未列入的工具沿用 [LocalToolDefaultApprovals] 的默认值。
+     * 与工作区的 [toolApprovals] 是同一套模式（默认表 + 覆盖 + false 兜底），
+     * 区别是这里按**助手**粒度存储（与 localTools 的粒度一致）。
+     *
+     * 用户可以在「助手 → 本地工具」页逐个开关；
+     * 关掉授权意味着模型可直接执行该工具 —— 这是用户自己的选择。
+     */
+    val toolApprovalOverrides: Map<String, Boolean> = emptyMap(),
     val talkativeness: Float = 0.5f,                    // 群聊发言倾向 (0-1)，酒馆对齐
     val enableAutoCompact: Boolean = true,               // 自动压缩对话历史（token过多时）
     val enableAutoMemoryExtract: Boolean = true,          // [新增] 自动从对话提取记忆（独立开关，不依赖 enableMemory）

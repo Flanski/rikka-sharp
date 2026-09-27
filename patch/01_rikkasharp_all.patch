@@ -13004,6 +13004,69 @@ index 8abf47c..0c75ff0 100644
      // ============================================================
  
      fun evalJavascript(library: String, code: String): String = runBlocking {
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt
+new file mode 100644
+index 0000000..7322790
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt
+@@ -0,0 +1,57 @@
++package me.rerere.rikkahub.data.ai.tools
++
++/**
++ * 本地工具（`LocalToolOption`）的**授权默认值**。
++ *
++ * 与工作区的做法保持一致（见 `WorkspaceTools.kt` 的 `WorkspaceToolDefaultApprovals`）：
++ *   默认值 → 用户覆盖 → `false` 兜底
++ *
++ * ── 为什么需要授权 ──
++ * 部分本地工具会对设备产生**不可逆或涉及隐私**的影响，让模型不经确认就调用并不合适：
++ *  · `execute_command` —— 在 App 沙箱内执行任意 shell 命令
++ *  · `ssh_exec` / `ssh_upload` / `ssh_download` —— 对**远程**主机做写操作
++ *  · `get_sensors` —— 读取设备传感器（隐私：位置/加速度等）
++ *
++ * ── 语义 ──
++ * `true` = 调用前必须经用户批准（`ToolApprovalState.Pending` → 用户点同意/拒绝 → 恢复生成）
++ * `false` = 直接执行
++ *
++ * ── 注意 ──
++ * 这些是**默认值**，用户可在「助手 → 本地工具」页逐个覆盖。
++ * 覆盖项里若显式写 `true` 即强制要求授权；写 `false` 即关闭授权
++ * （关闭属于用户自己的决定，风险自担）。
++ *
++ * 只读类工具（`ssh_hosts` / `ssh_ls`、`file_*`、`time_info` 等）不在表中 → 默认无需授权。
++ */
++val LocalToolDefaultApprovals: Map<String, Boolean> = mapOf(
++    // 本地 shell：可能做危险操作（删除、覆盖、上传数据）
++    "execute_command" to true,
++    // SSH：对远程主机的写操作
++    "ssh_exec" to true,
++    "ssh_upload" to true,
++    "ssh_download" to true,
++    // 传感器：涉及隐私（位置、运动、环境）
++    "get_sensors" to true,
++)
++
++/**
++ * 解析某个工具是否需要授权。
++ *
++ * 优先级：用户覆盖 > 默认表 > false
++ * （与 `resolveWorkspaceToolApproval` 完全同构，便于理解与维护。）
++ */
++fun resolveLocalToolApproval(name: String, overrides: Map<String, Boolean>): Boolean =
++    overrides[name] ?: LocalToolDefaultApprovals[name] ?: false
++
++/**
++ * 生成一个 `needsApproval` 判定函数。
++ *
++ * `Tool.needsApproval` 的参数是工具的输入 JSON —— 这里**不使用**它，
++ * 即「整个工具统一要求授权」。
++ *
++ * 之所以不做「按参数动态判定」（例如只在命令含 `rm -rf` 时才要求授权）：
++ * 命令的破坏性很难用模式穷尽（管道、变量展开、base64 编码等都能绕过），
++ * 一旦漏判就等于形同虚设，反而给人虚假的安全感。
++ */
++fun localToolApprovalChecker(overrides: Map<String, Boolean>): (String) -> Boolean =
++    { name -> resolveLocalToolApproval(name, overrides) }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 index dc0ab1a..ce4e746 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
@@ -13070,12 +13133,35 @@ index d888690..471fcec 100644
          "Args:\n" +
          "- code: Python code to execute. Last expression value returned. Use print() for debugging.\n" +
          "Code runs in an isolated Python environment on the device.",
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt
+index d35762f..a576600 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ShellTools.kt
+@@ -18,7 +18,7 @@ import me.rerere.ai.ui.UIMessagePart
+  * 在 Android 沙箱中执行 shell 命令，返回 stdout、stderr 和退出码。
+  * 注意：权限仅限于 App 自身的 sandbox 目录。
+  */
+-fun createShellTools(): List<Tool> {
++fun createShellTools(needsApproval: (String) -> Boolean): List<Tool> {
+     return listOf(
+         Tool(
+             name = "execute_command",
+@@ -30,7 +30,8 @@ fun createShellTools(): List<Tool> {
+                 Use for: logcat, device info, grep, zip.
+                 Avoid: interactive commands (they will hang), long-running commands (30s timeout).
+             """.trimIndent().replace("\n", " "),
+-            needsApproval = { false },
++            // 默认需要授权（见 LocalToolDefaultApprovals）—— 任意 shell 命令可能造成不可逆影响
++            needsApproval = { needsApproval("execute_command") },
+             parameters = {
+                 InputSchema.Obj(
+                     properties = buildJsonObject {
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SshTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SshTools.kt
 new file mode 100644
-index 0000000..afbde8e
+index 0000000..1d0534b
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SshTools.kt
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,398 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import kotlinx.serialization.json.JsonElement
@@ -13112,11 +13198,16 @@ index 0000000..afbde8e
 +    put("description", description)
 +}
 +
-+fun createSshTools(repository: SshHostRepository): List<Tool> = listOf(
++fun createSshTools(
++    repository: SshHostRepository,
++    needsApproval: (String) -> Boolean,
++): List<Tool> = listOf(
++    // 只读工具：ssh_hosts / ssh_ls 不需要授权
 +    createSshHostsTool(repository),
-+    createSshExecTool(repository),
-+    createSshUploadTool(repository),
-+    createSshDownloadTool(repository),
++    // 写操作：对**远程主机**产生影响，默认需要授权
++    createSshExecTool(repository, needsApproval),
++    createSshUploadTool(repository, needsApproval),
++    createSshDownloadTool(repository, needsApproval),
 +    createSshLsTool(repository),
 +)
 +
@@ -13212,7 +13303,10 @@ index 0000000..afbde8e
 +
 +// ────────────────────────── 2. ssh_exec ──────────────────────────
 +
-+private fun createSshExecTool(repo: SshHostRepository): Tool = Tool(
++private fun createSshExecTool(
++    repo: SshHostRepository,
++    needsApproval: (String) -> Boolean,
++): Tool = Tool(
 +    name = "ssh_exec",
 +    description = """
 +        Run one shell command on a configured SSH host and return stdout, stderr and the exit code.
@@ -13231,7 +13325,8 @@ index 0000000..afbde8e
 +        Do NOT send interactive commands (vim, top, ssh into another host, password prompts) —
 +        they will block until timeout. Prefer non-interactive flags (e.g. `git --no-pager log`).
 +    """.trimIndent().replace("\n", " "),
-+    needsApproval = { false },
++    // 默认需要授权：对远程主机的写操作
++    needsApproval = { needsApproval("ssh_exec") },
 +    parameters = {
 +        InputSchema.Obj(
 +            properties = buildJsonObject {
@@ -13286,7 +13381,10 @@ index 0000000..afbde8e
 +
 +// ────────────────────────── 3. ssh_upload ──────────────────────────
 +
-+private fun createSshUploadTool(repo: SshHostRepository): Tool = Tool(
++private fun createSshUploadTool(
++    repo: SshHostRepository,
++    needsApproval: (String) -> Boolean,
++): Tool = Tool(
 +    name = "ssh_upload",
 +    description = """
 +        Upload a local file to a configured SSH host over SFTP.
@@ -13301,7 +13399,8 @@ index 0000000..afbde8e
 +        Local files usually live under /workspace (the assistant workspace) — build the artifact
 +        there first, then upload it.
 +    """.trimIndent().replace("\n", " "),
-+    needsApproval = { false },
++    // 默认需要授权：对远程主机的写操作
++    needsApproval = { needsApproval("ssh_upload") },
 +    parameters = {
 +        InputSchema.Obj(
 +            properties = buildJsonObject {
@@ -13346,7 +13445,10 @@ index 0000000..afbde8e
 +
 +// ────────────────────────── 4. ssh_download ──────────────────────────
 +
-+private fun createSshDownloadTool(repo: SshHostRepository): Tool = Tool(
++private fun createSshDownloadTool(
++    repo: SshHostRepository,
++    needsApproval: (String) -> Boolean,
++): Tool = Tool(
 +    name = "ssh_download",
 +    description = """
 +        Download a file from a configured SSH host to the local device over SFTP.
@@ -13360,7 +13462,8 @@ index 0000000..afbde8e
 +        Response: {host, remote_path, local_path, size_bytes, ok, error?}
 +        After downloading, read the file with workspace_read_file / file tools.
 +    """.trimIndent().replace("\n", " "),
-+    needsApproval = { false },
++    // 默认需要授权：对远程主机的写操作
++    needsApproval = { needsApproval("ssh_download") },
 +    parameters = {
 +        InputSchema.Obj(
 +            properties = buildJsonObject {
@@ -14592,10 +14695,10 @@ index 99f3d3f..0000000
 -)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt
 new file mode 100644
-index 0000000..8a335a4
+index 0000000..a5d313f
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/local/SensorTools.kt
-@@ -0,0 +1,377 @@
+@@ -0,0 +1,382 @@
 +package me.rerere.rikkahub.data.ai.tools.local
 +
 +import android.Manifest
@@ -14818,7 +14921,11 @@ index 0000000..8a335a4
 +/**
 + * 设备传感器工具。只返回 [enabledKeys] 里放行的传感器。
 + */
-+fun createSensorTool(context: Context, enabledKeys: Set<String>): Tool = Tool(
++fun createSensorTool(
++    context: Context,
++    enabledKeys: Set<String>,
++    needsApproval: (String) -> Boolean,
++): Tool = Tool(
 +    name = "get_sensors",
 +    description = """
 +        Read the device's physical sensors. Only sensors the user has allowed are readable.
@@ -14848,7 +14955,8 @@ index 0000000..8a335a4
 +        - Location returns the most recent cached fix and its age; it is not a live GPS fix.
 +        - Rotation vector / orientation describe device attitude; use them for compass-like questions.
 +    """.trimIndent().replace("\n", " "),
-+    needsApproval = { false },
++    // 默认需要授权 —— 传感器涉及隐私（位置、运动、环境等）
++    needsApproval = { needsApproval("get_sensors") },
 +    parameters = {
 +        InputSchema.Obj(
 +            properties = buildJsonObject {
@@ -15030,7 +15138,7 @@ index 8439d28..e973d87 100644
          id = DEFAULT_SYSTEM_TTS_ID,
          name = "",
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
-index 422028c..8a767ad 100644
+index 422028c..63824fa 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt
 @@ -47,13 +47,14 @@ data class Assistant(
@@ -15050,6 +15158,25 @@ index 422028c..8a767ad 100644
      val enableWebSearch: Boolean = false, // 网络搜索开关(每个助手独立)
      val workspaceId: Uuid? = null,
      val background: String? = null, // 聊天页背景图地址(本地文件 URI 或网络 URL), 为 null 时无背景
+@@ -72,6 +73,18 @@ data class Assistant(
+     val toolExecTimeout: Int = 120,                     // 单工具执行超时(秒)
+     val jsTimeout: Int = 15,                            // JavaScript引擎超时(秒)
+     val shellTimeout: Int = 60,                         // Shell命令超时(秒)
++
++    /**
++     * 工具审批的用户覆盖项（toolName -> 是否需要用户授权）。
++     *
++     * 未列入的工具沿用 [LocalToolDefaultApprovals] 的默认值。
++     * 与工作区的 [toolApprovals] 是同一套模式（默认表 + 覆盖 + false 兜底），
++     * 区别是这里按**助手**粒度存储（与 localTools 的粒度一致）。
++     *
++     * 用户可以在「助手 → 本地工具」页逐个开关；
++     * 关掉授权意味着模型可直接执行该工具 —— 这是用户自己的选择。
++     */
++    val toolApprovalOverrides: Map<String, Boolean> = emptyMap(),
+     val talkativeness: Float = 0.5f,                    // 群聊发言倾向 (0-1)，酒馆对齐
+     val enableAutoCompact: Boolean = true,               // 自动压缩对话历史（token过多时）
+     val enableAutoMemoryExtract: Boolean = true,          // [新增] 自动从对话提取记忆（独立开关，不依赖 enableMemory）
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/model/SshHost.kt b/app/src/main/java/me/rerere/rikkahub/data/model/SshHost.kt
 new file mode 100644
 index 0000000..8302d4d
@@ -15655,10 +15782,15 @@ index 76f057e..9bb5538 100644
          GenMediaRepository(get())
      }
 diff --git a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-index 00e409b..09f789e 100644
+index 00e409b..70bea01 100644
 --- a/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/service/ChatService.kt
-@@ -79,10 +79,13 @@ import me.rerere.rikkahub.data.ai.tools.createPythonTool
+@@ -75,14 +75,18 @@ import me.rerere.rikkahub.data.ai.tools.createWorkspaceTools
+ import me.rerere.rikkahub.data.ai.tools.createSkillTools
+ import me.rerere.rikkahub.data.ai.tools.createFileTools
+ import me.rerere.rikkahub.data.ai.tools.createShellTools
++import me.rerere.rikkahub.data.ai.tools.resolveLocalToolApproval
+ import me.rerere.rikkahub.data.ai.tools.createPythonTool
  import me.rerere.rikkahub.data.ai.tools.createDatabaseQueryTool
  import me.rerere.rikkahub.data.ai.tools.createCalculatorTool
  import me.rerere.rikkahub.data.ai.tools.createWebFetchTool
@@ -15674,7 +15806,7 @@ index 00e409b..09f789e 100644
  import me.rerere.rikkahub.data.files.SkillManager
  import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
  import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
-@@ -112,6 +115,7 @@ import me.rerere.rikkahub.data.model.GenerationType
+@@ -112,6 +116,7 @@ import me.rerere.rikkahub.data.model.GenerationType
  import me.rerere.rikkahub.data.model.toMessageNode
  import me.rerere.rikkahub.data.repository.ConversationRepository
  import me.rerere.rikkahub.data.repository.MemoryRepository
@@ -15682,7 +15814,7 @@ index 00e409b..09f789e 100644
  import me.rerere.rikkahub.data.repository.WorkspaceRepository
  import me.rerere.rikkahub.web.BadRequestException
  import me.rerere.rikkahub.web.NotFoundException
-@@ -136,8 +140,22 @@ internal fun backgroundTextGenerationParams(
+@@ -136,8 +141,22 @@ internal fun backgroundTextGenerationParams(
  
  private const val TAG = "ChatService"
  
@@ -15707,7 +15839,7 @@ index 00e409b..09f789e 100644
  }
  
  data class ChatError(
-@@ -200,6 +218,11 @@ class ChatService(
+@@ -200,6 +219,11 @@ class ChatService(
          KoinJavaComponent.get<AppDatabase>(AppDatabase::class.java)
      }
  
@@ -15719,7 +15851,7 @@ index 00e409b..09f789e 100644
      // 错误状态
      private val _errors = MutableStateFlow<List<ChatError>>(emptyList())
      val errors: StateFlow<List<ChatError>> = _errors.asStateFlow()
-@@ -1031,7 +1054,7 @@ class ChatService(
+@@ -1031,7 +1055,7 @@ class ChatService(
          } else {
              model.displayName
          }
@@ -15728,7 +15860,13 @@ index 00e409b..09f789e 100644
  
          runCatching {
  
-@@ -1125,11 +1148,6 @@ class ChatService(
+@@ -1120,16 +1144,11 @@ class ChatService(
+                     addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
+                     addAll(localTools.getTools(assistant.localTools))
+                     if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
+-                        addAll(createShellTools())
++                        addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
+                     }
                      if (assistant.localTools.contains(LocalToolOption.PythonEngine)) {
                          add(createPythonTool(context, assistant.toolExecTimeout))
                      }
@@ -15740,7 +15878,7 @@ index 00e409b..09f789e 100644
                      if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
                          add(createDatabaseQueryTool(database))
                      }
-@@ -1137,6 +1155,16 @@ class ChatService(
+@@ -1137,6 +1156,16 @@ class ChatService(
                          add(createCalculatorTool(context))
                      }
                      add(createWebFetchTool())
@@ -15749,15 +15887,24 @@ index 00e409b..09f789e 100644
 +                    add(createGithubSearchTool())
 +                    add(createWikipediaSearchTool())
 +                    if (assistant.localTools.contains(LocalToolOption.SshClient)) {
-+                        addAll(createSshTools(sshHostRepository))
++                        addAll(createSshTools(sshHostRepository) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
 +                    }
 +                    if (assistant.localTools.contains(LocalToolOption.Sensors)) {
-+                        add(createSensorTool(context, assistant.enabledSensors))
++                        add(createSensorTool(context, assistant.enabledSensors) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
 +                    }
                      if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                          addAll(createTaskTools())
                      }
-@@ -1512,6 +1540,16 @@ class ChatService(
+@@ -1503,7 +1532,7 @@ class ChatService(
+                 }
+                 addAll(localTools.getTools(assistant.localTools))
+                 if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
+-                    addAll(createShellTools())
++                    addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
+                 }
+                 if (assistant.localTools.contains(LocalToolOption.DatabaseQuery)) {
+                     add(createDatabaseQueryTool(database))
+@@ -1512,6 +1541,16 @@ class ChatService(
                      add(createCalculatorTool(context))
                  }
                  add(createWebFetchTool())
@@ -15766,15 +15913,15 @@ index 00e409b..09f789e 100644
 +                add(createGithubSearchTool())
 +                add(createWikipediaSearchTool())
 +                if (assistant.localTools.contains(LocalToolOption.SshClient)) {
-+                    addAll(createSshTools(sshHostRepository))
++                    addAll(createSshTools(sshHostRepository) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
 +                }
 +                if (assistant.localTools.contains(LocalToolOption.Sensors)) {
-+                    add(createSensorTool(context, assistant.enabledSensors))
++                    add(createSensorTool(context, assistant.enabledSensors) { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
 +                }
                  if (assistant.localTools.contains(LocalToolOption.TaskTools)) {
                      addAll(createTaskTools())
                  }
-@@ -1670,11 +1708,16 @@ class ChatService(
+@@ -1670,11 +1709,16 @@ class ChatService(
              putExtra(GenerationForegroundService.EXTRA_TITLE, title)
              putExtra(GenerationForegroundService.EXTRA_CONVERSATION_ID, conversationId)
          }
@@ -15796,7 +15943,7 @@ index 00e409b..09f789e 100644
      }
  
      private fun updateGenerationForeground(text: String) {
-@@ -1682,14 +1725,26 @@ class ChatService(
+@@ -1682,14 +1726,26 @@ class ChatService(
              action = GenerationForegroundService.ACTION_UPDATE
              putExtra(GenerationForegroundService.EXTRA_TEXT, text.take(200))
          }
@@ -15996,7 +16143,7 @@ index 42d6a3d..5401a27 100644
          val processed = text.stripMarkdown()
          controller.speak(processed, flushCalled)
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
-index 2eeb597..b798048 100644
+index 2eeb597..ec6ed2e 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 @@ -4,6 +4,7 @@ import android.Manifest
@@ -16023,7 +16170,7 @@ index 2eeb597..b798048 100644
  import androidx.compose.ui.Modifier
  import androidx.compose.ui.input.nestedscroll.nestedScroll
  import androidx.compose.ui.platform.LocalContext
-@@ -30,7 +33,10 @@ import androidx.compose.ui.unit.dp
+@@ -30,17 +33,23 @@ import androidx.compose.ui.unit.dp
  import androidx.lifecycle.compose.collectAsStateWithLifecycle
  import com.dokar.sonner.ToastType
  import kotlinx.coroutines.launch
@@ -16032,9 +16179,14 @@ index 2eeb597..b798048 100644
  import me.rerere.rikkahub.R
 +import me.rerere.rikkahub.Screen
  import me.rerere.rikkahub.data.ai.tools.LocalToolOption
++import me.rerere.rikkahub.data.ai.tools.resolveLocalToolApproval
  import me.rerere.rikkahub.data.datastore.Settings
  import me.rerere.rikkahub.data.model.Assistant
-@@ -41,6 +47,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
+ import me.rerere.rikkahub.ui.components.ai.ModelSelector
+ import me.rerere.rikkahub.ui.components.nav.BackButton
+ import me.rerere.rikkahub.ui.components.ui.CardGroup
++import me.rerere.rikkahub.ui.components.ui.CardGroupScope
+ import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
  import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
  import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
  import me.rerere.rikkahub.ui.theme.CustomColors
@@ -16042,7 +16194,7 @@ index 2eeb597..b798048 100644
  import me.rerere.rikkahub.ui.context.LocalToaster
  import me.rerere.rikkahub.utils.hasUsageStatsPermission
  import me.rerere.rikkahub.utils.openUsageAccessSettings
-@@ -96,6 +103,7 @@ private fun AssistantLocalToolContent(
+@@ -96,6 +105,7 @@ private fun AssistantLocalToolContent(
  ) {
      val context = LocalContext.current
      val toaster = LocalToaster.current
@@ -16050,7 +16202,7 @@ index 2eeb597..b798048 100644
      val permissionRequiredText =
          stringResource(R.string.assistant_page_local_tools_screen_time_permission_required)
  
-@@ -331,22 +339,22 @@ private fun AssistantLocalToolContent(
+@@ -331,22 +341,22 @@ private fun AssistantLocalToolContent(
                  }
              )
              item(
@@ -16081,7 +16233,7 @@ index 2eeb597..b798048 100644
                      )
                  }
              )
-@@ -388,6 +396,28 @@ private fun AssistantLocalToolContent(
+@@ -388,6 +398,89 @@ private fun AssistantLocalToolContent(
                      )
                  }
              )
@@ -16107,9 +16259,70 @@ index 2eeb597..b798048 100644
 +                    }
 +                }
 +            )
++        }
++
++        // ────────── 工具授权 ──────────
++        // 部分工具会改动设备、触碰远程主机或涉及隐私。它们默认在执行前请求用户批准
++        // （走 ToolApprovalState：模型先暂停 → 用户在消息里点同意/拒绝 → 生成继续）。
++        // 这里可以逐个关闭 —— 关闭后模型会**直接执行**，风险由使用者自行承担。
++        //
++        // ★注意：CardGroup 的 content 是 `CardGroupScope.() -> Unit`（**非 @Composable**），
++        //   所以 stringResource 等 @Composable 必须在 CardGroup **之前**求值，
++        //   条目本身也要做成 CardGroupScope 的扩展函数（见下方 ApprovalItem）。
++        val lShell = stringResource(R.string.assistant_page_tool_approval_shell)
++        val lSshExec = stringResource(R.string.assistant_page_tool_approval_ssh_exec)
++        val lSshUpload = stringResource(R.string.assistant_page_tool_approval_ssh_upload)
++        val lSshDownload = stringResource(R.string.assistant_page_tool_approval_ssh_download)
++        val lSensors = stringResource(R.string.assistant_page_tool_approval_sensors)
++        val approvals = assistant.toolApprovalOverrides
++        val onToggleApproval: (String, Boolean) -> Unit = { name, required ->
++            onUpdate(
++                assistant.copy(
++                    toolApprovalOverrides = assistant.toolApprovalOverrides + (name to required)
++                )
++            )
++        }
++        CardGroup {
++            item(
++                headlineContent = { Text(stringResource(R.string.assistant_page_tool_approval)) },
++                supportingContent = { Text(stringResource(R.string.assistant_page_tool_approval_desc)) },
++            )
++            ApprovalItem("execute_command", lShell, approvals, onToggleApproval)
++            ApprovalItem("ssh_exec", lSshExec, approvals, onToggleApproval)
++            ApprovalItem("ssh_upload", lSshUpload, approvals, onToggleApproval)
++            ApprovalItem("ssh_download", lSshDownload, approvals, onToggleApproval)
++            ApprovalItem("get_sensors", lSensors, approvals, onToggleApproval)
          }
      }
  }
++
++/**
++ * 单个工具的授权开关（作为 CardGroup 的一个条目）。
++ *
++ * 开关打开 = 调用前需用户批准；取值优先用户覆盖，其次默认表（见 [resolveLocalToolApproval]）。
++ *
++ * ★为什么是 `CardGroupScope` 的扩展、而不是 @Composable 函数：
++ * `CardGroup(content: CardGroupScope.() -> Unit)` 的 content **不是 @Composable**，
++ * 在其中既不能直接调用 composable，也不能调用其它 @Composable 函数。
++ * 因此把 UI 放进 `item(...)` 的 @Composable lambda 里，函数自身保持普通函数。
++ */
++private fun CardGroupScope.ApprovalItem(
++    toolName: String,
++    label: String,
++    overrides: Map<String, Boolean>,
++    onToggle: (String, Boolean) -> Unit,
++) {
++    item(
++        headlineContent = { Text(label) },
++        supportingContent = { Text(toolName) },
++        trailingContent = {
++            Switch(
++                checked = resolveLocalToolApproval(toolName, overrides),
++                onCheckedChange = { onToggle(toolName, it) },
++            )
++        },
++    )
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSensorsPage.kt
 new file mode 100644
 index 0000000..738a614
@@ -35682,7 +35895,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..c823483 100644
+index 8cb3cf1..333ef66 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -35694,7 +35907,7 @@ index 8cb3cf1..c823483 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,81 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,90 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -35775,9 +35988,18 @@ index 8cb3cf1..c823483 100644
 +  <string name="sherpa_speaker_use">使用</string>
 +
 +  <string name="sherpa_store_filter_characters">角色音色</string>
++
++  <!-- 工具授权 -->
++  <string name="assistant_page_tool_approval">工具授权</string>
++  <string name="assistant_page_tool_approval_desc">以下工具会改动设备、触碰远程主机或读取隐私数据。默认在执行前请求你的批准；关闭后模型将直接执行，风险由你自行承担。</string>
++  <string name="assistant_page_tool_approval_shell">执行 Shell 命令</string>
++  <string name="assistant_page_tool_approval_ssh_exec">SSH：执行命令</string>
++  <string name="assistant_page_tool_approval_ssh_upload">SSH：上传文件</string>
++  <string name="assistant_page_tool_approval_ssh_download">SSH：下载文件</string>
++  <string name="assistant_page_tool_approval_sensors">读取设备传感器</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..deef172 100644
+index 47ddab2..7fae683 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -35791,7 +36013,7 @@ index 47ddab2..deef172 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,81 @@
+@@ -1815,4 +1817,90 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -35872,6 +36094,15 @@ index 47ddab2..deef172 100644
 +  <string name="sherpa_speaker_use">Use</string>
 +
 +  <string name="sherpa_store_filter_characters">Characters</string>
++
++  <!-- 工具授权 -->
++  <string name="assistant_page_tool_approval">Tool approval</string>
++  <string name="assistant_page_tool_approval_desc">These tools modify the device, touch remote hosts, or access private data. They ask for your approval before running by default. Turning one off lets the model run it directly — you take on the risk.</string>
++  <string name="assistant_page_tool_approval_shell">Run shell commands</string>
++  <string name="assistant_page_tool_approval_ssh_exec">SSH: run commands</string>
++  <string name="assistant_page_tool_approval_ssh_upload">SSH: upload files</string>
++  <string name="assistant_page_tool_approval_ssh_download">SSH: download files</string>
++  <string name="assistant_page_tool_approval_sensors">Read device sensors</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644

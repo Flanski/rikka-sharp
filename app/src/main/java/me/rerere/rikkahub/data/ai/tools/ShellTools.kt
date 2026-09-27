@@ -18,7 +18,7 @@ import me.rerere.ai.ui.UIMessagePart
  * 在 Android 沙箱中执行 shell 命令，返回 stdout、stderr 和退出码。
  * 注意：权限仅限于 App 自身的 sandbox 目录。
  */
-fun createShellTools(): List<Tool> {
+fun createShellTools(needsApproval: (String) -> Boolean): List<Tool> {
     return listOf(
         Tool(
             name = "execute_command",
@@ -30,7 +30,8 @@ fun createShellTools(): List<Tool> {
                 Use for: logcat, device info, grep, zip.
                 Avoid: interactive commands (they will hang), long-running commands (30s timeout).
             """.trimIndent().replace("\n", " "),
-            needsApproval = { false },
+            // 默认需要授权（见 LocalToolDefaultApprovals）—— 任意 shell 命令可能造成不可逆影响
+            needsApproval = { needsApproval("execute_command") },
             parameters = {
                 InputSchema.Obj(
                     properties = buildJsonObject {

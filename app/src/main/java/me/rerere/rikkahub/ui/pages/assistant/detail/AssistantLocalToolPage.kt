@@ -38,11 +38,13 @@ import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
+import me.rerere.rikkahub.data.ai.tools.resolveLocalToolApproval
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.ui.components.ai.ModelSelector
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
+import me.rerere.rikkahub.ui.components.ui.CardGroupScope
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
@@ -419,5 +421,66 @@ private fun AssistantLocalToolContent(
                 }
             )
         }
+
+        // ────────── 工具授权 ──────────
+        // 部分工具会改动设备、触碰远程主机或涉及隐私。它们默认在执行前请求用户批准
+        // （走 ToolApprovalState：模型先暂停 → 用户在消息里点同意/拒绝 → 生成继续）。
+        // 这里可以逐个关闭 —— 关闭后模型会**直接执行**，风险由使用者自行承担。
+        //
+        // ★注意：CardGroup 的 content 是 `CardGroupScope.() -> Unit`（**非 @Composable**），
+        //   所以 stringResource 等 @Composable 必须在 CardGroup **之前**求值，
+        //   条目本身也要做成 CardGroupScope 的扩展函数（见下方 ApprovalItem）。
+        val lShell = stringResource(R.string.assistant_page_tool_approval_shell)
+        val lSshExec = stringResource(R.string.assistant_page_tool_approval_ssh_exec)
+        val lSshUpload = stringResource(R.string.assistant_page_tool_approval_ssh_upload)
+        val lSshDownload = stringResource(R.string.assistant_page_tool_approval_ssh_download)
+        val lSensors = stringResource(R.string.assistant_page_tool_approval_sensors)
+        val approvals = assistant.toolApprovalOverrides
+        val onToggleApproval: (String, Boolean) -> Unit = { name, required ->
+            onUpdate(
+                assistant.copy(
+                    toolApprovalOverrides = assistant.toolApprovalOverrides + (name to required)
+                )
+            )
+        }
+        CardGroup {
+            item(
+                headlineContent = { Text(stringResource(R.string.assistant_page_tool_approval)) },
+                supportingContent = { Text(stringResource(R.string.assistant_page_tool_approval_desc)) },
+            )
+            ApprovalItem("execute_command", lShell, approvals, onToggleApproval)
+            ApprovalItem("ssh_exec", lSshExec, approvals, onToggleApproval)
+            ApprovalItem("ssh_upload", lSshUpload, approvals, onToggleApproval)
+            ApprovalItem("ssh_download", lSshDownload, approvals, onToggleApproval)
+            ApprovalItem("get_sensors", lSensors, approvals, onToggleApproval)
+        }
     }
+}
+
+/**
+ * 单个工具的授权开关（作为 CardGroup 的一个条目）。
+ *
+ * 开关打开 = 调用前需用户批准；取值优先用户覆盖，其次默认表（见 [resolveLocalToolApproval]）。
+ *
+ * ★为什么是 `CardGroupScope` 的扩展、而不是 @Composable 函数：
+ * `CardGroup(content: CardGroupScope.() -> Unit)` 的 content **不是 @Composable**，
+ * 在其中既不能直接调用 composable，也不能调用其它 @Composable 函数。
+ * 因此把 UI 放进 `item(...)` 的 @Composable lambda 里，函数自身保持普通函数。
+ */
+private fun CardGroupScope.ApprovalItem(
+    toolName: String,
+    label: String,
+    overrides: Map<String, Boolean>,
+    onToggle: (String, Boolean) -> Unit,
+) {
+    item(
+        headlineContent = { Text(label) },
+        supportingContent = { Text(toolName) },
+        trailingContent = {
+            Switch(
+                checked = resolveLocalToolApproval(toolName, overrides),
+                onCheckedChange = { onToggle(toolName, it) },
+            )
+        },
+    )
 }
