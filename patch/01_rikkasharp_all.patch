@@ -1479,7 +1479,7 @@ index d910308..3b0b591 100644
        },
        "oauth_client": [],
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 51e0037..dddbd73 100644
+index 51e0037..5161caa 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -11,6 +11,10 @@
@@ -1493,7 +1493,26 @@ index 51e0037..dddbd73 100644
    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-@@ -173,6 +177,13 @@
+@@ -21,6 +25,18 @@
+     android:name="android.permission.PACKAGE_USAGE_STATS"
+     tools:ignore="ProtectedPermissions" />
+   <uses-permission android:name="android.permission.READ_CALENDAR" />
++
++  <!-- 系统工具：WiFi 信息。
++       Android 13+ 起读取 SSID/BSSID 需要 NEARBY_WIFI_DEVICES；
++       neverForLocation 表示本应用不由此推断位置（否则会被要求位置权限与开关）。 -->
++  <uses-permission
++    android:name="android.permission.NEARBY_WIFI_DEVICES"
++    android:usesPermissionFlags="neverForLocation"
++    tools:targetApi="tiramisu" />
++  <!-- 系统工具：蓝牙设备列表与状态（Android 12+ 的运行时权限） -->
++  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
++  <!-- 系统工具：读取短信（危险权限，运行时申请） -->
++  <uses-permission android:name="android.permission.READ_SMS" />
+   <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+ 
+   <uses-feature
+@@ -173,6 +189,13 @@
          android:value="androidx.startup"
          tools:node="remove" />
      </provider>
@@ -12931,19 +12950,20 @@ index e688510..d6c97de 100644
              .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
              .setName(getString(R.string.notification_channel_generation_foreground))
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-index eecc60c..8c8be70 100644
+index eecc60c..fc705bd 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-@@ -79,6 +79,8 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
+@@ -79,6 +79,9 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
 +import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantProgrammingToolsPage
 +import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
++import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSystemToolsPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
  import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
-@@ -121,6 +123,8 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
+@@ -121,6 +124,8 @@ import me.rerere.rikkahub.ui.pages.setting.SettingProviderPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchDetailPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSearchPage
  import me.rerere.rikkahub.ui.pages.setting.SettingSpeechPage
@@ -12952,7 +12972,7 @@ index eecc60c..8c8be70 100644
  import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
  import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
  import me.rerere.rikkahub.ui.pages.stats.StatsPage
-@@ -253,6 +257,10 @@ class RouteActivity : ComponentActivity() {
+@@ -253,6 +258,10 @@ class RouteActivity : ComponentActivity() {
                      is AppEvent.McpOAuthCallback -> Unit // 由 McpManager 消费
                      is AppEvent.ChatGenerationUpdate -> Unit // 由 ChatNotificationManager 消费
                      is AppEvent.ChatGenerationEnded -> Unit // 由 ChatNotificationManager 消费
@@ -12963,7 +12983,7 @@ index eecc60c..8c8be70 100644
                  }
              }
          }
-@@ -389,6 +397,18 @@ class RouteActivity : ComponentActivity() {
+@@ -389,6 +398,22 @@ class RouteActivity : ComponentActivity() {
                                  AssistantLocalToolPage(key.id)
                              }
  
@@ -12979,10 +12999,14 @@ index eecc60c..8c8be70 100644
 +                                AssistantProgrammingToolsPage(key.id)
 +                            }
 +
++                            entry<Screen.AssistantSystemTools> { key ->
++                                AssistantSystemToolsPage(key.id)
++                            }
++
                              entry<Screen.AssistantInjections> { key ->
                                  AssistantExtensionsPage(key.id)
                              }
-@@ -483,6 +503,10 @@ class RouteActivity : ComponentActivity() {
+@@ -483,6 +508,10 @@ class RouteActivity : ComponentActivity() {
                                  SettingWebPage()
                              }
  
@@ -12993,7 +13017,7 @@ index eecc60c..8c8be70 100644
  
                              entry<Screen.Debug> {
                                  DebugPage()
-@@ -648,6 +672,17 @@ sealed interface Screen : NavKey {
+@@ -648,6 +677,21 @@ sealed interface Screen : NavKey {
      @Serializable
      data class AssistantLocalTool(val id: String) : Screen
  
@@ -13008,10 +13032,14 @@ index eecc60c..8c8be70 100644
 +    @Serializable
 +    data class AssistantProgrammingTools(val id: String) : Screen
 +
++    /** 系统工具（WiFi / 蓝牙 / 短信 / 电池）—— 同样是纯入口 */
++    @Serializable
++    data class AssistantSystemTools(val id: String) : Screen
++
      @Serializable
      data class AssistantInjections(val id: String) : Screen
  
-@@ -705,6 +740,9 @@ sealed interface Screen : NavKey {
+@@ -705,6 +749,9 @@ sealed interface Screen : NavKey {
      @Serializable
      data object SettingSpeech : Screen
  
@@ -13100,6 +13128,220 @@ index 8abf47c..0c75ff0 100644
      // ============================================================
  
      fun evalJavascript(library: String, code: String): String = runBlocking {
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt
+new file mode 100644
+index 0000000..1d9a1f9
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/BatteryTools.kt
+@@ -0,0 +1,208 @@
++package me.rerere.rikkahub.data.ai.tools
++
++import android.content.Context
++import android.content.Intent
++import android.content.IntentFilter
++import android.os.BatteryManager
++import android.os.Build
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
++
++/**
++ * 电池信息读取的**统一实现**（工具与提示词占位符共用）。
++ *
++ * ── 为什么要多路回退 ──
++ * 原先项目的 `battery_level` 占位符只用了
++ * `BatteryManager.getIntProperty(BATTERY_PROPERTY_CAPACITY)`。
++ * 这个属性在部分设备/系统（尤其是华为系与定制 ROM）上会返回 **0 或异常值**，
++ * 于是提示词里拿到的电量恒为 0 —— 用户反馈的「电量变量拿不到」很可能就是它。
++ *
++ * 这里按可靠性排序依次尝试：
++ *   1. sticky broadcast `ACTION_BATTERY_CHANGED` 的 `EXTRA_LEVEL / EXTRA_SCALE`
++ *      —— 这是 Android 最古老的电池接口，覆盖面最广、几乎不会失败
++ *   2. `BATTERY_PROPERTY_CAPACITY` —— 较新且有 1..100 直接结果，但可失败的场景见上
++ *   3. 都拿不到时返回 null（由调用方决定如何呈现），**绝不返回 0 冒充真实电量**
++ *
++ * 注意：读取 sticky broadcast 用 `registerReceiver(null, filter)`，
++ * 不注册接收者、无需任何权限，也不受 Android 14 导出标志要求的约束。
++ */
++object BatteryInfo {
++
++    /** 读原始电池广播；拿不到返回 null */
++    private fun batteryIntent(context: Context): Intent? =
++        runCatching {
++            context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
++        }.getOrNull()
++
++    /**
++     * 电量百分比。
++     * 返回 null 表示两种途径都拿不到（调用方应据此显示「未知」而不是 0）。
++     */
++    fun levelPercent(context: Context): Int? {
++        // 途径 1：sticky broadcast（最通用）
++        batteryIntent(context)?.let { i ->
++            val level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
++            val scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
++            if (level >= 0 && scale > 0) {
++                return (level * 100 / scale).coerceIn(0, 100)
++            }
++        }
++        // 途径 2：BatteryManager 属性
++        runCatching {
++            val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
++            val v = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
++            if (v in 1..100) return v
++        }
++        return null
++    }
++
++    /** 组装完整电池信息（工具输出用） */
++    fun snapshot(context: Context): kotlinx.serialization.json.JsonObject {
++        val i = batteryIntent(context)
++        val bm = runCatching {
++            context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
++        }.getOrNull()
++
++        fun prop(key: Int): Int? = runCatching {
++            bm?.getIntProperty(key)?.takeIf { it != Int.MIN_VALUE && it != 0 }
++        }.getOrNull()
++
++        return buildJsonObject {
++            val pct = levelPercent(context)
++            if (pct != null) {
++                put("level_percent", JsonPrimitive(pct))
++            } else {
++                put("level_percent", JsonPrimitive(-1))
++                put("level_note", JsonPrimitive(
++                    "无法读取电量（sticky broadcast 与 BATTERY_PROPERTY_CAPACITY 均未返回有效值）"
++                ))
++            }
++
++            if (i == null) {
++                put("note", JsonPrimitive("未能读取 ACTION_BATTERY_CHANGED，以下部分字段可能缺失"))
++                return@buildJsonObject
++            }
++
++            // ── 状态 ──
++            val status = i.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
++            put("status", JsonPrimitive(
++                when (status) {
++                    BatteryManager.BATTERY_STATUS_CHARGING -> "charging"
++                    BatteryManager.BATTERY_STATUS_DISCHARGING -> "discharging"
++                    BatteryManager.BATTERY_STATUS_FULL -> "full"
++                    BatteryManager.BATTERY_STATUS_NOT_CHARGING -> "not_charging"
++                    else -> "unknown"
++                }
++            ))
++
++            // ── 充电来源 ──
++            val plugged = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
++            put("plugged", JsonPrimitive(
++                when (plugged) {
++                    BatteryManager.BATTERY_PLUGGED_AC -> "ac"
++                    BatteryManager.BATTERY_PLUGGED_USB -> "usb"
++                    BatteryManager.BATTERY_PLUGGED_WIRELESS -> "wireless"
++                    BatteryManager.BATTERY_PLUGGED_DOCK -> "dock"
++                    else -> "none"
++                }
++            ))
++            put("is_charging", JsonPrimitive(
++                status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
++            ))
++
++            // ── 健康 ──
++            val health = i.getIntExtra(BatteryManager.EXTRA_HEALTH, -1)
++            put("health", JsonPrimitive(
++                when (health) {
++                    BatteryManager.BATTERY_HEALTH_GOOD -> "good"
++                    BatteryManager.BATTERY_HEALTH_OVERHEAT -> "overheat"
++                    BatteryManager.BATTERY_HEALTH_DEAD -> "dead"
++                    BatteryManager.BATTERY_HEALTH_OVER_VOLTAGE -> "over_voltage"
++                    BatteryManager.BATTERY_HEALTH_COLD -> "cold"
++                    BatteryManager.BATTERY_HEALTH_UNSPECIFIED_FAILURE -> "failure"
++                    else -> "unknown"
++                }
++            ))
++
++            // ── 温度（单位 0.1℃）──
++            val temp = i.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, Int.MIN_VALUE)
++            if (temp != Int.MIN_VALUE) {
++                put("temperature_c", JsonPrimitive(temp / 10.0))
++            }
++
++            // ── 电压（单位 mV）──
++            val voltage = i.getIntExtra(BatteryManager.EXTRA_VOLTAGE, Int.MIN_VALUE)
++            if (voltage != Int.MIN_VALUE && voltage > 0) {
++                put("voltage_v", JsonPrimitive(voltage / 1000.0))
++            }
++
++            i.getStringExtra(BatteryManager.EXTRA_TECHNOLOGY)?.let {
++                put("technology", JsonPrimitive(it))
++            }
++
++            // ── 容量等级（API 28+ 的粗粒度指示：low/medium/high）──
++            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
++                when (i.getIntExtra(BatteryManager.EXTRA_CAPACITY_LEVEL, Int.MIN_VALUE)) {
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_LOW -> put("capacity_level", JsonPrimitive("low"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_MEDIUM -> put("capacity_level", JsonPrimitive("medium"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_HIGH -> put("capacity_level", JsonPrimitive("high"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_FULL -> put("capacity_level", JsonPrimitive("full"))
++                    BatteryManager.BATTERY_CAPACITY_LEVEL_NORMAL -> put("capacity_level", JsonPrimitive("normal"))
++                    else -> {}
++                }
++            }
++
++            // ── 电流 / 电量计数（来自 BatteryManager 属性）──
++            // 注意单位：BATTERY_PROPERTY_CURRENT_NOW 官方定义为**微安(µA)**，
++            // 但部分厂商实现给的是毫安(mA)，因此这里同时给出原始值与按 µA 换算的 mA，
++            // 由调用方结合设备经验判断（不擅自假定某一种）。
++            prop(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)?.let {
++                put("current_now_raw", JsonPrimitive(it))
++                put("current_now_ua_as_ma", JsonPrimitive(it / 1000.0))
++                put("current_note", JsonPrimitive(
++                    "官方定义单位为µA；部分厂商返回mA。current_now_ua_as_ma 是按µA换算的结果。"
++                ))
++            }
++            prop(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)?.let {
++                // µAh → mAh
++                put("charge_counter_mah", JsonPrimitive(it / 1000.0))
++            }
++            prop(BatteryManager.BATTERY_PROPERTY_ENERGY_COUNTER)?.let {
++                // nWh → mWh
++                put("energy_counter_mwh", JsonPrimitive(it / 1_000_000.0))
++            }
++            prop(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.let {
++                put("capacity_property", JsonPrimitive(it))
++            }
++        }
++    }
++}
++
++/**
++ * 电池工具 —— **只读**。
++ *
++ * 之所以单独提供，是因为提示词里的 `{{battery_level}}` 占位符只在**发消息那一刻**取值，
++ * 模型无法在对话中途重新查询；而这个工具可以在需要时随时读到最新状态
++ * （电量、充放电、温度、电压、电流等）。
++ */
++fun createBatteryTool(context: Context): Tool = Tool(
++    name = "battery_info",
++    description = """
++        Read the device battery state: percentage, charging status and source, health,
++        temperature, voltage, current and charge counter.
++        Read-only — it changes nothing on the device.
++        Some fields may be missing depending on the device/ROM (many vendors do not implement
++        every BatteryManager property); when the percentage cannot be read it is reported as -1
++        with a note, never faked as 0.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    // 无参数：只读快照
++    parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
++    execute = {
++        listOf(UIMessagePart.Text(BatteryInfo.snapshot(context).toString()))
++    },
++)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt
 new file mode 100644
 index 0000000..680a585
@@ -14990,10 +15232,10 @@ index 0000000..7322790
 +fun localToolApprovalChecker(overrides: Map<String, Boolean>): (String) -> Boolean =
 +    { name -> resolveLocalToolApproval(name, overrides) }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-index dc0ab1a..317dfe9 100644
+index dc0ab1a..04c2173 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalTools.kt
-@@ -119,6 +119,65 @@ sealed class LocalToolOption {
+@@ -119,6 +119,87 @@ sealed class LocalToolOption {
      @Serializable
      @SerialName("calendar")
      data object Calendar : LocalToolOption()
@@ -15056,10 +15298,32 @@ index dc0ab1a..317dfe9 100644
 +    @Serializable
 +    @SerialName("midi")
 +    data object Midi : LocalToolOption()
++
++    // ── 系统工具（入口在「系统工具」子页面）──
++
++    /** WiFi 信息（只读）*/
++    @Serializable
++    @SerialName("wifi")
++    data object Wifi : LocalToolOption()
++
++    /** 蓝牙设备与状态（只读；连接/断开需用户手动操作）*/
++    @Serializable
++    @SerialName("bluetooth")
++    data object Bluetooth : LocalToolOption()
++
++    /** 读取短信（只读，需 READ_SMS）*/
++    @Serializable
++    @SerialName("sms")
++    data object Sms : LocalToolOption()
++
++    /** 电池信息（只读）*/
++    @Serializable
++    @SerialName("battery")
++    data object Battery : LocalToolOption()
  }
  
  class LocalTools(
-@@ -201,18 +260,12 @@ class LocalTools(
+@@ -201,18 +282,12 @@ class LocalTools(
                  "The JS context persists between calls — libraries loaded via action='load' stay available.\n" +
                  "⚠️ NOTE: Eval runs in a block scope — `const`/`let` are local to each call (no redeclaration errors).\n" +
                  "Use `var` for variables that need to persist across multiple calls.\n\n" +
@@ -15081,7 +15345,7 @@ index dc0ab1a..317dfe9 100644
  
                  "- action: 'eval' (default) | 'load' | 'reset'\n" +
                  "- library: asset filename without .js (for action='load') — loads once, cached\n" +
-@@ -284,12 +337,6 @@ class LocalTools(
+@@ -284,12 +359,6 @@ class LocalTools(
                                  val lib = library ?: throw IllegalArgumentException("library is required for action='load'")
                                  val ctx = getOrCreateJSContext()
                                  if (lib !in loadedLibraries) {
@@ -15094,7 +15358,7 @@ index dc0ab1a..317dfe9 100644
                                      val engineCode = context.assets.open("$lib.js").bufferedReader().readText()
                                      ctx.evaluate(engineCode)
                                      loadedLibraries.add(lib)
-@@ -470,6 +517,24 @@ class LocalTools(
+@@ -470,6 +539,36 @@ class LocalTools(
              tools.add(calendarQueryTool)
              tools.add(calendarCreateTool)
          }
@@ -15115,6 +15379,18 @@ index dc0ab1a..317dfe9 100644
 +        }
 +        if (options.contains(LocalToolOption.Midi)) {
 +            tools.add(createMidiTool(context))
++        }
++        if (options.contains(LocalToolOption.Wifi)) {
++            tools.add(createWifiTool(context))
++        }
++        if (options.contains(LocalToolOption.Bluetooth)) {
++            tools.add(createBluetoothTool(context))
++        }
++        if (options.contains(LocalToolOption.Sms)) {
++            tools.add(createSmsTool(context))
++        }
++        if (options.contains(LocalToolOption.Battery)) {
++            tools.add(createBatteryTool(context))
 +        }
          return tools
      }
@@ -16688,6 +16964,399 @@ index 0000000..1d0534b
 +// ────────────────────────── 工具函数 ──────────────────────────
 +
 +private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt
+new file mode 100644
+index 0000000..60c00b1
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt
+@@ -0,0 +1,387 @@
++package me.rerere.rikkahub.data.ai.tools
++
++import android.Manifest
++import android.bluetooth.BluetoothAdapter
++import android.bluetooth.BluetoothDevice
++import android.bluetooth.BluetoothManager
++import android.content.Context
++import android.content.Intent
++import android.content.pm.PackageManager
++import android.net.wifi.WifiManager
++import android.os.Build
++import android.provider.Settings
++import android.provider.Telephony
++import android.util.Log
++import androidx.core.content.ContextCompat
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonArray
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.contentOrNull
++import kotlinx.serialization.json.jsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.longOrNull
++import kotlinx.serialization.json.put
++import me.rerere.ai.core.InputSchema
++import me.rerere.ai.core.Tool
++import me.rerere.ai.ui.UIMessagePart
++
++private const val TAG = "SystemTools"
++
++/**
++ * 系统工具：WiFi / 蓝牙 / 短信。
++ *
++ * ── 统一的原则 ──
++ * 这些能力都要**运行时权限**，而且不同 Android 版本的权限模型差别很大
++ * （例如读 WiFi SSID 在 13+ 需要 NEARBY_WIFI_DEVICES，蓝牙设备列表在 12+ 需要 BLUETOOTH_CONNECT）。
++ * 因此每个字段各自 try/catch：**能读的读出来，读不了的明确说明缺什么权限**
++ * —— 而不是整体失败，也不是返回空值让模型误以为「设备就是这样」。
++ *
++ * ── 蓝牙连接控制的实际限制（重要，已在工具描述里写明）──
++ * 普通应用**无法程序化地连接/断开蓝牙音频设备**：
++ * `BluetoothA2dp.connect()` / `BluetoothHeadset.connect()` 属于 hidden/SystemApi，
++ * 需要系统权限（BLUETOOTH_PRIVILEGED），反射调用在新版本上也被限制。
++ * 所以这里提供的是「查看设备与连接状态」+「打开系统蓝牙设置页由用户手动连接」，
++ * 并如实告诉调用方为什么不能直接连。
++ */
++fun createWifiTool(context: Context): Tool = Tool(
++    name = "wifi_info",
++    description = """
++        Read the device's WiFi state: whether WiFi is on, and (when permitted) the current
++        connection's SSID, BSSID, IP address, frequency, link speed and signal level.
++        Set include_scan=true to also list nearby networks — that requires location permission
++        and the system location toggle to be on; if unavailable, the response explains why
++        instead of silently returning nothing.
++        Read-only.
++    """.trimIndent().replace("\n", " "),
++    needsApproval = { false },
++    parameters = {
++        InputSchema.Obj(
++            properties = buildJsonObject {
++                put("include_scan", buildJsonObject {
++                    put("type", "boolean")
++                    put("description", "Also scan for nearby networks (needs location permission + location on)")
++                })
++            },
++        )
++    },
++    execute = { args ->
++        val includeScan = args.jsonObject["include_scan"]?.jsonPrimitive?.contentOrNull
++            ?.toBooleanStrictOrNull() ?: false
++        listOf(UIMessagePart.Text(wifiSnapshot(context, includeScan).toString()))
++    },
++)
++
++@Suppress("DEPRECATION")
++private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serialization.json.JsonObject {
++    val wm = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
++    return buildJsonObject {
++        if (wm == null) {
++            put("error", JsonPrimitive("本设备没有 WiFi 服务"))
++            return@buildJsonObject
++        }
++        put("wifi_enabled", JsonPrimitive(runCatching { wm.isWifiEnabled }.getOrDefault(false)))
++
++        // ── 当前连接信息 ──
++        // Android 13+ 读 SSID/BSSID 需要 NEARBY_WIFI_DEVICES；旧版本需要位置权限。
++        // connectionInfo 在 API 31 起被标记废弃，但在可获取时仍返回有效数据；
++        // 权限不足时字段会是 <unknown ssid>，因此这里额外检查占位值。
++        runCatching {
++            val info = wm.connectionInfo
++            val ssid = info?.ssid?.removeSurrounding("\"")?.takeIf {
++                it.isNotBlank() && !it.contains("unknown", true) && it != "0x"
++            }
++            val bssid = info?.bssid?.takeIf { it.isNotBlank() && it != "02:00:00:00:00:00" }
++
++            put("connected", JsonPrimitive(ssid != null || bssid != null))
++            if (ssid != null) put("ssid", JsonPrimitive(ssid))
++            if (bssid != null) put("bssid", JsonPrimitive(bssid))
++            info?.let { i ->
++                if (i.ipAddress != 0) {
++                    put("ip_address", JsonPrimitive(intToIp(i.ipAddress)))
++                }
++                if (i.frequency > 0) put("frequency_mhz", JsonPrimitive(i.frequency))
++                if (i.linkSpeed > 0) put("link_speed_mbps", JsonPrimitive(i.linkSpeed))
++                if (i.rssi != 0) {
++                    put("rssi_dbm", JsonPrimitive(i.rssi))
++                    // 0..4 档，便于直接呈现「信号强弱」
++                    runCatching { WifiManager.calculateSignalLevel(i.rssi, 5) }
++                        .getOrNull()?.let { put("signal_level", JsonPrimitive("$it/4")) }
++                }
++            }
++            if (ssid == null && bssid == null) {
++                put("connection_info_note", JsonPrimitive(
++                    "未能读取 SSID/BSSID —— Android 13+ 需要「附近的 WiFi 设备」权限，" +
++                        "旧版本需要位置权限且系统定位需开启。网络本身可能仍是连着的。"
++                ))
++            }
++        }.onFailure {
++            put("connection_info_error", JsonPrimitive("${it.javaClass.simpleName}: ${it.message}"))
++        }
++
++        // ── 扫描附近网络（可选）──
++        if (includeScan) {
++            val hasLocation = ContextCompat.checkSelfPermission(
++                context, Manifest.permission.ACCESS_FINE_LOCATION
++            ) == PackageManager.PERMISSION_GRANTED
++            if (!hasLocation) {
++                put("scan_error", JsonPrimitive("扫描需要位置权限（ACCESS_FINE_LOCATION），当前未授予"))
++            } else {
++                    runCatching {
++                        @Suppress("DEPRECATION")
++                        val results = wm.scanResults
++                        put("scan_count", JsonPrimitive(results?.size ?: 0))
++                        put("networks", buildJsonArray {
++                            results.orEmpty().distinctBy { it.BSSID }.take(30).forEach { r ->
++                                add(buildJsonObject {
++                                    put("ssid", JsonPrimitive(r.SSID?.removeSurrounding("\"") ?: ""))
++                                    put("bssid", JsonPrimitive(r.BSSID ?: ""))
++                                    put("rssi_dbm", JsonPrimitive(r.level))
++                                    put("frequency_mhz", JsonPrimitive(r.frequency))
++                                    put("secured", JsonPrimitive(r.capabilities?.contains("WPA") == true ||
++                                        r.capabilities?.contains("WEP") == true))
++                                })
++                            }
++                        })
++                        if ((results?.size ?: 0) == 0) {
++                            put("scan_note", JsonPrimitive(
++                                "扫描结果为空。scanResults 只反映最近一次扫描的缓存；" +
++                                    "系统可能限制后台扫描，且定位未开启时部分设备会过滤结果。"
++                            ))
++                        }
++                    }.onFailure {
++                        put("scan_error", JsonPrimitive("${it.javaClass.simpleName}: ${it.message}"))
++                    }
++                }
++            }
++        }
++    }
++
++    /** 把 WifiManager 的 int 形式 IPv4 转成点分十进制 */
++    private fun intToIp(ip: Int): String =
++        "${ip and 0xFF}.${ip shr 8 and 0xFF}.${ip shr 16 and 0xFF}.${ip shr 24 and 0xFF}"
++
++    // ────────────────────────── 蓝牙 ──────────────────────────
++
++    fun createBluetoothTool(context: Context): Tool = Tool(
++        name = "bluetooth_info",
++        description = """
++            Read Bluetooth state: whether the adapter is on, and the list of bonded (paired) devices
++            with name, address and type.
++            action="open_settings" opens the system Bluetooth settings page so the user can connect or
++            disconnect manually.
++            IMPORTANT: a normal (non-system) app cannot programmatically connect or disconnect Bluetooth
++            audio devices — BluetoothA2dp.connect()/BluetoothHeadset.connect() are hidden system APIs.
++            This tool therefore reports state and guides the user instead of pretending to control it.
++        """.trimIndent().replace("\n", " "),
++        needsApproval = { false },
++        parameters = {
++            InputSchema.Obj(
++                properties = buildJsonObject {
++                    put("action", buildJsonObject {
++                        put("type", "string")
++                        put("description", "status (default) | open_settings")
++                    })
++                },
++            )
++        },
++        execute = { args ->
++            val action = args.jsonObject["action"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "status"
++            when (action) {
++                "open_settings" -> {
++                    runCatching {
++                        val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
++                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
++                        context.startActivity(intent)
++                    }.onFailure { Log.w(TAG, "打开蓝牙设置失败", it) }
++                    listOf(UIMessagePart.Text(buildJsonObject {
++                        put("ok", JsonPrimitive(true))
++                        put("opened", JsonPrimitive("系统蓝牙设置页"))
++                        put("hint", JsonPrimitive("已为用户打开系统设置页 —— 连接/断开蓝牙设备需要用户在那里手动操作。"))
++                    }.toString()))
++                }
++                else -> listOf(UIMessagePart.Text(bluetoothSnapshot(context).toString()))
++            }
++        },
++    )
++
++    private fun bluetoothSnapshot(context: Context): kotlinx.serialization.json.JsonObject {
++        val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
++        return buildJsonObject {
++            if (adapter == null) {
++                put("supported", JsonPrimitive(false))
++                put("note", JsonPrimitive("本设备没有蓝牙适配器"))
++                return@buildJsonObject
++            }
++            put("supported", JsonPrimitive(true))
++
++            // Android 12+ 起读蓝牙状态与设备列表需要 BLUETOOTH_CONNECT
++            val needConnect = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
++            val hasConnect = !needConnect || ContextCompat.checkSelfPermission(
++                context, Manifest.permission.BLUETOOTH_CONNECT
++            ) == PackageManager.PERMISSION_GRANTED
++            if (!hasConnect) {
++                put("permission_granted", JsonPrimitive(false))
++                put("permission_note", JsonPrimitive(
++                    "Android 12+ 读取蓝牙状态与设备列表需要「附近的设备」权限（BLUETOOTH_CONNECT），当前未授予。"
++                ))
++                return@buildJsonObject
++            }
++            put("permission_granted", JsonPrimitive(true))
++
++            runCatching {
++                put("enabled", JsonPrimitive(adapter.isEnabled))
++                if (!adapter.isEnabled) {
++                    put("note", JsonPrimitive("蓝牙未开启。开启蓝牙需要用户操作（应用不能静默开启）。"))
++                    return@buildJsonObject
++                }
++                put("name", JsonPrimitive(adapter.name ?: ""))
++                put("state", JsonPrimitive(
++                    when (adapter.state) {
++                        BluetoothAdapter.STATE_ON -> "on"
++                        BluetoothAdapter.STATE_OFF -> "off"
++                        BluetoothAdapter.STATE_TURNING_ON -> "turning_on"
++                        BluetoothAdapter.STATE_TURNING_OFF -> "turning_off"
++                        else -> "unknown"
++                    }
++                ))
++                val bonded = adapter.bondedDevices.orEmpty()
++                put("bonded_count", JsonPrimitive(bonded.size))
++                put("bonded_devices", buildJsonArray {
++                    bonded.forEach { d: BluetoothDevice ->
++                        add(buildJsonObject {
++                            put("name", JsonPrimitive(runCatching { d.name }.getOrNull() ?: ""))
++                            put("address", JsonPrimitive(runCatching { d.address }.getOrNull() ?: ""))
++                            put("type", JsonPrimitive(
++                                when (runCatching { d.type }.getOrDefault(-1)) {
++                                    BluetoothDevice.DEVICE_TYPE_CLASSIC -> "classic"
++                                    BluetoothDevice.DEVICE_TYPE_LE -> "le"
++                                    BluetoothDevice.DEVICE_TYPE_DUAL -> "dual"
++                                    else -> "unknown"
++                                }
++                            ))
++                            // bondState 表示「配对状态」，不是「连接状态」——
++                            // 已配对 ≠ 已连接，这里明确区分，避免模型误解
++                            put("bond_state", JsonPrimitive(
++                                when (runCatching { d.bondState }.getOrDefault(-1)) {
++                                    BluetoothDevice.BOND_BONDED -> "bonded"
++                                    BluetoothDevice.BOND_BONDING -> "bonding"
++                                    BluetoothDevice.BOND_NONE -> "none"
++                                    else -> "unknown"
++                                }
++                            ))
++                        })
++                    }
++                })
++                put("limitation", JsonPrimitive(
++                    "普通应用无法程序化连接/断开蓝牙设备（A2DP/HFP 的 connect() 是隐藏系统 API）。" +
++                        "需要连接时请让用户操作：action=open_settings 打开系统蓝牙设置页。"
++                ))
++            }.onFailure {
++                put("error", JsonPrimitive("${it.javaClass.simpleName}: ${it.message}"))
++            }
++        }
++    }
++
++    // ────────────────────────── 短信 ──────────────────────────
++
++    fun createSmsTool(context: Context): Tool = Tool(
++        name = "sms_read",
++        description = """
++            Read SMS messages from the device inbox (read-only — this tool never sends anything).
++            Requires the READ_SMS runtime permission; if it is not granted the response says so.
++            Parameters: limit (default 20, max 200), address (filter by phone number, substring match),
++            unread_only (only unread messages).
++            Message bodies are truncated to 1000 characters each to keep the result readable.
++        """.trimIndent().replace("\n", " "),
++        needsApproval = { false },
++        parameters = {
++            InputSchema.Obj(
++                properties = buildJsonObject {
++                    put("limit", buildJsonObject {
++                        put("type", "integer")
++                        put("description", "How many messages to return (default 20, max 200)")
++                    })
++                    put("address", buildJsonObject {
++                        put("type", "string")
++                        put("description", "Optional phone number / sender filter (substring match)")
++                    })
++                    put("unread_only", buildJsonObject {
++                        put("type", "boolean")
++                        put("description", "Only return unread messages (default false)")
++                    })
++                },
++            )
++        },
++        execute = { args ->
++            val obj = args.jsonObject
++            val limit = (obj["limit"]?.jsonPrimitive?.longOrNull ?: 20L).toInt().coerceIn(1, 200)
++            val addressFilter = obj["address"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
++            val unreadOnly = obj["unread_only"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
++
++            val hasPermission = ContextCompat.checkSelfPermission(
++                context, Manifest.permission.READ_SMS
++            ) == PackageManager.PERMISSION_GRANTED
++            // 注意：不能写 return@Tool —— Tool(...) 是构造调用，并不是一个 lambda，
++            // 因此不存在该标签（这里用 if/else 表达式代替提前返回）。
++            if (!hasPermission) {
++                listOf(UIMessagePart.Text(buildJsonObject {
++                    put("ok", JsonPrimitive(false))
++                    put("error", JsonPrimitive("缺少读取短信权限（READ_SMS）"))
++                    put("hint", JsonPrimitive("请在系统设置里为本应用授予「短信」权限后重试。"))
++                }.toString()))
++            } else {
++            val result = runCatching {
++                // address 过滤走 selectionArgs 参数化 —— 直接拼进 selection 会有 SQL 注入口
++                val selection = buildString {
++                    if (unreadOnly) append("${Telephony.Sms.READ} = 0")
++                    if (addressFilter != null) {
++                        if (isNotEmpty()) append(" AND ")
++                        append("${Telephony.Sms.ADDRESS} LIKE ?")
++                    }
++                }.takeIf { it.isNotBlank() }
++                val selectionArgs = addressFilter?.let { arrayOf("%$it%") }
++
++                val messages = mutableListOf<kotlinx.serialization.json.JsonObject>()
++                context.contentResolver.query(
++                    Telephony.Sms.Inbox.CONTENT_URI,
++                    arrayOf(
++                        Telephony.Sms.ADDRESS,
++                        Telephony.Sms.BODY,
++                        Telephony.Sms.DATE,
++                        Telephony.Sms.READ,
++                    ),
++                    selection,
++                    selectionArgs,
++                    "${Telephony.Sms.DATE} DESC",
++                )?.use { cursor ->
++                    val iAddr = cursor.getColumnIndex(Telephony.Sms.ADDRESS)
++                    val iBody = cursor.getColumnIndex(Telephony.Sms.BODY)
++                    val iDate = cursor.getColumnIndex(Telephony.Sms.DATE)
++                    val iRead = cursor.getColumnIndex(Telephony.Sms.READ)
++                    while (cursor.moveToNext() && messages.size < limit) {
++                        messages += buildJsonObject {
++                            put("address", JsonPrimitive(if (iAddr >= 0) cursor.getString(iAddr) ?: "" else ""))
++                            val body = if (iBody >= 0) cursor.getString(iBody) ?: "" else ""
++                            put("body", JsonPrimitive(body.take(1000)))
++                            if (body.length > 1000) put("body_truncated", JsonPrimitive(true))
++                            if (iDate >= 0) put("date_ms", JsonPrimitive(cursor.getLong(iDate)))
++                            if (iRead >= 0) put("read", JsonPrimitive(cursor.getInt(iRead) == 1))
++                        }
++                    }
++                }
++                buildJsonObject {
++                    put("ok", JsonPrimitive(true))
++                    put("count", JsonPrimitive(messages.size))
++                    put("messages", buildJsonArray { messages.forEach { add(it) } })
++                    if (messages.isEmpty()) put("hint", JsonPrimitive("没有符合条件的短信。"))
++                }
++            }.getOrElse {
++                buildJsonObject {
++                    put("ok", JsonPrimitive(false))
++                    put("error", JsonPrimitive("${it.javaClass.simpleName}: ${it.message}"))
++                }
++            }
++            listOf(UIMessagePart.Text(result.toString()))
++        }
++    },
++)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/WebFetchTool.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/WebFetchTool.kt
 index c01cf48..080b8d0 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/WebFetchTool.kt
@@ -18209,6 +18878,44 @@ index 0000000..a5d313f
 +        listOf(UIMessagePart.Text(payload.toString()))
 +    },
 +)
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/transformers/PlaceholderTransformer.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/transformers/PlaceholderTransformer.kt
+index 5b884ec..3aecaa9 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/transformers/PlaceholderTransformer.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/transformers/PlaceholderTransformer.kt
+@@ -1,7 +1,6 @@
+ package me.rerere.rikkahub.data.ai.transformers
+ 
+ import android.content.Context
+-import android.os.BatteryManager
+ import android.os.Build
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+@@ -323,10 +322,21 @@ object DefaultPlaceholderProvider : PlaceholderProvider {
+         .withLocale(Locale.getDefault())
+         .format(this)
+ 
+-    private fun Context.batteryLevel(): Int {
+-        val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
+-        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+-    }
++    /**
++     * 电量百分比。
++     *
++     * ★这里修的是一个真实问题：原实现只用
++     * `getIntProperty(BATTERY_PROPERTY_CAPACITY)`，而该属性在部分设备/系统
++     * （尤其是华为系与定制 ROM）上会返回 **0**，导致提示词里 `{{battery_level}}`
++     * 恒为 0 —— 用户反馈的「电量变量拿不到」正是这种表现。
++     *
++     * 现改为委托给 [me.rerere.rikkahub.data.ai.tools.BatteryInfo]：
++     * 先读最通用的 sticky broadcast（EXTRA_LEVEL / EXTRA_SCALE），
++     * 再回退到 BatteryManager 属性；两者都失败时返回 -1
++     * —— **不再用 0 冒充真实电量**，模型看到 -1 能意识到「读取失败」而非「没电了」。
++     */
++    private fun Context.batteryLevel(): Int =
++        me.rerere.rikkahub.data.ai.tools.BatteryInfo.levelPercent(this) ?: -1
+ 
+     private fun textOf(message: UIMessage): String =
+         message.parts.filterIsInstance<UIMessagePart.Text>().joinToString("") { it.text }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt b/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt
 index cb055d0..b6645db 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/datastore/DefaultProviders.kt
@@ -19694,7 +20401,7 @@ index 42d6a3d..5401a27 100644
          val processed = text.stripMarkdown()
          controller.speak(processed, flushCalled)
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
-index 2eeb597..dceaac3 100644
+index 2eeb597..8c48ca8 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantLocalToolPage.kt
 @@ -4,6 +4,7 @@ import android.Manifest
@@ -19784,7 +20491,7 @@ index 2eeb597..dceaac3 100644
                      )
                  }
              )
-@@ -388,6 +398,117 @@ private fun AssistantLocalToolContent(
+@@ -388,6 +398,130 @@ private fun AssistantLocalToolContent(
                      )
                  }
              )
@@ -19818,6 +20525,19 @@ index 2eeb597..dceaac3 100644
 +                },
 +                supportingContent = {
 +                    Text(stringResource(R.string.assistant_page_programming_tools_desc))
++                },
++                trailingContent = {
++                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
++                }
++            )
++            // 系统工具：纯入口（无总开关）—— WiFi / 蓝牙 / 短信 / 电池
++            item(
++                onClick = { nav.navigate(Screen.AssistantSystemTools(assistant.id.toString())) },
++                headlineContent = {
++                    Text(stringResource(R.string.assistant_page_system_tools))
++                },
++                supportingContent = {
++                    Text(stringResource(R.string.assistant_page_system_tools_desc))
 +                },
 +                trailingContent = {
 +                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
@@ -20246,6 +20966,182 @@ index 0000000..738a614
 +                    }
 +                }
 +            }
++        }
++    }
++}
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSystemToolsPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSystemToolsPage.kt
+new file mode 100644
+index 0000000..c117999
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/assistant/detail/AssistantSystemToolsPage.kt
+@@ -0,0 +1,170 @@
++package me.rerere.rikkahub.ui.pages.assistant.detail
++
++import android.Manifest
++import android.content.pm.PackageManager
++import android.os.Build
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.imePadding
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.LargeFlexibleTopAppBar
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Scaffold
++import androidx.compose.material3.Switch
++import androidx.compose.material3.Text
++import androidx.compose.material3.TopAppBarDefaults
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.remember
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.input.nestedscroll.nestedScroll
++import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.unit.dp
++import androidx.core.content.ContextCompat
++import androidx.lifecycle.compose.collectAsStateWithLifecycle
++import me.rerere.rikkahub.R
++import me.rerere.rikkahub.data.ai.tools.LocalToolOption
++import me.rerere.rikkahub.ui.components.nav.BackButton
++import me.rerere.rikkahub.ui.components.ui.CardGroup
++import me.rerere.rikkahub.ui.theme.CustomColors
++import org.koin.androidx.compose.koinViewModel
++import org.koin.core.parameter.parametersOf
++
++/**
++ * 「系统工具」子页面：WiFi / 蓝牙 / 短信 / 电池。
++ *
++ * 入口在「助手 → 本地工具」，与「编程开发工具」一样是**纯入口项**（无总开关），
++ * 具体能力在页面内各自开关。
++ *
++ * ── 关于权限 ──
++ * 这三项需要运行时权限，且各 Android 版本要求不同：
++ *  · WiFi 的 SSID/BSSID —— Android 13+ 要 NEARBY_WIFI_DEVICES；旧版要位置权限
++ *  · 蓝牙设备列表 —— Android 12+ 要 BLUETOOTH_CONNECT
++ *  · 短信 —— READ_SMS（危险权限）
++ * 因此每个条目在**未授权时显示状态提示**；工具本身也会在缺权限时返回明确错误，
++ * 而不是静默返回空结果。
++ *
++ * ★注意：CardGroup 的 content 是 `CardGroupScope.() -> Unit`（**非 @Composable**），
++ * 所以 stringResource 等必须在 CardGroup **之前**求值。
++ */
++@Composable
++fun AssistantSystemToolsPage(id: String) {
++    val vm: AssistantDetailVM = koinViewModel(
++        parameters = { parametersOf(id) }
++    )
++    val assistant by vm.assistant.collectAsStateWithLifecycle()
++    val context = LocalContext.current
++    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
++
++    fun toggle(option: LocalToolOption, enabled: Boolean) {
++        val newTools = if (enabled) assistant.localTools + option else assistant.localTools - option
++        vm.update(assistant.copy(localTools = newTools))
++    }
++
++    // ── 权限状态（用于在条目下给出提示，说明为什么可能读不到数据）──
++    val permissionHints = remember(context) {
++        fun granted(p: String) =
++            ContextCompat.checkSelfPermission(context, p) == PackageManager.PERMISSION_GRANTED
++        val sms = granted(Manifest.permission.READ_SMS)
++        val bt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++            granted(Manifest.permission.BLUETOOTH_CONNECT)
++        } else true
++        val wifi = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++            granted(Manifest.permission.NEARBY_WIFI_DEVICES) || granted(Manifest.permission.ACCESS_FINE_LOCATION)
++        } else {
++            granted(Manifest.permission.ACCESS_FINE_LOCATION)
++        }
++        Triple(sms, bt, wifi)
++    }
++
++    // @Composable 求值必须在 CardGroup 之前
++    val tWifi = stringResource(R.string.system_wifi)
++    val dWifi = stringResource(R.string.system_wifi_desc)
++    val tBt = stringResource(R.string.system_bluetooth)
++    val dBt = stringResource(R.string.system_bluetooth_desc)
++    val tSms = stringResource(R.string.system_sms)
++    val dSms = stringResource(R.string.system_sms_desc)
++    val tBat = stringResource(R.string.system_battery)
++    val dBat = stringResource(R.string.system_battery_desc)
++    val grantedText = stringResource(R.string.system_permission_granted)
++    val missingSms = stringResource(R.string.system_permission_missing_sms)
++    val missingBt = stringResource(R.string.system_permission_missing_bt)
++    val missingWifi = stringResource(R.string.system_permission_missing_wifi)
++
++    val (smsGranted, btGranted, wifiGranted) = permissionHints
++
++    Scaffold(
++        topBar = {
++            LargeFlexibleTopAppBar(
++                title = { Text(stringResource(R.string.system_page_title)) },
++                navigationIcon = { BackButton() },
++                scrollBehavior = scrollBehavior,
++                colors = CustomColors.topBarColors,
++            )
++        },
++        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
++        containerColor = CustomColors.topBarColors.containerColor,
++    ) { innerPadding ->
++        Column(
++            modifier = Modifier
++                .fillMaxSize()
++                .verticalScroll(rememberScrollState())
++                .padding(horizontal = 16.dp)
++                .padding(innerPadding)
++                .imePadding(),
++            verticalArrangement = Arrangement.spacedBy(8.dp),
++        ) {
++            CardGroup {
++                item(
++                    headlineContent = { Text(tWifi) },
++                    supportingContent = { Text(if (wifiGranted) dWifi else "$dWifi\n$missingWifi") },
++                    trailingContent = {
++                        Switch(
++                            checked = assistant.localTools.contains(LocalToolOption.Wifi),
++                            onCheckedChange = { toggle(LocalToolOption.Wifi, it) },
++                        )
++                    },
++                )
++                item(
++                    headlineContent = { Text(tBt) },
++                    supportingContent = { Text(if (btGranted) dBt else "$dBt\n$missingBt") },
++                    trailingContent = {
++                        Switch(
++                            checked = assistant.localTools.contains(LocalToolOption.Bluetooth),
++                            onCheckedChange = { toggle(LocalToolOption.Bluetooth, it) },
++                        )
++                    },
++                )
++                item(
++                    headlineContent = { Text(tSms) },
++                    supportingContent = { Text(if (smsGranted) dSms else "$dSms\n$missingSms") },
++                    trailingContent = {
++                        Switch(
++                            checked = assistant.localTools.contains(LocalToolOption.Sms),
++                            onCheckedChange = { toggle(LocalToolOption.Sms, it) },
++                        )
++                    },
++                )
++                item(
++                    headlineContent = { Text(tBat) },
++                    supportingContent = { Text(dBat) },
++                    trailingContent = {
++                        Switch(
++                            checked = assistant.localTools.contains(LocalToolOption.Battery),
++                            onCheckedChange = { toggle(LocalToolOption.Battery, it) },
++                        )
++                    },
++                )
++            }
++            Text(
++                text = stringResource(R.string.system_readonly_note),
++                style = MaterialTheme.typography.labelSmall,
++                color = MaterialTheme.colorScheme.onSurfaceVariant,
++            )
 +        }
 +    }
 +}
@@ -39715,7 +40611,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..68800d8 100644
+index 8cb3cf1..6601639 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -39727,7 +40623,7 @@ index 8cb3cf1..68800d8 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,123 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,141 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -39850,9 +40746,27 @@ index 8cb3cf1..68800d8 100644
 +
 +  <string name="programming_midi">MIDI 工具</string>
 +  <string name="programming_midi_desc">用 Android 原生 MIDI API 收发 MIDI 数据 —— 免驱、无需额外权限</string>
++
++  <!-- 系统工具 -->
++  <string name="assistant_page_system_tools">系统工具</string>
++  <string name="assistant_page_system_tools_desc">WiFi、蓝牙、短信与电池信息</string>
++  <string name="system_page_title">系统工具</string>
++  <string name="system_wifi">WiFi</string>
++  <string name="system_wifi_desc">读取 WiFi 状态与当前连接（SSID、IP、信号），可选扫描附近网络</string>
++  <string name="system_bluetooth">蓝牙</string>
++  <string name="system_bluetooth_desc">列出已配对设备与状态。普通应用无法程序化连接/断开，会改为打开系统设置页</string>
++  <string name="system_sms">短信</string>
++  <string name="system_sms_desc">读取收件箱短信（只读，不会发送）</string>
++  <string name="system_battery">电池</string>
++  <string name="system_battery_desc">电量、充放电状态与来源、健康度、温度、电压与电流</string>
++  <string name="system_permission_granted">权限已授予</string>
++  <string name="system_permission_missing_sms">缺少权限：短信</string>
++  <string name="system_permission_missing_bt">缺少权限：附近的设备</string>
++  <string name="system_permission_missing_wifi">缺少权限：附近的 WiFi 设备 / 位置</string>
++  <string name="system_readonly_note">以上工具全部为只读 —— 都不会改变设备状态。</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..fe8be6f 100644
+index 47ddab2..d2a85c5 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -39866,7 +40780,7 @@ index 47ddab2..fe8be6f 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,123 @@
+@@ -1815,4 +1817,141 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -39989,6 +40903,24 @@ index 47ddab2..fe8be6f 100644
 +
 +  <string name="programming_midi">MIDI</string>
 +  <string name="programming_midi_desc">List and talk to MIDI devices via the built-in Android MIDI API — driver-free, no extra permission</string>
++
++  <!-- 系统工具 -->
++  <string name="assistant_page_system_tools">System tools</string>
++  <string name="assistant_page_system_tools_desc">WiFi, Bluetooth, SMS and battery information</string>
++  <string name="system_page_title">System tools</string>
++  <string name="system_wifi">WiFi</string>
++  <string name="system_wifi_desc">Read WiFi state and the current connection (SSID, IP, signal). Optionally scan nearby networks</string>
++  <string name="system_bluetooth">Bluetooth</string>
++  <string name="system_bluetooth_desc">List paired devices and their state. Connecting/disconnecting cannot be done by a normal app — it opens the system settings page instead</string>
++  <string name="system_sms">SMS</string>
++  <string name="system_sms_desc">Read messages from the inbox (read-only, never sends)</string>
++  <string name="system_battery">Battery</string>
++  <string name="system_battery_desc">Percentage, charging state and source, health, temperature, voltage and current</string>
++  <string name="system_permission_granted">Permission granted</string>
++  <string name="system_permission_missing_sms">Missing permission: SMS</string>
++  <string name="system_permission_missing_bt">Missing permission: Nearby devices</string>
++  <string name="system_permission_missing_wifi">Missing permission: Nearby WiFi devices / Location</string>
++  <string name="system_readonly_note">All of these tools are read-only — none of them changes device state.</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644

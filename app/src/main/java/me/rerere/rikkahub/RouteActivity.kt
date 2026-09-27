@@ -81,6 +81,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantProgrammingToolsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSystemToolsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMcpPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantMemoryPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantPromptPage
@@ -409,6 +410,10 @@ class RouteActivity : ComponentActivity() {
                                 AssistantProgrammingToolsPage(key.id)
                             }
 
+                            entry<Screen.AssistantSystemTools> { key ->
+                                AssistantSystemToolsPage(key.id)
+                            }
+
                             entry<Screen.AssistantInjections> { key ->
                                 AssistantExtensionsPage(key.id)
                             }
@@ -682,6 +687,10 @@ sealed interface Screen : NavKey {
     /** 编程开发工具（Git / 语法检查 / 串口 …）—— 本地工具页的纯入口，内部工具各自有开关 */
     @Serializable
     data class AssistantProgrammingTools(val id: String) : Screen
+
+    /** 系统工具（WiFi / 蓝牙 / 短信 / 电池）—— 同样是纯入口 */
+    @Serializable
+    data class AssistantSystemTools(val id: String) : Screen
 
     @Serializable
     data class AssistantInjections(val id: String) : Screen

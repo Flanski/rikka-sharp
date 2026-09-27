@@ -1936,4 +1936,22 @@
 
   <string name="programming_midi">MIDI</string>
   <string name="programming_midi_desc">List and talk to MIDI devices via the built-in Android MIDI API — driver-free, no extra permission</string>
+
+  <!-- 系统工具 -->
+  <string name="assistant_page_system_tools">System tools</string>
+  <string name="assistant_page_system_tools_desc">WiFi, Bluetooth, SMS and battery information</string>
+  <string name="system_page_title">System tools</string>
+  <string name="system_wifi">WiFi</string>
+  <string name="system_wifi_desc">Read WiFi state and the current connection (SSID, IP, signal). Optionally scan nearby networks</string>
+  <string name="system_bluetooth">Bluetooth</string>
+  <string name="system_bluetooth_desc">List paired devices and their state. Connecting/disconnecting cannot be done by a normal app — it opens the system settings page instead</string>
+  <string name="system_sms">SMS</string>
+  <string name="system_sms_desc">Read messages from the inbox (read-only, never sends)</string>
+  <string name="system_battery">Battery</string>
+  <string name="system_battery_desc">Percentage, charging state and source, health, temperature, voltage and current</string>
+  <string name="system_permission_granted">Permission granted</string>
+  <string name="system_permission_missing_sms">Missing permission: SMS</string>
+  <string name="system_permission_missing_bt">Missing permission: Nearby devices</string>
+  <string name="system_permission_missing_wifi">Missing permission: Nearby WiFi devices / Location</string>
+  <string name="system_readonly_note">All of these tools are read-only — none of them changes device state.</string>
 </resources>

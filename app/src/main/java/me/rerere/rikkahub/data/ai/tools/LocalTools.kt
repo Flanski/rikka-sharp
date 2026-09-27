@@ -178,6 +178,28 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("midi")
     data object Midi : LocalToolOption()
+
+    // ── 系统工具（入口在「系统工具」子页面）──
+
+    /** WiFi 信息（只读）*/
+    @Serializable
+    @SerialName("wifi")
+    data object Wifi : LocalToolOption()
+
+    /** 蓝牙设备与状态（只读；连接/断开需用户手动操作）*/
+    @Serializable
+    @SerialName("bluetooth")
+    data object Bluetooth : LocalToolOption()
+
+    /** 读取短信（只读，需 READ_SMS）*/
+    @Serializable
+    @SerialName("sms")
+    data object Sms : LocalToolOption()
+
+    /** 电池信息（只读）*/
+    @Serializable
+    @SerialName("battery")
+    data object Battery : LocalToolOption()
 }
 
 class LocalTools(
@@ -534,6 +556,18 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.Midi)) {
             tools.add(createMidiTool(context))
+        }
+        if (options.contains(LocalToolOption.Wifi)) {
+            tools.add(createWifiTool(context))
+        }
+        if (options.contains(LocalToolOption.Bluetooth)) {
+            tools.add(createBluetoothTool(context))
+        }
+        if (options.contains(LocalToolOption.Sms)) {
+            tools.add(createSmsTool(context))
+        }
+        if (options.contains(LocalToolOption.Battery)) {
+            tools.add(createBatteryTool(context))
         }
         return tools
     }

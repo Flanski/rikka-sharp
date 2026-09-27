@@ -25,6 +25,18 @@
     android:name="android.permission.PACKAGE_USAGE_STATS"
     tools:ignore="ProtectedPermissions" />
   <uses-permission android:name="android.permission.READ_CALENDAR" />
+
+  <!-- 系统工具：WiFi 信息。
+       Android 13+ 起读取 SSID/BSSID 需要 NEARBY_WIFI_DEVICES；
+       neverForLocation 表示本应用不由此推断位置（否则会被要求位置权限与开关）。 -->
+  <uses-permission
+    android:name="android.permission.NEARBY_WIFI_DEVICES"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="tiramisu" />
+  <!-- 系统工具：蓝牙设备列表与状态（Android 12+ 的运行时权限） -->
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <!-- 系统工具：读取短信（危险权限，运行时申请） -->
+  <uses-permission android:name="android.permission.READ_SMS" />
   <uses-permission android:name="android.permission.WRITE_CALENDAR" />
 
   <uses-feature

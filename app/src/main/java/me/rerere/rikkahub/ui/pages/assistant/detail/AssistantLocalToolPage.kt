@@ -433,6 +433,19 @@ private fun AssistantLocalToolContent(
                     Icon(HugeIcons.ArrowRight01, contentDescription = null)
                 }
             )
+            // 系统工具：纯入口（无总开关）—— WiFi / 蓝牙 / 短信 / 电池
+            item(
+                onClick = { nav.navigate(Screen.AssistantSystemTools(assistant.id.toString())) },
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_system_tools))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_system_tools_desc))
+                },
+                trailingContent = {
+                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
+                }
+            )
             // 下载类工具：HTTP 下载 / 仓库快照下载，支持同步与异步两种模式
             item(
                 headlineContent = {

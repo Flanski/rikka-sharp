@@ -1936,4 +1936,22 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
 
   <string name="programming_midi">MIDI 工具</string>
   <string name="programming_midi_desc">用 Android 原生 MIDI API 收发 MIDI 数据 —— 免驱、无需额外权限</string>
+
+  <!-- 系统工具 -->
+  <string name="assistant_page_system_tools">系统工具</string>
+  <string name="assistant_page_system_tools_desc">WiFi、蓝牙、短信与电池信息</string>
+  <string name="system_page_title">系统工具</string>
+  <string name="system_wifi">WiFi</string>
+  <string name="system_wifi_desc">读取 WiFi 状态与当前连接（SSID、IP、信号），可选扫描附近网络</string>
+  <string name="system_bluetooth">蓝牙</string>
+  <string name="system_bluetooth_desc">列出已配对设备与状态。普通应用无法程序化连接/断开，会改为打开系统设置页</string>
+  <string name="system_sms">短信</string>
+  <string name="system_sms_desc">读取收件箱短信（只读，不会发送）</string>
+  <string name="system_battery">电池</string>
+  <string name="system_battery_desc">电量、充放电状态与来源、健康度、温度、电压与电流</string>
+  <string name="system_permission_granted">权限已授予</string>
+  <string name="system_permission_missing_sms">缺少权限：短信</string>
+  <string name="system_permission_missing_bt">缺少权限：附近的设备</string>
+  <string name="system_permission_missing_wifi">缺少权限：附近的 WiFi 设备 / 位置</string>
+  <string name="system_readonly_note">以上工具全部为只读 —— 都不会改变设备状态。</string>
 </resources>

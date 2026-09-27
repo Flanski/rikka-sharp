@@ -1,7 +1,6 @@
 package me.rerere.rikkahub.data.ai.transformers
 
 import android.content.Context
-import android.os.BatteryManager
 import android.os.Build
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -323,10 +322,21 @@ object DefaultPlaceholderProvider : PlaceholderProvider {
         .withLocale(Locale.getDefault())
         .format(this)
 
-    private fun Context.batteryLevel(): Int {
-        val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-    }
+    /**
+     * 电量百分比。
+     *
+     * ★这里修的是一个真实问题：原实现只用
+     * `getIntProperty(BATTERY_PROPERTY_CAPACITY)`，而该属性在部分设备/系统
+     * （尤其是华为系与定制 ROM）上会返回 **0**，导致提示词里 `{{battery_level}}`
+     * 恒为 0 —— 用户反馈的「电量变量拿不到」正是这种表现。
+     *
+     * 现改为委托给 [me.rerere.rikkahub.data.ai.tools.BatteryInfo]：
+     * 先读最通用的 sticky broadcast（EXTRA_LEVEL / EXTRA_SCALE），
+     * 再回退到 BatteryManager 属性；两者都失败时返回 -1
+     * —— **不再用 0 冒充真实电量**，模型看到 -1 能意识到「读取失败」而非「没电了」。
+     */
+    private fun Context.batteryLevel(): Int =
+        me.rerere.rikkahub.data.ai.tools.BatteryInfo.levelPercent(this) ?: -1
 
     private fun textOf(message: UIMessage): String =
         message.parts.filterIsInstance<UIMessagePart.Text>().joinToString("") { it.text }
