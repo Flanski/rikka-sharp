@@ -16671,16 +16671,17 @@ index 0000000..6bccb56
 +    )
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-index b5c48c5..83294c8 100644
+index b5c48c5..15eaacc 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-@@ -1,22 +1,37 @@
+@@ -1,22 +1,38 @@
  package me.rerere.rikkahub.ui.pages.setting.components
  
  import androidx.compose.foundation.layout.Arrangement
 +import androidx.compose.foundation.layout.Row
  import androidx.compose.foundation.layout.Column
  import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.padding
  import androidx.compose.foundation.rememberScrollState
  import androidx.compose.foundation.verticalScroll
 +import androidx.compose.material3.MaterialTheme
@@ -16712,7 +16713,7 @@ index b5c48c5..83294c8 100644
  
  @Composable
  fun TTSProviderConfigure(
-@@ -48,6 +63,7 @@ fun TTSProviderConfigure(
+@@ -48,6 +64,7 @@ fun TTSProviderConfigure(
                      is TTSProviderSetting.Step -> "Step"
                      is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                      is TTSProviderSetting.FishAudio -> "Fish Audio"
@@ -16720,7 +16721,7 @@ index b5c48c5..83294c8 100644
                  },
                  options = providers,
                  readOnly = true,
-@@ -56,6 +72,7 @@ fun TTSProviderConfigure(
+@@ -56,6 +73,7 @@ fun TTSProviderConfigure(
                      when (providerClass) {
                          TTSProviderSetting.OpenAI::class -> "OpenAI"
                          TTSProviderSetting.Gemini::class -> "Gemini"
@@ -16728,7 +16729,7 @@ index b5c48c5..83294c8 100644
                          TTSProviderSetting.SystemTTS::class -> "System TTS"
                          TTSProviderSetting.MiniMax::class -> "MiniMax"
                          TTSProviderSetting.Qwen::class -> "Qwen"
-@@ -80,6 +97,7 @@ fun TTSProviderConfigure(
+@@ -80,6 +98,7 @@ fun TTSProviderConfigure(
                              name = "Gemini TTS"
                          )
  
@@ -16736,7 +16737,7 @@ index b5c48c5..83294c8 100644
                          TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
                              id = setting.id,
                              name = "System TTS"
-@@ -160,6 +178,7 @@ fun TTSProviderConfigure(
+@@ -160,6 +179,7 @@ fun TTSProviderConfigure(
              is TTSProviderSetting.ElevenLabs -> ElevenLabsTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.FishAudio -> FishAudioTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.Step -> StepTTSConfiguration(setting, onValueChange)
@@ -16744,7 +16745,7 @@ index b5c48c5..83294c8 100644
          }
      }
  }
-@@ -1201,3 +1220,299 @@ private fun StepTTSConfiguration(
+@@ -1201,3 +1221,299 @@ private fun StepTTSConfiguration(
          )
      }
  }
