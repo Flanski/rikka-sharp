@@ -59,11 +59,37 @@ jobs:
         run: |
           set -x
           python -m pip install --upgrade pip
+
+          # torch 2.2.0（CPU 版足够转换）
           pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
-          pip install "numpy<2" onnx pypinyin unidecode jieba cn2an numba
-          pip install jamo || echo "jamo 跳过"
-          pip install pyopenjtalk-prebuilt || pip install pyopenjtalk || echo "pyopenjtalk 跳过"
-          python -c "import torch, onnx, pypinyin, numba; print('torch', torch.__version__); print('onnx', onnx.__version__)"
+
+          # ★依赖清单是**逐个查 import 得来的**，不是猜的。
+          # 第三方模块级 import 汇总（扫描 commons/models/modules/attentions/
+          # transforms/utils/mel_processing/text/*/monotonic_align/* 后得出）：
+          #   torch, numpy, numba, librosa, unidecode, pyopenjtalk, jamo,
+          #   pypinyin, jieba, cn2an, onnx
+          # 上一次运行因漏了 **librosa** 而失败：
+          #   ModuleNotFoundError: No module named 'librosa'
+          #   （utils.py 与 mel_processing.py 都在模块级 import 它）
+          pip install "numpy<2" onnx numba librosa unidecode jieba cn2an pypinyin
+
+          # pyopenjtalk / jamo 在 text/cleaners.py 里是**模块级** import，
+          # 缺任一都会导致整个转换脚本 import 失败，故必须装上。
+          pip install jamo
+          pip install pyopenjtalk-prebuilt || pip install pyopenjtalk
+
+          # 硬性校验：缺任何一个就立刻失败，避免跑到一半才报错。
+          # 用纯 shell 循环而不是 heredoc —— heredoc 的终止符在 YAML 块标量里
+          # 依赖缩进被完整剥离，属于易踩的边界情况。
+          for m in torch onnx numpy numba librosa unidecode pyopenjtalk jamo pypinyin jieba cn2an; do
+            if python -c "import $m" 2>/dev/null; then
+              echo "  ok  $m"
+            else
+              echo "::error::缺少依赖 $m"
+              exit 1
+            fi
+          done
+          echo "依赖齐全"
 
       # GIT_LFS_SKIP_SMUDGE：避免 clone 时去拉 38 个 159MB 的 .pth（我们只需要代码 + info.json）
       - name: Fetch upstream space code
