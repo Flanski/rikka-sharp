@@ -42,8 +42,15 @@ data class SherpaModelInfo(
 
 object SherpaModelCatalog {
 
-    /** 官方 VITS 模型解压后约为压缩包的 1.4 倍（含 .onnx + 词典 + 音色表） */
-    private fun extracted(compressed: Long) = (compressed * 1.4).toLong()
+    /**
+     * 解压后大小估算。
+     *
+     * **实测**（vits-icefall-zh-aishell3）：压缩包 31.5MB → 解压后 **204MB**（约 6.5 倍）。
+     * 构成：model.onnx 30MB + **rule.far 173MB** + lexicon 2MB + 若干 .fst。
+     * 大头是 rule.far（中文读法规则归档），它不随模型大小等比缩放，
+     * 因此这里用「压缩包 × 6」作**保守上限**，宁可高估也不要因低估导致下载中途空间不足。
+     */
+    private fun extracted(compressed: Long) = (compressed * 6).toLong()
 
     /** 游戏/角色音色（用户主要诉求）+ 通用模型 */
     val ALL: List<SherpaModelInfo> = listOf(

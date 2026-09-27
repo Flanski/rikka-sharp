@@ -228,9 +228,14 @@ internal object SherpaTtsCache {
                 debug = false,
                 provider = "cpu",
             ),
-            // 中文数字/日期读法规则（若模型目录带 *.fst 则启用，缺省忽略）
-            ruleFsts = collectRuleFsts(dir),
-            ruleFars = "",
+            // 中文读法规则。
+            // 实测（vits-icefall-zh-aishell3）：模型目录同时含
+            //   *.fst（date/number/phone/new_heteronym，各几十 KB）
+            //   rule.far（**173MB**，规则归档）
+            // 二者是**不同参数**：ruleFsts 接 .fst 列表，ruleFars 接 .far 列表。
+            // 早期版本只收集 .fst、ruleFars 传空 —— 不致命，但数字/日期读法会不准。
+            ruleFsts = collectByExtension(dir, "fst"),
+            ruleFars = collectByExtension(dir, "far"),
         )
 
         Log.i(TAG, "loading OfflineTts: model=${modelFile.name}, threads=${setting.numThreads}, dir=${dir.absolutePath}")
@@ -241,9 +246,12 @@ internal object SherpaTtsCache {
         return tts
     }
 
-    /** 收集目录下的 *.fst 规则文件（以逗号分隔，供 sherpa-onnx 使用） */
-    private fun collectRuleFsts(dir: File): String =
-        dir.listFiles { f -> f.isFile && f.name.endsWith(".fst") }
+    /**
+     * 收集目录下指定扩展名的规则文件（以逗号分隔，供 sherpa-onnx 使用）。
+     * 排序保证结果稳定（sherpa-onnx 按顺序应用规则）。
+     */
+    private fun collectByExtension(dir: File, ext: String): String =
+        dir.listFiles { f -> f.isFile && f.name.endsWith(".$ext") }
             ?.sortedBy { it.name }
             ?.joinToString(",") { it.absolutePath }
             .orEmpty()

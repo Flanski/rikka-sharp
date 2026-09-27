@@ -38051,10 +38051,10 @@ index 18a0061..a48c7da 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..3a4c5f1
+index 0000000..68a622c
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,258 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -38285,9 +38285,14 @@ index 0000000..3a4c5f1
 +                debug = false,
 +                provider = "cpu",
 +            ),
-+            // 中文数字/日期读法规则（若模型目录带 *.fst 则启用，缺省忽略）
-+            ruleFsts = collectRuleFsts(dir),
-+            ruleFars = "",
++            // 中文读法规则。
++            // 实测（vits-icefall-zh-aishell3）：模型目录同时含
++            //   *.fst（date/number/phone/new_heteronym，各几十 KB）
++            //   rule.far（**173MB**，规则归档）
++            // 二者是**不同参数**：ruleFsts 接 .fst 列表，ruleFars 接 .far 列表。
++            // 早期版本只收集 .fst、ruleFars 传空 —— 不致命，但数字/日期读法会不准。
++            ruleFsts = collectByExtension(dir, "fst"),
++            ruleFars = collectByExtension(dir, "far"),
 +        )
 +
 +        Log.i(TAG, "loading OfflineTts: model=${modelFile.name}, threads=${setting.numThreads}, dir=${dir.absolutePath}")
@@ -38298,19 +38303,22 @@ index 0000000..3a4c5f1
 +        return tts
 +    }
 +
-+    /** 收集目录下的 *.fst 规则文件（以逗号分隔，供 sherpa-onnx 使用） */
-+    private fun collectRuleFsts(dir: File): String =
-+        dir.listFiles { f -> f.isFile && f.name.endsWith(".fst") }
++    /**
++     * 收集目录下指定扩展名的规则文件（以逗号分隔，供 sherpa-onnx 使用）。
++     * 排序保证结果稳定（sherpa-onnx 按顺序应用规则）。
++     */
++    private fun collectByExtension(dir: File, ext: String): String =
++        dir.listFiles { f -> f.isFile && f.name.endsWith(".$ext") }
 +            ?.sortedBy { it.name }
 +            ?.joinToString(",") { it.absolutePath }
 +            .orEmpty()
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
 new file mode 100644
-index 0000000..31b79f5
+index 0000000..a54dd4b
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,141 @@
 +package me.rerere.tts.sherpa
 +
 +/**
@@ -38355,8 +38363,15 @@ index 0000000..31b79f5
 +
 +object SherpaModelCatalog {
 +
-+    /** 官方 VITS 模型解压后约为压缩包的 1.4 倍（含 .onnx + 词典 + 音色表） */
-+    private fun extracted(compressed: Long) = (compressed * 1.4).toLong()
++    /**
++     * 解压后大小估算。
++     *
++     * **实测**（vits-icefall-zh-aishell3）：压缩包 31.5MB → 解压后 **204MB**（约 6.5 倍）。
++     * 构成：model.onnx 30MB + **rule.far 173MB** + lexicon 2MB + 若干 .fst。
++     * 大头是 rule.far（中文读法规则归档），它不随模型大小等比缩放，
++     * 因此这里用「压缩包 × 6」作**保守上限**，宁可高估也不要因低估导致下载中途空间不足。
++     */
++    private fun extracted(compressed: Long) = (compressed * 6).toLong()
 +
 +    /** 游戏/角色音色（用户主要诉求）+ 通用模型 */
 +    val ALL: List<SherpaModelInfo> = listOf(
