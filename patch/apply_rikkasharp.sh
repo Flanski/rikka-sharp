@@ -81,8 +81,12 @@ fi
   && echo "   [ok] SSH 客户端页面存在" || { echo "   [!!] SSH 页面缺失"; FAIL=1; }
 [ -f speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt ] \
   && echo "   [ok] sherpa-onnx Kotlin API 存在" || { echo "   [!!] Tts.kt 缺失"; FAIL=1; }
-[ -s speech/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so ] \
-  && echo "   [ok] sherpa-onnx native 库就位" || { echo "   [!!] 缺少 libsherpa-onnx-jni.so（CI 会下载，本地请跑 fetch_sherpa_native.sh）"; FAIL=1; }
+if [ -s speech/src/main/jniLibs/arm64-v8a/libsherpa-onnx-jni.so ] \
+   && [ -s speech/src/main/jniLibs/arm64-v8a/libonnxruntime.so ]; then
+  echo "   [ok] sherpa-onnx native 库就位（jn i+onnxruntime 双文件）"
+else
+  echo "   [!!] 缺少 libsherpa-onnx-jni.so 或 libonnxruntime.so（CI 会下载，本地请跑 fetch_sherpa_native.sh）"; FAIL=1
+fi
 grep -q "SherpaOnnx" speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt 2>/dev/null \
   && echo "   [ok] TTS provider 设置已含 SherpaOnnx" || { echo "   [!!] TTSProviderSetting 未含 SherpaOnnx"; FAIL=1; }
 [ "$FAIL" -ne 0 ] && { echo; echo "==> 复核未通过"; exit 1; }
