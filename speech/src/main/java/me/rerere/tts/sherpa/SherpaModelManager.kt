@@ -64,7 +64,7 @@ class SherpaModelManager(private val context: Context) {
      * （同一份 config.json 与同一套 pypinyin 词典生成，已用 md5 逐一验证），
      * 所以不随每个模型重复分发，避免 30 × 2.9MB 的冗余。
      */
-    val sharedDir: File get() = File(rootDir, SherpaModelCatalog.SHARED_DIR_NAME)
+    val sharedDir: File get() = File(rootDir, SherpaModelInfo.SHARED_DIR_NAME)
 
     fun isInstalled(model: SherpaModelInfo): Boolean {
         val dir = modelDir(model)
@@ -344,7 +344,7 @@ class SherpaModelManager(private val context: Context) {
         dir.mkdirs()
         val archive = File(tmpDir, "shared.tar.bz2")
         archive.parentFile?.mkdirs()
-        downloadUrl(SherpaModelCatalog.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
+        downloadUrl(SherpaModelInfo.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
 
         val stage = File(tmpDir, "shared_extract")
         stage.deleteRecursively()

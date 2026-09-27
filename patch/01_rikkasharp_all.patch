@@ -38788,10 +38788,10 @@ index 18a0061..a48c7da 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..0369493
+index 0000000..b0ca96b
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,447 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -38811,6 +38811,7 @@ index 0000000..0369493
 +import kotlinx.coroutines.withContext
 +import me.rerere.tts.model.AudioChunk
 +import me.rerere.tts.sherpa.SherpaModelCatalog
++import me.rerere.tts.sherpa.SherpaModelInfo
 +import me.rerere.tts.model.AudioFormat
 +import me.rerere.tts.model.TTSRequest
 +import me.rerere.tts.provider.TTSProvider
@@ -39044,7 +39045,7 @@ index 0000000..0369493
 +            return "模型目录中未找到 .onnx 模型文件：${dir.absolutePath}\n" +
 +                "请确认已完整解压模型包（应包含 model.onnx / lexicon.txt / tokens.txt）。"
 +        }
-+        if (resolveAuxFile(dir, "tokens.txt") == null) {
++        if (SherpaOnnxTTSProvider.resolveAuxFile(dir, "tokens.txt") == null) {
 +            return "缺少 tokens.txt：${dir.absolutePath}\n" +
 +                "（上游未发布的角色模型为裸 onnx，其 tokens.txt 由共用资源提供，\n" +
 +                "  若刚安装完仍报此错，可删除该模型后重新下载）"
@@ -39065,7 +39066,7 @@ index 0000000..0369493
 +         */
 +        fun resolveAuxFile(dir: File, name: String): File? {
 +            File(dir, name).let { if (it.isFile) return it }
-+            val shared = dir.parentFile?.let { File(it, SherpaModelCatalog.SHARED_DIR_NAME) }
++            val shared = dir.parentFile?.let { File(it, SherpaModelInfo.SHARED_DIR_NAME) }
 +            return shared?.let { File(it, name) }?.takeIf { it.isFile }
 +        }
 +
@@ -39155,8 +39156,8 @@ index 0000000..0369493
 +        val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
 +            ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
 +        // tokens/lexicon 可能来自共用资源目录（裸 onnx 模型），故统一走 resolveAuxFile
-+        val tokens = resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
-+        val lexicon = resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
++        val tokens = SherpaOnnxTTSProvider.resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
++        val lexicon = SherpaOnnxTTSProvider.resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
 +
 +        // ★ data_dir 只在其**确实是 espeak-ng 数据目录**时才设置 —— 判据是存在 phontab。
 +        //
@@ -39240,7 +39241,7 @@ index 0000000..0369493
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
 new file mode 100644
-index 0000000..2edc5f3
+index 0000000..b976ab6
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
 @@ -0,0 +1,385 @@
@@ -39437,6 +39438,46 @@ index 0000000..2edc5f3
 +     * **上游未提供现成 onnx**，需要自行用其转换脚本从 .pth 导出。
 +     * 也就是说：**中文角色一个没漏，缺的是日语角色**。
 +     */
++    /**
++     * 上游**未发布**的 30 个角色（含 4 个米哈游）。
++     *
++     * 由本项目在 GitHub Actions 上用官方转换脚本从 .pth 导出后发布到 Release，
++     * 见 `.github/workflows/convert-vits-batch.yml`。
++     * 实测：产出 onnx 与官方同类文件大小仅差约 99 字节（121,914,005 vs 121,913,906）。
++     */
++    val EXTRA: List<SherpaModelInfo> = listOf(
++        raw("ameth", "爱梅斯", "公主连结", 0, 114041674L),
++        raw("eriko", "惠理子", "公主连结", 0, 114041674L),
++        raw("hatsune", "柏崎初音", "公主连结", 10, 121914005L),
++        raw("hiyori", "日和莉", "公主连结", 0, 114041674L),
++        raw("kokoro", "可可萝", "公主连结", 0, 114041674L),
++        raw("kyaru", "凯露", "公主连结", 10, 121914005L),
++        raw("kyoka", "镜华", "公主连结", 0, 121914005L),
++        raw("misora", "美空", "公主连结", 0, 114041674L),
++        raw("pecorine", "佩可莉姆", "公主连结", 10, 121914005L),
++        raw("yuni", "优妮", "公主连结", 0, 114041674L),
++        raw("ayaka-jp", "神里绫华-日语", "原神", 303, 121914005L),
++        raw("nahida-jp", "纳西妲-日语", "原神", 0, 114041674L),
++        raw("herta", "黑塔", "星穹铁道", 10, 121914005L),
++        raw("kafka", "卡芙卡", "星穹铁道", 10, 121914005L),
++        raw("chisato", "锦木千束", "莉可丽丝", 0, 114041674L),
++        raw("takina", "井上泷奈", "莉可丽丝", 0, 114041674L),
++        raw("alice", "天童爱丽丝", "蔚蓝档案", 10, 121914005L),
++        raw("asuna", "一之濑明日奈", "蔚蓝档案", 10, 121914005L),
++        raw("azusa", "白洲梓", "蔚蓝档案", 10, 121914005L),
++        raw("hina", "空崎日奈", "蔚蓝档案", 10, 121914005L),
++        raw("hoshino", "小鸟游星野", "蔚蓝档案", 10, 121914005L),
++        raw("iori", "银镜伊织", "蔚蓝档案", 10, 121914005L),
++        raw("iroha", "枣伊吕波", "蔚蓝档案", 10, 121914005L),
++        raw("izuna", "久田泉奈", "蔚蓝档案", 10, 121914005L),
++        raw("karin", "角楯花凛", "蔚蓝档案", 10, 121914005L),
++        raw("mika", "圣园未花", "蔚蓝档案", 10, 121914005L),
++        raw("miyu", "霞泽美游", "蔚蓝档案", 10, 121914005L),
++        raw("momoi", "才羽桃井", "蔚蓝档案", 10, 121914005L),
++        raw("shiroko", "砂狼白子", "蔚蓝档案", 10, 121914005L),
++        raw("yuuka", "早濑优香", "蔚蓝档案", 40, 121914005L),
++    )
++
 +    val ALL: List<SherpaModelInfo> = listOf(
 +        /* ───────── A. 角色音色（sid 来自上游 info.json）───────── */
 +        SherpaModelInfo(
@@ -39587,51 +39628,11 @@ index 0000000..2edc5f3
 +        pkg = ModelPackage.RAW_ONNX,
 +    )
 +
-+    /**
-+     * 上游**未发布**的 30 个角色（含 4 个米哈游）。
-+     *
-+     * 由本项目在 GitHub Actions 上用官方转换脚本从 .pth 导出后发布到 Release，
-+     * 见 `.github/workflows/convert-vits-batch.yml`。
-+     * 实测：产出 onnx 与官方同类文件大小仅差约 99 字节（121,914,005 vs 121,913,906）。
-+     */
-+    val EXTRA: List<SherpaModelInfo> = listOf(
-+        raw("ameth", "爱梅斯", "公主连结", 0, 114041674L),
-+        raw("eriko", "惠理子", "公主连结", 0, 114041674L),
-+        raw("hatsune", "柏崎初音", "公主连结", 10, 121914005L),
-+        raw("hiyori", "日和莉", "公主连结", 0, 114041674L),
-+        raw("kokoro", "可可萝", "公主连结", 0, 114041674L),
-+        raw("kyaru", "凯露", "公主连结", 10, 121914005L),
-+        raw("kyoka", "镜华", "公主连结", 0, 121914005L),
-+        raw("misora", "美空", "公主连结", 0, 114041674L),
-+        raw("pecorine", "佩可莉姆", "公主连结", 10, 121914005L),
-+        raw("yuni", "优妮", "公主连结", 0, 114041674L),
-+        raw("ayaka-jp", "神里绫华-日语", "原神", 303, 121914005L),
-+        raw("nahida-jp", "纳西妲-日语", "原神", 0, 114041674L),
-+        raw("herta", "黑塔", "星穹铁道", 10, 121914005L),
-+        raw("kafka", "卡芙卡", "星穹铁道", 10, 121914005L),
-+        raw("chisato", "锦木千束", "莉可丽丝", 0, 114041674L),
-+        raw("takina", "井上泷奈", "莉可丽丝", 0, 114041674L),
-+        raw("alice", "天童爱丽丝", "蔚蓝档案", 10, 121914005L),
-+        raw("asuna", "一之濑明日奈", "蔚蓝档案", 10, 121914005L),
-+        raw("azusa", "白洲梓", "蔚蓝档案", 10, 121914005L),
-+        raw("hina", "空崎日奈", "蔚蓝档案", 10, 121914005L),
-+        raw("hoshino", "小鸟游星野", "蔚蓝档案", 10, 121914005L),
-+        raw("iori", "银镜伊织", "蔚蓝档案", 10, 121914005L),
-+        raw("iroha", "枣伊吕波", "蔚蓝档案", 10, 121914005L),
-+        raw("izuna", "久田泉奈", "蔚蓝档案", 10, 121914005L),
-+        raw("karin", "角楯花凛", "蔚蓝档案", 10, 121914005L),
-+        raw("mika", "圣园未花", "蔚蓝档案", 10, 121914005L),
-+        raw("miyu", "霞泽美游", "蔚蓝档案", 10, 121914005L),
-+        raw("momoi", "才羽桃井", "蔚蓝档案", 10, 121914005L),
-+        raw("shiroko", "砂狼白子", "蔚蓝档案", 10, 121914005L),
-+        raw("yuuka", "早濑优香", "蔚蓝档案", 40, 121914005L),
-+    )
-+
 +    fun find(id: String): SherpaModelInfo? = ALL.firstOrNull { it.id == id }
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
 new file mode 100644
-index 0000000..8cf48f1
+index 0000000..e09dc8f
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
 @@ -0,0 +1,407 @@
@@ -39701,7 +39702,7 @@ index 0000000..8cf48f1
 +     * （同一份 config.json 与同一套 pypinyin 词典生成，已用 md5 逐一验证），
 +     * 所以不随每个模型重复分发，避免 30 × 2.9MB 的冗余。
 +     */
-+    val sharedDir: File get() = File(rootDir, SherpaModelCatalog.SHARED_DIR_NAME)
++    val sharedDir: File get() = File(rootDir, SherpaModelInfo.SHARED_DIR_NAME)
 +
 +    fun isInstalled(model: SherpaModelInfo): Boolean {
 +        val dir = modelDir(model)
@@ -39981,7 +39982,7 @@ index 0000000..8cf48f1
 +        dir.mkdirs()
 +        val archive = File(tmpDir, "shared.tar.bz2")
 +        archive.parentFile?.mkdirs()
-+        downloadUrl(SherpaModelCatalog.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
++        downloadUrl(SherpaModelInfo.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
 +
 +        val stage = File(tmpDir, "shared_extract")
 +        stage.deleteRecursively()

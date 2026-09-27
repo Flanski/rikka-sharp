@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.tts.model.AudioChunk
 import me.rerere.tts.sherpa.SherpaModelCatalog
+import me.rerere.tts.sherpa.SherpaModelInfo
 import me.rerere.tts.model.AudioFormat
 import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
@@ -250,7 +251,7 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             return "模型目录中未找到 .onnx 模型文件：${dir.absolutePath}\n" +
                 "请确认已完整解压模型包（应包含 model.onnx / lexicon.txt / tokens.txt）。"
         }
-        if (resolveAuxFile(dir, "tokens.txt") == null) {
+        if (SherpaOnnxTTSProvider.resolveAuxFile(dir, "tokens.txt") == null) {
             return "缺少 tokens.txt：${dir.absolutePath}\n" +
                 "（上游未发布的角色模型为裸 onnx，其 tokens.txt 由共用资源提供，\n" +
                 "  若刚安装完仍报此错，可删除该模型后重新下载）"
@@ -271,7 +272,7 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
          */
         fun resolveAuxFile(dir: File, name: String): File? {
             File(dir, name).let { if (it.isFile) return it }
-            val shared = dir.parentFile?.let { File(it, SherpaModelCatalog.SHARED_DIR_NAME) }
+            val shared = dir.parentFile?.let { File(it, SherpaModelInfo.SHARED_DIR_NAME) }
             return shared?.let { File(it, name) }?.takeIf { it.isFile }
         }
 
@@ -361,8 +362,8 @@ internal object SherpaTtsCache {
         val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
             ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
         // tokens/lexicon 可能来自共用资源目录（裸 onnx 模型），故统一走 resolveAuxFile
-        val tokens = resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
-        val lexicon = resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
+        val tokens = SherpaOnnxTTSProvider.resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
+        val lexicon = SherpaOnnxTTSProvider.resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
 
         // ★ data_dir 只在其**确实是 espeak-ng 数据目录**时才设置 —— 判据是存在 phontab。
         //
