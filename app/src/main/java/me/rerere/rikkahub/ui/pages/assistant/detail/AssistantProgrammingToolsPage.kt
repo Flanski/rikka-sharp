@@ -64,6 +64,12 @@ fun AssistantProgrammingToolsPage(id: String) {
     val gitTitle = stringResource(R.string.programming_git_tools)
     val gitDesc = stringResource(R.string.programming_git_tools_desc)
     val gitChecked = assistant.localTools.contains(LocalToolOption.GitTools)
+    val syntaxTitle = stringResource(R.string.programming_syntax_checker)
+    val syntaxDesc = stringResource(R.string.programming_syntax_checker_desc)
+    val syntaxChecked = assistant.localTools.contains(LocalToolOption.SyntaxChecker)
+    val lintTitle = stringResource(R.string.programming_code_linter)
+    val lintDesc = stringResource(R.string.programming_code_linter_desc)
+    val lintChecked = assistant.localTools.contains(LocalToolOption.CodeLinter)
 
     Scaffold(
         topBar = {
@@ -94,6 +100,26 @@ fun AssistantProgrammingToolsPage(id: String) {
                         Switch(
                             checked = gitChecked,
                             onCheckedChange = { toggle(LocalToolOption.GitTools, it) },
+                        )
+                    },
+                )
+                item(
+                    headlineContent = { Text(syntaxTitle) },
+                    supportingContent = { Text(syntaxDesc) },
+                    trailingContent = {
+                        Switch(
+                            checked = syntaxChecked,
+                            onCheckedChange = { toggle(LocalToolOption.SyntaxChecker, it) },
+                        )
+                    },
+                )
+                item(
+                    headlineContent = { Text(lintTitle) },
+                    supportingContent = { Text(lintDesc) },
+                    trailingContent = {
+                        Switch(
+                            checked = lintChecked,
+                            onCheckedChange = { toggle(LocalToolOption.CodeLinter, it) },
                         )
                     },
                 )

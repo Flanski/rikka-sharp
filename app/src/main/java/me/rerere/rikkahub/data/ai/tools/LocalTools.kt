@@ -148,6 +148,16 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("git_tools")
     data object GitTools : LocalToolOption()
+
+    /** 语法检查器（只解析，不执行）—— 入口在「编程开发工具」子页面 */
+    @Serializable
+    @SerialName("syntax_checker")
+    data object SyntaxChecker : LocalToolOption()
+
+    /** 代码质量检查器（lint）—— 入口在「编程开发工具」子页面 */
+    @Serializable
+    @SerialName("code_linter")
+    data object CodeLinter : LocalToolOption()
 }
 
 class LocalTools(
@@ -492,6 +502,12 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.GitTools)) {
             tools.addAll(createGitTools(context))
+        }
+        if (options.contains(LocalToolOption.SyntaxChecker)) {
+            tools.add(createSyntaxCheckTool(context))
+        }
+        if (options.contains(LocalToolOption.CodeLinter)) {
+            tools.add(createLintTool(context))
         }
         return tools
     }

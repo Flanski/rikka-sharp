@@ -5,6 +5,10 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonPrimitive
+// ★ JsonArrayBuilder.add(String) 是**扩展函数**，必须显式 import；
+//   缺了它，Kotlin 只会看到成员函数 add(JsonElement)，于是 add("文本") 报类型不符。
+//   （CalculatorTool 用的是 `import kotlinx.serialization.json.*` 通配符，所以没暴露这个问题。）
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -16,6 +20,7 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.treewalk.filter.PathFilter
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import java.io.File
 
@@ -325,11 +330,12 @@ private fun gitDiffTool(context: Context): Tool = Tool(
             openRepo(context, repo).let { (git, _) ->
                 git.use { g ->
                     val cmd = g.diff().setCached(staged)
-                    path?.takeIf { it.isNotBlank() }?.let { cmd.setPathFilter(it) }
+                    // setPathFilter 只接受 PathFilter，没有 String 重载
+                    path?.takeIf { it.isNotBlank() }?.let { cmd.setPathFilter(PathFilter.create(it)) }
                     val diff = cmd.call()
                     text(buildJsonObject {
                         put("staged", JsonPrimitive(staged))
-                        put("files", JsonPrimitive(diff.size()))
+                        put("files", JsonPrimitive(diff.size))
                         put("diff", JsonPrimitive(diff.toString().cap(8000)))
                     })
                 }
@@ -524,6 +530,8 @@ private fun gitSyncTool(context: Context): Tool = Tool(
         action="pull": fetch + merge the upstream branch.
         action="push": push the current branch to origin.
         For private repositories pass a personal access token; it is used only for this call and never logged.
+        To set an upstream tracking branch, push once with the remote/branch you want (JGit's PushCommand
+        has no direct "set upstream" switch).
         Note: HTTPS remotes only — for SSH remotes use the SSH tools on a host that has git installed.
     """.trimIndent().replace("\n", " "),
     // 会改动远程仓库（push），属于需要谨慎的操作 —— 但用户未要求对它单独授权，
@@ -549,10 +557,6 @@ private fun gitSyncTool(context: Context): Tool = Tool(
                     put("type", "string")
                     put("description", "Remote branch name (optional)")
                 })
-                put("set_upstream", buildJsonObject {
-                    put("type", "boolean")
-                    put("description", "For push: set the upstream tracking branch (default false)")
-                })
             },
             required = listOf("repo", "action"),
         )
@@ -566,7 +570,6 @@ private fun gitSyncTool(context: Context): Tool = Tool(
         val token = obj["token"]?.jsonPrimitive?.contentOrNull
         val remote = obj["remote"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: "origin"
         val branch = obj["branch"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-        val setUpstream = obj["set_upstream"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
         val c = creds(token)
 
         withContext(Dispatchers.IO) {
@@ -588,7 +591,6 @@ private fun gitSyncTool(context: Context): Tool = Tool(
                         "push" -> {
                             val cmd = g.push().setRemote(remote)
                             c?.let { cmd.setCredentialsProvider(it) }
-                            if (setUpstream) cmd.setSetUpstream(true)
                             val result = cmd.call()
                             text(buildJsonObject {
                                 put("ok", JsonPrimitive(true))
@@ -597,14 +599,16 @@ private fun gitSyncTool(context: Context): Tool = Tool(
                                 put("results", buildJsonArray {
                                     result.forEach { r ->
                                         add(buildJsonObject {
-                                            // RemoteRefUpdate 没有 getName()，远程引用名是 getRemoteName()
+                                            // ★ 用 getRemoteUpdates()（PushResult 只暴露这一个）：
+                                            //   先前我写的 r.messages 并不存在（PushResult 没有 getMessages），
+                                            //   那会让类型推断失败，并连带报 joinToString 找不到。
+                                            // RemoteRefUpdate 的远程引用名是 getRemoteName()。
                                             put("remote_refs", JsonPrimitive(
                                                 r.remoteUpdates.joinToString(", ") { it.remoteName ?: "?" }
                                             ))
-                                            // getMessages() 返回的是 Message 对象集合（不是 String），
-                                            // 用 toString() 输出，避免依赖其内部结构
-                                            put("messages", JsonPrimitive(
-                                                r.messages?.joinToString("; ") { it.toString() } ?: ""
+                                            // 状态很有用：OK / UP_TO_DATE / REJECTED / NON_EXISTING 等
+                                            put("statuses", JsonPrimitive(
+                                                r.remoteUpdates.joinToString(", ") { it.status.toString() }
                                             ))
                                         })
                                     }
