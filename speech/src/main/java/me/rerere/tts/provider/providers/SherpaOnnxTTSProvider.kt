@@ -81,6 +81,29 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
         withContext(Dispatchers.IO) {
           SherpaTtsCache.withNative {
             diag(context, "TTS", "准备加载模型 threads=${providerSetting.numThreads}")
+
+            // ★ 显式、提前加载 native 库 —— 用于**区分崩溃阶段**。
+            //
+            // Tts.kt 在 companion object 的 init 里调用 System.loadLibrary("sherpa-onnx-jni")，
+            // 而该初始化由「首次引用 OfflineTts 类」隐式触发 —— 也就是下面 obtainLocked 里
+            // 构造 OfflineTts 的那一刻。因此原本无法区分崩溃发生在
+            //   ① dlopen 动态库阶段，还是 ② 库内 ORT 初始化/模型解析阶段。
+            //
+            // 这里提前显式加载（loadLibrary 是幂等的，重复调用无副作用），
+            // 并在前后各写一条日志，崩溃后即可从日志判断：
+            //   只有 "开始 loadLibrary"   → 崩在 dlopen（动态库本身的问题）
+            //   有 "loadLibrary 成功" 但无 "模型就绪" → 崩在库内部（ORT/模型解析）
+            diag(context, "TTS", "开始 System.loadLibrary(sherpa-onnx-jni)")
+            try {
+                System.loadLibrary("sherpa-onnx-jni")
+                diag(context, "TTS", "loadLibrary 成功 ✓")
+            } catch (t: Throwable) {
+                diag(context, "TTS", "loadLibrary 失败: ${t.javaClass.name}: ${t.message}")
+                throw IllegalStateException(
+                    "无法加载本地 TTS 的 native 库：${t.javaClass.simpleName}: ${t.message}", t
+                )
+            }
+
             val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
             diag(context, "TTS", "模型就绪")
 
