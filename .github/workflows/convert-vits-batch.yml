@@ -1,0 +1,173 @@
+# 批量转换上游 VITS 角色模型（.pth → .onnx）并发布为 Release 资产。
+#
+# ── 背景 ──
+# 上游数据集共 38 个角色，官方只发布了 8 个角色 + 5 个 fanchen 变体。
+# 其余 30 个（含米哈游的纳西妲/神里绫华/卡芙卡/黑塔）需要自行转换。
+#
+# 单角色转换见 convert-vits.yml；本文件用于一次性批量完成并发布。
+# 已先经 kafka 单角色验证：产出 onnx 121,914,005 字节，
+# 与官方发布的同类文件（121,913,906）仅差 99 字节，且能被 sherpa-onnx 加载并合成中文。
+#
+# ── 用法 ──
+# Actions → 本 workflow → Run workflow。
+# 默认转换全部 30 个并发布到 Release 标签 tts-models-v1。
+# 也可在 only 输入里填角色名（逗号分隔）做小批量，例如 kafka,herta
+
+name: Convert VITS batch
+
+on:
+  workflow_dispatch:
+    inputs:
+      only:
+        description: '只转换这些角色（逗号分隔，留空=全部 30 个）'
+        required: false
+        default: ''
+      publish:
+        description: '发布到 Release（App 可直接下载）'
+        type: boolean
+        default: true
+      max_parallel:
+        description: '并行度'
+        required: false
+        default: '8'
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.pick.outputs.names }}
+    steps:
+      - name: Pick names
+        id: pick
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          ALL='asuna izuna alice hoshino momoi yuuka iroha azusa shiroko hina mika karin iori miyu nahida-jp ayaka-jp kafka herta takina chisato ameth kyaru kyoka hiyori pecorine misora yuni eriko hatsune kokoro'
+          if [ -n "$ONLY" ]; then
+            PICK=""
+            for n in $(echo "$ONLY" | tr ',' ' '); do
+              case " $ALL " in *" $n "*) PICK="$PICK $n";; *) echo "::warning::未知角色 $n，跳过";; esac
+            done
+            PICK=$(echo $PICK)
+          else
+            PICK="$ALL"
+          fi
+          if [ -z "$PICK" ]; then echo "::error::没有可转换的角色"; exit 1; fi
+          JSON=$(printf '%s\n' $PICK | python3 -c "import sys,json; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))")
+          echo "names=$JSON" >> "$GITHUB_OUTPUT"
+          echo "将转换: $JSON"
+
+  convert:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJSON(inputs.max_parallel) }}
+      matrix:
+        name: ${{ fromJSON(needs.prepare.outputs.names) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          set -x
+          python -m pip install --upgrade pip
+          pip install torch==2.2.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install "numpy<2" onnx numba librosa unidecode jieba cn2an pypinyin
+          pip install jamo
+          pip install pyopenjtalk-prebuilt || pip install pyopenjtalk
+          for m in torch onnx numpy numba librosa unidecode pyopenjtalk jamo pypinyin jieba cn2an; do
+            python -c "import $m" 2>/dev/null || { echo "::error::缺少依赖 $m"; exit 1; }
+          done
+
+      - name: Fetch upstream space code
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+        run: |
+          git clone --depth 1 https://huggingface.co/spaces/csukuangfj/vits-models
+          test -f vits-models/config/config.json
+
+      - name: Download pth
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -e
+          mkdir -p "vits-models/pretrained_models/$NAME"
+          URL="https://huggingface.co/spaces/csukuangfj/vits-models/resolve/main/pretrained_models/$NAME/$NAME.pth"
+          curl -L --retry 3 --retry-all-errors -o "vits-models/pretrained_models/$NAME/$NAME.pth" "$URL"
+          SIZE=$(stat -c%s "vits-models/pretrained_models/$NAME/$NAME.pth")
+          echo "pth size = $SIZE"
+          [ "$SIZE" -gt 10000000 ] || { echo "::error::pth 异常"; exit 1; }
+
+      - name: Convert to ONNX
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -x
+          python tools/vits-zh-hf-models.py
+          SIZE=$(stat -c%s "$NAME.onnx")
+          echo "onnx size = $SIZE"
+          [ "$SIZE" -gt 10000000 ] || { echo "::error::onnx 异常"; exit 1; }
+
+      - name: Stage artifact
+        if: ${{ inputs.publish }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pub-${{ matrix.name }}
+          path: ${{ matrix.name }}.onnx
+          retention-days: 3
+
+  publish:
+    needs: convert
+    if: ${{ inputs.publish && always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all staged onnx
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pub-*
+          path: staged
+          merge-multiple: true
+
+      - name: Create release and upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          ls -la staged/ || true
+          COUNT=$(ls staged/*.onnx 2>/dev/null | wc -l)
+          echo "待发布 $COUNT 个"
+          [ "$COUNT" -gt 0 ] || { echo "::warning::没有产物可发布"; exit 0; }
+
+          TAG="tts-models-v1"
+          gh release view "$TAG" >/dev/null 2>&1 || \
+            gh release create "$TAG" --title "VITS extra models" \
+              --notes "上游未发布的 VITS 角色模型（自 .pth 转换，供 App 内下载）。
+
+由 GitHub Actions 自动转换，与官方发布流程同源（产出 onnx 与官方同类文件大小仅差约 99 字节）。
+
+已实测：可被 sherpa-onnx 加载，并能用中文合成（cleaner 为 zh_ja_mixture_cleaners）。"
+
+          for f in staged/*.onnx; do
+            b=$(basename "$f")
+            gh release delete-asset "$TAG" "$b" -y 2>/dev/null || true
+            gh release upload "$TAG" "$f"
+            echo "  已上传 $b"
+          done
+
+          echo "完成：https://github.com/${{ github.repository }}/releases/tag/$TAG"
