@@ -12927,7 +12927,7 @@ index e688510..d6c97de 100644
              .Builder(CHAT_GENERATION_FOREGROUND_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_LOW)
              .setName(getString(R.string.notification_channel_generation_foreground))
 diff --git a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
-index eecc60c..390b813 100644
+index eecc60c..ffcde4a 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RouteActivity.kt
 @@ -79,6 +79,7 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
@@ -12947,7 +12947,18 @@ index eecc60c..390b813 100644
  import me.rerere.rikkahub.ui.pages.setting.SettingWebPage
  import me.rerere.rikkahub.ui.pages.share.handler.ShareHandlerPage
  import me.rerere.rikkahub.ui.pages.stats.StatsPage
-@@ -389,6 +392,14 @@ class RouteActivity : ComponentActivity() {
+@@ -253,6 +256,10 @@ class RouteActivity : ComponentActivity() {
+                     is AppEvent.McpOAuthCallback -> Unit // 由 McpManager 消费
+                     is AppEvent.ChatGenerationUpdate -> Unit // 由 ChatNotificationManager 消费
+                     is AppEvent.ChatGenerationEnded -> Unit // 由 ChatNotificationManager 消费
++                    // 工具授权请求同样由 ChatNotificationManager 转为通知；UI 层无需处理。
++                    // ★注意：此处 when 对 AppEvent 是**穷尽**的（无 else），
++                    //   AppEvent 每新增子类都必须在这里补分支，否则编译失败。
++                    is AppEvent.ToolApprovalRequested -> Unit // 由 ChatNotificationManager 消费
+                 }
+             }
+         }
+@@ -389,6 +396,14 @@ class RouteActivity : ComponentActivity() {
                                  AssistantLocalToolPage(key.id)
                              }
  
@@ -12962,7 +12973,7 @@ index eecc60c..390b813 100644
                              entry<Screen.AssistantInjections> { key ->
                                  AssistantExtensionsPage(key.id)
                              }
-@@ -483,6 +494,10 @@ class RouteActivity : ComponentActivity() {
+@@ -483,6 +498,10 @@ class RouteActivity : ComponentActivity() {
                                  SettingWebPage()
                              }
  
@@ -12973,7 +12984,7 @@ index eecc60c..390b813 100644
  
                              entry<Screen.Debug> {
                                  DebugPage()
-@@ -648,6 +663,13 @@ sealed interface Screen : NavKey {
+@@ -648,6 +667,13 @@ sealed interface Screen : NavKey {
      @Serializable
      data class AssistantLocalTool(val id: String) : Screen
  
@@ -12987,7 +12998,7 @@ index eecc60c..390b813 100644
      @Serializable
      data class AssistantInjections(val id: String) : Screen
  
-@@ -705,6 +727,9 @@ sealed interface Screen : NavKey {
+@@ -705,6 +731,9 @@ sealed interface Screen : NavKey {
      @Serializable
      data object SettingSpeech : Screen
  
@@ -15866,10 +15877,28 @@ index 8439d28..e973d87 100644
          id = DEFAULT_SYSTEM_TTS_ID,
          name = "",
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt b/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
-index 769daae..32a5680 100644
+index 769daae..edbd2b4 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/event/AppEvent.kt
-@@ -21,6 +21,19 @@ sealed class AppEvent {
+@@ -3,6 +3,17 @@ package me.rerere.rikkahub.data.event
+ import me.rerere.ai.ui.UIMessage
+ import kotlin.uuid.Uuid
+ 
++/**
++ * 应用内事件（由 [AppEventBus] 分发）。
++ *
++ * ★新增子类时**必须**检查所有对 AppEvent 的 `when`：
++ *   · `RouteActivity.AppRoutes()` 里的那个 `when (event)` 是**穷尽且无 else** 的，
++ *     漏加分支会直接导致编译失败（`'when' expression must be exhaustive`）。
++ *   · `ChatNotificationManager` 的那个有 `else -> {}`，不受影响但按惯例也应补分支。
++ *
++ * 当前消费方：RouteActivity（UI 类事件）、ChatNotificationManager（通知类事件）、
++ * McpOAuthCoordinator（OAuth 回调）。
++ */
+ sealed class AppEvent {
+     data class Speak(val text: String) : AppEvent()
+     data object OpenUsageAccessSettings : AppEvent()
+@@ -21,6 +32,19 @@ sealed class AppEvent {
          val senderName: String,
      ) : AppEvent()
  
@@ -15889,7 +15918,7 @@ index 769daae..32a5680 100644
      /**
       * 聊天生成结束（完成、失败或取消）。
       * [contentPreview] 为 null 时仅取消 Live Update 通知，不发送完成通知。
-@@ -31,3 +44,15 @@ sealed class AppEvent {
+@@ -31,3 +55,15 @@ sealed class AppEvent {
          val contentPreview: String?,
      ) : AppEvent()
  }

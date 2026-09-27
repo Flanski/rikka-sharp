@@ -3,6 +3,17 @@ package me.rerere.rikkahub.data.event
 import me.rerere.ai.ui.UIMessage
 import kotlin.uuid.Uuid
 
+/**
+ * 应用内事件（由 [AppEventBus] 分发）。
+ *
+ * ★新增子类时**必须**检查所有对 AppEvent 的 `when`：
+ *   · `RouteActivity.AppRoutes()` 里的那个 `when (event)` 是**穷尽且无 else** 的，
+ *     漏加分支会直接导致编译失败（`'when' expression must be exhaustive`）。
+ *   · `ChatNotificationManager` 的那个有 `else -> {}`，不受影响但按惯例也应补分支。
+ *
+ * 当前消费方：RouteActivity（UI 类事件）、ChatNotificationManager（通知类事件）、
+ * McpOAuthCoordinator（OAuth 回调）。
+ */
 sealed class AppEvent {
     data class Speak(val text: String) : AppEvent()
     data object OpenUsageAccessSettings : AppEvent()

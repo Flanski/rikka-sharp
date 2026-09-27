@@ -256,6 +256,10 @@ class RouteActivity : ComponentActivity() {
                     is AppEvent.McpOAuthCallback -> Unit // 由 McpManager 消费
                     is AppEvent.ChatGenerationUpdate -> Unit // 由 ChatNotificationManager 消费
                     is AppEvent.ChatGenerationEnded -> Unit // 由 ChatNotificationManager 消费
+                    // 工具授权请求同样由 ChatNotificationManager 转为通知；UI 层无需处理。
+                    // ★注意：此处 when 对 AppEvent 是**穷尽**的（无 else），
+                    //   AppEvent 每新增子类都必须在这里补分支，否则编译失败。
+                    is AppEvent.ToolApprovalRequested -> Unit // 由 ChatNotificationManager 消费
                 }
             }
         }
