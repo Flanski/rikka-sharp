@@ -71,7 +71,8 @@ class SherpaModelManager(private val context: Context) {
         .filter { it.isFile }
         .sumOf { it.length() }
 
-    fun delete(model: SherpaModelInfo): Boolean {
+    /** 注意：suspend —— 删除后需要拿 native 锁释放 OfflineTts 实例 */
+    suspend fun delete(model: SherpaModelInfo): Boolean {
         val dir = modelDir(model)
         if (!dir.exists()) return true
         return dir.deleteRecursively().also {
@@ -256,7 +257,7 @@ class SherpaModelManager(private val context: Context) {
          * 模型目录变化后让 provider 的 OfflineTts 缓存失效。
          * 由于缓存是进程级的（换模型/删模型后旧实例已无效），这里统一通知。
          */
-        private fun onModelsChanged() {
+        private suspend fun onModelsChanged() {
             runCatching { me.rerere.tts.provider.providers.SherpaTtsCache.invalidateAll() }
         }
     }

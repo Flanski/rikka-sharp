@@ -10,6 +10,8 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.tts.model.AudioChunk
 import me.rerere.tts.model.AudioFormat
@@ -65,27 +67,31 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             throw IllegalStateException(error)
         }
 
-        val tts = SherpaTtsCache.obtain(dir, providerSetting)
-        val sampleRate = tts.sampleRate()
-        val numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
-
-        // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
-        val sid = if (numSpeakers > 0) {
-            providerSetting.speakerId.coerceIn(0, numSpeakers - 1)
-        } else {
-            0
-        }
-
-        val chunkMeta = mapOf(
-            "provider" to "sherpa-onnx",
-            "model" to dir.name,
-            "speakerId" to sid.toString(),
-            "numSpeakers" to numSpeakers.toString(),
-            "speed" to providerSetting.speed.toString(),
-        )
+        // 注意：以下所有操作（加载模型 / 查询说话人 / 合成）都在同一把锁内串行执行。
+        // 见 SherpaTtsCache.nativeLock 的说明 —— 并发使用同一 OfflineTts 会导致 native 崩溃。
+        var sampleRate = 0
+        var numSpeakers = 0
+        var sid = 0
+        val chunkMeta = mutableMapOf<String, String>()
 
         // JNI 调用是阻塞的，放到 IO 线程；回调里用 trySend 逐步推给消费者
         withContext(Dispatchers.IO) {
+          SherpaTtsCache.withNative {
+            val tts = SherpaTtsCache.obtainLocked(dir, providerSetting)
+            sampleRate = tts.sampleRate()
+            numSpeakers = runCatching { tts.numSpeakers() }.getOrDefault(0)
+            // sid 越界会让 native 侧行为未定义，这里夹紧到合法范围
+            sid = if (numSpeakers > 0) providerSetting.speakerId.coerceIn(0, numSpeakers - 1) else 0
+            chunkMeta.putAll(
+                mapOf(
+                    "provider" to "sherpa-onnx",
+                    "model" to dir.name,
+                    "speakerId" to sid.toString(),
+                    "numSpeakers" to numSpeakers.toString(),
+                    "speed" to providerSetting.speed.toString(),
+                )
+            )
+
             val gen = GenerationConfig(
                 speed = providerSetting.speed,
                 sid = sid,
@@ -130,6 +136,7 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
                     metadata = chunkMeta,
                 )
             )
+          }
         }
     }
 
@@ -188,21 +195,47 @@ internal object SherpaTtsCache {
     private var cachedKey: String? = null
     private var cached: OfflineTts? = null
 
+    /**
+     * 串行化**所有** native 操作（加载 / 推理 / 释放）。
+     *
+     * 为什么必须：
+     * `TtsController` 会并发预取分片（`prefetchCount = 4`，各自跑在 Dispatchers.IO），
+     * 即同一时刻可能有 4 个协程调用同一个 `OfflineTts` 实例。
+     * 而 sherpa-onnx 的 `OfflineTts` **不支持并发使用** —— 并发调用会触发
+     * native 崩溃（SIGSEGV）：进程直接退出，`TtsController` 里的
+     * `catch (e: Exception)` **捕获不到**，用户看到的就是「播放时闪退」。
+     *
+     * 同一把锁还保护「释放旧实例」，避免推理进行中实例被 free（use-after-free）。
+     *
+     * 代价：并发合成的 4 个分片会串行执行。这是正确的取舍 ——
+     * 本地推理本来就是单实例串行，宁可慢也不要崩。
+     */
+    private val nativeLock = Mutex()
+
+    /** 在同一把锁内执行 native 操作。**不可重入**（内部不要再调 withNative）。 */
+    suspend fun <T> withNative(block: () -> T): T = nativeLock.withLock { block() }
+
     /** 模型被下载/删除/替换后调用，释放 native 实例并清空缓存 */
+    suspend fun invalidateAll() = withNative { invalidateLocked() }
+
     @Synchronized
-    fun invalidateAll() {
+    private fun invalidateLocked() {
         runCatching { cached?.free() }.onFailure { Log.w(TAG, "invalidate free failed", it) }
         cached = null
         cachedKey = null
     }
 
-    @Synchronized
-    fun obtain(dir: File, setting: TTSProviderSetting.SherpaOnnx): OfflineTts {
+    /**
+     * 取得（或加载）OfflineTts 实例。
+     * **调用方必须已持有 [withNative] 的锁** —— 加载过程本身也访问 native，
+     * 并发加载会出现多个实例同时初始化，既浪费内存也可能崩溃。
+     */
+    fun obtainLocked(dir: File, setting: TTSProviderSetting.SherpaOnnx): OfflineTts {
         val key = "${dir.absolutePath}|${setting.numThreads}"
         cached?.let { if (cachedKey == key) return it }
 
         // 释放旧实例，避免 native 内存泄漏
-        invalidateAll()
+        invalidateLocked()
 
         val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
             ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
@@ -228,14 +261,19 @@ internal object SherpaTtsCache {
                 debug = false,
                 provider = "cpu",
             ),
-            // 中文读法规则。
-            // 实测（vits-icefall-zh-aishell3）：模型目录同时含
-            //   *.fst（date/number/phone/new_heteronym，各几十 KB）
-            //   rule.far（**173MB**，规则归档）
-            // 二者是**不同参数**：ruleFsts 接 .fst 列表，ruleFars 接 .far 列表。
-            // 早期版本只收集 .fst、ruleFars 传空 —— 不致命，但数字/日期读法会不准。
+            // 中文读法规则：只启用体积很小的 *.fst
+            // （date/number/phone/new_heteronym，各几十 KB）。
+            //
+            // **刻意不加载 rule.far**：实测 vits-icefall-zh-aishell3 的 rule.far
+            // 有 **173MB**，把它交给 sherpa-onnx 会在 native 侧解析成庞大的规则表，
+            // 在手机上很可能 OOM（native 侧 OOM 会直接终止进程，表现为闪退，
+            // Kotlin 的 try-catch 捕获不到）。
+            //
+            // 代价：数字/日期/多音字的读法会不如启用时准确。
+            // 收益：排除一个明确的崩溃风险源。等基础功能在真机验证通过后，
+            // 若确有需要再考虑提供「加载大规则包」的开关。
             ruleFsts = collectByExtension(dir, "fst"),
-            ruleFars = collectByExtension(dir, "far"),
+            ruleFars = "",
         )
 
         Log.i(TAG, "loading OfflineTts: model=${modelFile.name}, threads=${setting.numThreads}, dir=${dir.absolutePath}")

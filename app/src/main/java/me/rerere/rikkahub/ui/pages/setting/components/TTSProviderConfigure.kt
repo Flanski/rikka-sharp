@@ -1314,12 +1314,14 @@ private fun SherpaOnnxTTSConfiguration(
             onDelete = { model ->
                 errorText = null
                 doneText = null
-                if (manager.delete(model)) {
-                    if (setting.modelId == model.id) onValueChange(setting.copy(modelId = ""))
-                } else {
-                    errorText = "删除失败：${model.displayName}"
+                scope.launch {
+                    if (manager.delete(model)) {
+                        if (setting.modelId == model.id) onValueChange(setting.copy(modelId = ""))
+                    } else {
+                        errorText = "删除失败：${model.displayName}"
+                    }
+                    refreshKey++
                 }
-                refreshKey++
             },
         )
 
