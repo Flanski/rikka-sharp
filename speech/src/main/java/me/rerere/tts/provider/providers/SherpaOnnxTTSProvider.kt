@@ -184,9 +184,17 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
  *
  * 目前只保留一份（单模型场景足够）；换模型时释放旧的。
  */
-private object SherpaTtsCache {
+internal object SherpaTtsCache {
     private var cachedKey: String? = null
     private var cached: OfflineTts? = null
+
+    /** 模型被下载/删除/替换后调用，释放 native 实例并清空缓存 */
+    @Synchronized
+    fun invalidateAll() {
+        runCatching { cached?.free() }.onFailure { Log.w(TAG, "invalidate free failed", it) }
+        cached = null
+        cachedKey = null
+    }
 
     @Synchronized
     fun obtain(dir: File, setting: TTSProviderSetting.SherpaOnnx): OfflineTts {
@@ -194,9 +202,7 @@ private object SherpaTtsCache {
         cached?.let { if (cachedKey == key) return it }
 
         // 释放旧实例，避免 native 内存泄漏
-        runCatching { cached?.free() }.onFailure { Log.w(TAG, "free previous OfflineTts failed", it) }
-        cached = null
-        cachedKey = null
+        invalidateAll()
 
         val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
             ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")

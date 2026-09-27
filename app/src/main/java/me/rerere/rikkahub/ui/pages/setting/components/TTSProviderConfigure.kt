@@ -1,22 +1,37 @@
 package me.rerere.rikkahub.ui.pages.setting.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.ui.FormItem
 import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
 import me.rerere.rikkahub.ui.components.ui.SelectTextField
 import me.rerere.tts.provider.TTSProviderSetting
+import me.rerere.tts.sherpa.SherpaInstallProgress
+import me.rerere.tts.sherpa.SherpaModelCatalog
+import me.rerere.tts.sherpa.SherpaModelInfo
+import me.rerere.tts.sherpa.SherpaModelManager
 
 @Composable
 fun TTSProviderConfigure(
@@ -1209,16 +1224,196 @@ private fun StepTTSConfiguration(
 /**
  * 本地神经网络语音（sherpa-onnx + VITS）的配置界面。
  *
- * 说明：音色数由所用模型决定（vits-zh-hf-theresa / eula 为 804，
- * vits-icefall-zh-aishell3 为 174），无法在编译期得知，因此这里用数字输入，
- * 由用户按所用模型填写；越界值在朗读时会被自动夹紧到合法范围。
+ * 分成两件事：
+ * 1. **模型管理** —— 下载 / 删除 / 选择。模型是 115MB 量级的 `.tar.bz2`，
+ *    不随 APK 分发，因此这里提供应用内下载（`SherpaModelManager`，流式解压避免 OOM）。
+ * 2. **合成参数** —— 音色序号、语速、韵律随机性、停顿、线程数。
+ *
+ * 音色数由模型决定且无法在编译期得知，故用数字输入；越界值在朗读时会被夹紧。
  */
 @Composable
 private fun SherpaOnnxTTSConfiguration(
     setting: TTSProviderSetting.SherpaOnnx,
     onValueChange: (TTSProviderSetting) -> Unit
 ) {
-    // 模型目录
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val manager = remember { SherpaModelManager(context) }
+
+    // 已安装列表需要在下载/删除后刷新
+    var refreshKey by remember { mutableIntStateOf(0) }
+    var installingId by remember { mutableStateOf<String?>(null) }
+    var progress by remember { mutableStateOf<SherpaInstallProgress?>(null) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    var doneText by remember { mutableStateOf<String?>(null) }
+
+    val installedIds = remember(refreshKey) { manager.listInstalled().map { it.id }.toSet() }
+
+    // ────────── 模型管理 ──────────
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_model)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_desc)) }
+    ) {
+        val options = installedIds.toList()
+        if (options.isEmpty()) {
+            Text(
+                text = stringResource(R.string.setting_tts_page_sherpa_no_model),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        } else {
+            SelectTextField(
+                value = setting.modelId.ifBlank { options.first() },
+                options = options,
+                // SelectTextField 有两个回调：onValueChange(文本编辑) 与
+                // onOptionSelected(下拉选中)。模型 ID 是固定枚举，用 readOnly + 选中回调，
+                // 避免用户手输错值。此前误把选择回调写成 onValueChange —— 那样能编译，
+                // 但选模型不会生效（onValueChange 存在默认空实现，不会报错）。
+                onOptionSelected = { onValueChange(setting.copy(modelId = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                readOnly = true,
+            )
+        }
+    }
+
+    // 可下载的模型列表
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_download)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_download_desc)) }
+    ) {
+        SherpaModelList(
+            manager = manager,
+            installedIds = installedIds,
+            installingId = installingId,
+            progress = progress,
+            onDownload = { model ->
+                errorText = null
+                doneText = null
+                installingId = model.id
+                progress = null
+                scope.launch {
+                    val result = manager.install(model) { onProgress ->
+                        // install 在 IO 线程回调；写到 State 是线程安全的
+                        progress = onProgress
+                    }
+                    result.onSuccess {
+                        // 首次安装后自动选中，省去用户再点一次
+                        if (setting.modelId.isBlank()) {
+                            onValueChange(setting.copy(modelId = model.id))
+                        }
+                        doneText = model.displayName
+                    }.onFailure {
+                        errorText = it.message ?: it.toString()
+                    }
+                    installingId = null
+                    progress = null
+                    refreshKey++
+                }
+            },
+            onDelete = { model ->
+                errorText = null
+                doneText = null
+                if (manager.delete(model)) {
+                    if (setting.modelId == model.id) onValueChange(setting.copy(modelId = ""))
+                } else {
+                    errorText = "删除失败：${model.displayName}"
+                }
+                refreshKey++
+            },
+        )
+
+        errorText?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        doneText?.let {
+            Text(
+                text = stringResource(R.string.setting_tts_page_sherpa_installed, it),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+
+    // ────────── 合成参数 ──────────
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.speakerId.toFloat(),
+            onValueChange = { v -> onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0))) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
+        )
+    }
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
+        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.speed,
+            onValueChange = { v -> if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_speech_rate),
+        )
+    }
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.noiseScale,
+            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
+        )
+    }
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.noiseScaleW,
+            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
+        )
+    }
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.silenceScale,
+            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v)) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_silence),
+        )
+    }
+
+    FormItem(
+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
+    ) {
+        OutlinedNumberInput(
+            value = setting.numThreads.toFloat(),
+            onValueChange = { v -> onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8))) },
+            modifier = Modifier.fillMaxWidth(),
+            label = stringResource(R.string.setting_tts_page_sherpa_threads),
+        )
+    }
+
+    // 手动指定目录（高级用法：用户自己放模型时用）
     FormItem(
         label = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir)) },
         description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_desc)) }
@@ -1231,94 +1426,93 @@ private fun SherpaOnnxTTSConfiguration(
             placeholder = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_hint)) },
         )
     }
+}
 
-    // 音色序号
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
-        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.speakerId.toFloat(),
-            onValueChange = { v ->
-                onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0)))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
-        )
-    }
+/** 单个模型的列表项：名称 / 音色数 / 体积 / 状态 / 动作 */
+@Composable
+private fun SherpaModelList(
+    manager: SherpaModelManager,
+    installedIds: Set<String>,
+    installingId: String?,
+    progress: SherpaInstallProgress?,
+    onDownload: (SherpaModelInfo) -> Unit,
+    onDelete: (SherpaModelInfo) -> Unit,
+) {
+    // stringResource 是 @Composable，只能在 composable 上下文求值。
+    // 下面的 Column/forEach/buildString 的 lambda 都**不是** composable 上下文，
+    // 因此这里先取好字符串再传进去。
+    val voicesSuffix = stringResource(R.string.setting_tts_page_sherpa_voices_suffix)
+    val installedShort = stringResource(R.string.setting_tts_page_sherpa_installed_short)
+    val downloadLabel = stringResource(R.string.setting_tts_page_sherpa_download_btn)
+    val deleteLabel = stringResource(R.string.setting_tts_page_sherpa_delete)
 
-    // 语速
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
-        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.speed,
-            onValueChange = { v ->
-                if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_speech_rate),
-        )
-    }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        SherpaModelCatalog.ALL.forEach { model ->
+            val installed = model.id in installedIds
+            val installing = installingId == model.id
 
-    // 韵律随机性（语气起伏）
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
-        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.noiseScale,
-            onValueChange = { v ->
-                if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
-        )
-    }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = model.displayName, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = buildString {
+                            append(model.speakers)
+                            append(voicesSuffix)
+                            append(" · ")
+                            append("${model.sizeMb.toInt()}MB")
+                            if (installed) {
+                                append(" · ")
+                                append(installedShort)
+                            }
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // 进度
+                    if (installing) {
+                        val p = progress
+                        val label = when (p) {
+                            is SherpaInstallProgress.Downloading ->
+                                "${(p.fraction * 100).toInt()}%  ${p.bytes / 1048576}MB / ${p.total / 1048576}MB"
+                            is SherpaInstallProgress.Extracting ->
+                                "解压中… ${p.bytesWritten / 1048576}MB"
+                            else -> "准备中…"
+                        }
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
 
-    // 时长随机性
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
-        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.noiseScaleW,
-            onValueChange = { v ->
-                if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
-        )
-    }
-
-    // 句间停顿
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
-        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.silenceScale,
-            onValueChange = { v ->
-                if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_sherpa_silence),
-        )
-    }
-
-    // 推理线程数
-    FormItem(
-        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
-        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
-    ) {
-        OutlinedNumberInput(
-            value = setting.numThreads.toFloat(),
-            onValueChange = { v ->
-                onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8)))
-            },
-            modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.setting_tts_page_sherpa_threads),
-        )
+                when {
+                    installing -> {
+                        Text(
+                            text = "…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    installed -> {
+                        TextButton(onClick = { onDelete(model) }) {
+                            Text(deleteLabel)
+                        }
+                    }
+                    else -> {
+                        TextButton(
+                            onClick = { onDownload(model) },
+                            enabled = installingId == null,
+                        ) {
+                            Text(downloadLabel)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

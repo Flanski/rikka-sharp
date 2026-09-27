@@ -16671,10 +16671,48 @@ index 0000000..6bccb56
 +    )
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-index b5c48c5..1317a7f 100644
+index b5c48c5..83294c8 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/components/TTSProviderConfigure.kt
-@@ -48,6 +48,7 @@ fun TTSProviderConfigure(
+@@ -1,22 +1,37 @@
+ package me.rerere.rikkahub.ui.pages.setting.components
+ 
+ import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Row
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.fillMaxWidth
+ import androidx.compose.foundation.rememberScrollState
+ import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.MaterialTheme
+ import androidx.compose.material3.OutlinedTextField
+ import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
++import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.platform.LocalContext
+ import androidx.compose.ui.res.stringResource
+ import androidx.compose.ui.unit.dp
++import kotlinx.coroutines.launch
+ import me.rerere.rikkahub.R
+ import me.rerere.rikkahub.ui.components.ui.FormItem
+ import me.rerere.rikkahub.ui.components.ui.OutlinedNumberInput
+ import me.rerere.rikkahub.ui.components.ui.SelectTextField
+ import me.rerere.tts.provider.TTSProviderSetting
++import me.rerere.tts.sherpa.SherpaInstallProgress
++import me.rerere.tts.sherpa.SherpaModelCatalog
++import me.rerere.tts.sherpa.SherpaModelInfo
++import me.rerere.tts.sherpa.SherpaModelManager
+ 
+ @Composable
+ fun TTSProviderConfigure(
+@@ -48,6 +63,7 @@ fun TTSProviderConfigure(
                      is TTSProviderSetting.Step -> "Step"
                      is TTSProviderSetting.ElevenLabs -> "ElevenLabs"
                      is TTSProviderSetting.FishAudio -> "Fish Audio"
@@ -16682,7 +16720,7 @@ index b5c48c5..1317a7f 100644
                  },
                  options = providers,
                  readOnly = true,
-@@ -56,6 +57,7 @@ fun TTSProviderConfigure(
+@@ -56,6 +72,7 @@ fun TTSProviderConfigure(
                      when (providerClass) {
                          TTSProviderSetting.OpenAI::class -> "OpenAI"
                          TTSProviderSetting.Gemini::class -> "Gemini"
@@ -16690,7 +16728,7 @@ index b5c48c5..1317a7f 100644
                          TTSProviderSetting.SystemTTS::class -> "System TTS"
                          TTSProviderSetting.MiniMax::class -> "MiniMax"
                          TTSProviderSetting.Qwen::class -> "Qwen"
-@@ -80,6 +82,7 @@ fun TTSProviderConfigure(
+@@ -80,6 +97,7 @@ fun TTSProviderConfigure(
                              name = "Gemini TTS"
                          )
  
@@ -16698,7 +16736,7 @@ index b5c48c5..1317a7f 100644
                          TTSProviderSetting.SystemTTS::class -> TTSProviderSetting.SystemTTS(
                              id = setting.id,
                              name = "System TTS"
-@@ -160,6 +163,7 @@ fun TTSProviderConfigure(
+@@ -160,6 +178,7 @@ fun TTSProviderConfigure(
              is TTSProviderSetting.ElevenLabs -> ElevenLabsTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.FishAudio -> FishAudioTTSConfiguration(setting, onValueChange)
              is TTSProviderSetting.Step -> StepTTSConfiguration(setting, onValueChange)
@@ -16706,7 +16744,7 @@ index b5c48c5..1317a7f 100644
          }
      }
  }
-@@ -1201,3 +1205,120 @@ private fun StepTTSConfiguration(
+@@ -1201,3 +1220,299 @@ private fun StepTTSConfiguration(
          )
      }
  }
@@ -16714,16 +16752,196 @@ index b5c48c5..1317a7f 100644
 +/**
 + * 本地神经网络语音（sherpa-onnx + VITS）的配置界面。
 + *
-+ * 说明：音色数由所用模型决定（vits-zh-hf-theresa / eula 为 804，
-+ * vits-icefall-zh-aishell3 为 174），无法在编译期得知，因此这里用数字输入，
-+ * 由用户按所用模型填写；越界值在朗读时会被自动夹紧到合法范围。
++ * 分成两件事：
++ * 1. **模型管理** —— 下载 / 删除 / 选择。模型是 115MB 量级的 `.tar.bz2`，
++ *    不随 APK 分发，因此这里提供应用内下载（`SherpaModelManager`，流式解压避免 OOM）。
++ * 2. **合成参数** —— 音色序号、语速、韵律随机性、停顿、线程数。
++ *
++ * 音色数由模型决定且无法在编译期得知，故用数字输入；越界值在朗读时会被夹紧。
 + */
 +@Composable
 +private fun SherpaOnnxTTSConfiguration(
 +    setting: TTSProviderSetting.SherpaOnnx,
 +    onValueChange: (TTSProviderSetting) -> Unit
 +) {
-+    // 模型目录
++    val context = LocalContext.current
++    val scope = rememberCoroutineScope()
++    val manager = remember { SherpaModelManager(context) }
++
++    // 已安装列表需要在下载/删除后刷新
++    var refreshKey by remember { mutableIntStateOf(0) }
++    var installingId by remember { mutableStateOf<String?>(null) }
++    var progress by remember { mutableStateOf<SherpaInstallProgress?>(null) }
++    var errorText by remember { mutableStateOf<String?>(null) }
++    var doneText by remember { mutableStateOf<String?>(null) }
++
++    val installedIds = remember(refreshKey) { manager.listInstalled().map { it.id }.toSet() }
++
++    // ────────── 模型管理 ──────────
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_model)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_desc)) }
++    ) {
++        val options = installedIds.toList()
++        if (options.isEmpty()) {
++            Text(
++                text = stringResource(R.string.setting_tts_page_sherpa_no_model),
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.error,
++            )
++        } else {
++            SelectTextField(
++                value = setting.modelId.ifBlank { options.first() },
++                options = options,
++                // SelectTextField 有两个回调：onValueChange(文本编辑) 与
++                // onOptionSelected(下拉选中)。模型 ID 是固定枚举，用 readOnly + 选中回调，
++                // 避免用户手输错值。此前误把选择回调写成 onValueChange —— 那样能编译，
++                // 但选模型不会生效（onValueChange 存在默认空实现，不会报错）。
++                onOptionSelected = { onValueChange(setting.copy(modelId = it)) },
++                modifier = Modifier.fillMaxWidth(),
++                readOnly = true,
++            )
++        }
++    }
++
++    // 可下载的模型列表
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_download)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_download_desc)) }
++    ) {
++        SherpaModelList(
++            manager = manager,
++            installedIds = installedIds,
++            installingId = installingId,
++            progress = progress,
++            onDownload = { model ->
++                errorText = null
++                doneText = null
++                installingId = model.id
++                progress = null
++                scope.launch {
++                    val result = manager.install(model) { onProgress ->
++                        // install 在 IO 线程回调；写到 State 是线程安全的
++                        progress = onProgress
++                    }
++                    result.onSuccess {
++                        // 首次安装后自动选中，省去用户再点一次
++                        if (setting.modelId.isBlank()) {
++                            onValueChange(setting.copy(modelId = model.id))
++                        }
++                        doneText = model.displayName
++                    }.onFailure {
++                        errorText = it.message ?: it.toString()
++                    }
++                    installingId = null
++                    progress = null
++                    refreshKey++
++                }
++            },
++            onDelete = { model ->
++                errorText = null
++                doneText = null
++                if (manager.delete(model)) {
++                    if (setting.modelId == model.id) onValueChange(setting.copy(modelId = ""))
++                } else {
++                    errorText = "删除失败：${model.displayName}"
++                }
++                refreshKey++
++            },
++        )
++
++        errorText?.let {
++            Text(
++                text = it,
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.error,
++                modifier = Modifier.padding(top = 4.dp),
++            )
++        }
++        doneText?.let {
++            Text(
++                text = stringResource(R.string.setting_tts_page_sherpa_installed, it),
++                style = MaterialTheme.typography.bodySmall,
++                color = MaterialTheme.colorScheme.primary,
++                modifier = Modifier.padding(top = 4.dp),
++            )
++        }
++    }
++
++    // ────────── 合成参数 ──────────
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.speakerId.toFloat(),
++            onValueChange = { v -> onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0))) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
++        )
++    }
++
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
++        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.speed,
++            onValueChange = { v -> if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v)) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_speech_rate),
++        )
++    }
++
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.noiseScale,
++            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v)) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
++        )
++    }
++
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.noiseScaleW,
++            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v)) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
++        )
++    }
++
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.silenceScale,
++            onValueChange = { v -> if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v)) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_silence),
++        )
++    }
++
++    FormItem(
++        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
++        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
++    ) {
++        OutlinedNumberInput(
++            value = setting.numThreads.toFloat(),
++            onValueChange = { v -> onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8))) },
++            modifier = Modifier.fillMaxWidth(),
++            label = stringResource(R.string.setting_tts_page_sherpa_threads),
++        )
++    }
++
++    // 手动指定目录（高级用法：用户自己放模型时用）
 +    FormItem(
 +        label = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir)) },
 +        description = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_desc)) }
@@ -16736,95 +16954,94 @@ index b5c48c5..1317a7f 100644
 +            placeholder = { Text(stringResource(R.string.setting_tts_page_sherpa_model_dir_hint)) },
 +        )
 +    }
++}
 +
-+    // 音色序号
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_speaker_desc)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.speakerId.toFloat(),
-+            onValueChange = { v ->
-+                onValueChange(setting.copy(speakerId = v.toInt().coerceAtLeast(0)))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_sherpa_speaker),
-+        )
-+    }
++/** 单个模型的列表项：名称 / 音色数 / 体积 / 状态 / 动作 */
++@Composable
++private fun SherpaModelList(
++    manager: SherpaModelManager,
++    installedIds: Set<String>,
++    installingId: String?,
++    progress: SherpaInstallProgress?,
++    onDownload: (SherpaModelInfo) -> Unit,
++    onDelete: (SherpaModelInfo) -> Unit,
++) {
++    // stringResource 是 @Composable，只能在 composable 上下文求值。
++    // 下面的 Column/forEach/buildString 的 lambda 都**不是** composable 上下文，
++    // 因此这里先取好字符串再传进去。
++    val voicesSuffix = stringResource(R.string.setting_tts_page_sherpa_voices_suffix)
++    val installedShort = stringResource(R.string.setting_tts_page_sherpa_installed_short)
++    val downloadLabel = stringResource(R.string.setting_tts_page_sherpa_download_btn)
++    val deleteLabel = stringResource(R.string.setting_tts_page_sherpa_delete)
 +
-+    // 语速
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_speech_rate)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_speech_rate_description)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.speed,
-+            onValueChange = { v ->
-+                if (v in 0.3f..3.0f) onValueChange(setting.copy(speed = v))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_speech_rate),
-+        )
-+    }
++    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
++        SherpaModelCatalog.ALL.forEach { model ->
++            val installed = model.id in installedIds
++            val installing = installingId == model.id
 +
-+    // 韵律随机性（语气起伏）
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_desc)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.noiseScale,
-+            onValueChange = { v ->
-+                if (v in 0f..2f) onValueChange(setting.copy(noiseScale = v))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale),
-+        )
-+    }
++            Row(
++                modifier = Modifier.fillMaxWidth(),
++                horizontalArrangement = Arrangement.spacedBy(8.dp),
++                verticalAlignment = Alignment.CenterVertically,
++            ) {
++                Column(modifier = Modifier.weight(1f)) {
++                    Text(text = model.displayName, style = MaterialTheme.typography.bodyMedium)
++                    Text(
++                        text = buildString {
++                            append(model.speakers)
++                            append(voicesSuffix)
++                            append(" · ")
++                            append("${model.sizeMb.toInt()}MB")
++                            if (installed) {
++                                append(" · ")
++                                append(installedShort)
++                            }
++                        },
++                        style = MaterialTheme.typography.bodySmall,
++                        color = MaterialTheme.colorScheme.onSurfaceVariant,
++                    )
++                    // 进度
++                    if (installing) {
++                        val p = progress
++                        val label = when (p) {
++                            is SherpaInstallProgress.Downloading ->
++                                "${(p.fraction * 100).toInt()}%  ${p.bytes / 1048576}MB / ${p.total / 1048576}MB"
++                            is SherpaInstallProgress.Extracting ->
++                                "解压中… ${p.bytesWritten / 1048576}MB"
++                            else -> "准备中…"
++                        }
++                        Text(
++                            text = label,
++                            style = MaterialTheme.typography.bodySmall,
++                            color = MaterialTheme.colorScheme.primary,
++                        )
++                    }
++                }
 +
-+    // 时长随机性
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_noise_scale_w_desc)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.noiseScaleW,
-+            onValueChange = { v ->
-+                if (v in 0f..2f) onValueChange(setting.copy(noiseScaleW = v))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_sherpa_noise_scale_w),
-+        )
-+    }
-+
-+    // 句间停顿
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_silence)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_silence_desc)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.silenceScale,
-+            onValueChange = { v ->
-+                if (v in 0f..2f) onValueChange(setting.copy(silenceScale = v))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_sherpa_silence),
-+        )
-+    }
-+
-+    // 推理线程数
-+    FormItem(
-+        label = { Text(stringResource(R.string.setting_tts_page_sherpa_threads)) },
-+        description = { Text(stringResource(R.string.setting_tts_page_sherpa_threads_desc)) }
-+    ) {
-+        OutlinedNumberInput(
-+            value = setting.numThreads.toFloat(),
-+            onValueChange = { v ->
-+                onValueChange(setting.copy(numThreads = v.toInt().coerceIn(1, 8)))
-+            },
-+            modifier = Modifier.fillMaxWidth(),
-+            label = stringResource(R.string.setting_tts_page_sherpa_threads),
-+        )
++                when {
++                    installing -> {
++                        Text(
++                            text = "…",
++                            style = MaterialTheme.typography.bodyMedium,
++                            color = MaterialTheme.colorScheme.primary,
++                        )
++                    }
++                    installed -> {
++                        TextButton(onClick = { onDelete(model) }) {
++                            Text(deleteLabel)
++                        }
++                    }
++                    else -> {
++                        TextButton(
++                            onClick = { onDownload(model) },
++                            enabled = installingId == null,
++                        ) {
++                            Text(downloadLabel)
++                        }
++                    }
++                }
++            }
++        }
 +    }
 +}
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
@@ -34918,7 +35135,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..cf96d36 100644
+index 8cb3cf1..57fe84e 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -34930,7 +35147,7 @@ index 8cb3cf1..cf96d36 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,44 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,55 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -34974,9 +35191,20 @@ index 8cb3cf1..cf96d36 100644
 +  <string name="setting_tts_page_sherpa_silence_desc">句子之间插入的静音比例（默认 0.2）。</string>
 +  <string name="setting_tts_page_sherpa_threads">推理线程数</string>
 +  <string name="setting_tts_page_sherpa_threads_desc">用于合成的 CPU 线程数，手机上过多反而变慢（默认 2）。</string>
++
++  <string name="setting_tts_page_sherpa_model">模型</string>
++  <string name="setting_tts_page_sherpa_model_desc">用于合成的模型。请先在下方下载一个。</string>
++  <string name="setting_tts_page_sherpa_no_model">尚未安装模型 —— 请在下方下载一个。</string>
++  <string name="setting_tts_page_sherpa_download">可用模型</string>
++  <string name="setting_tts_page_sherpa_download_desc">在应用内下载并本地解压，需要联网；每个约 115MB。</string>
++  <string name="setting_tts_page_sherpa_voices_suffix"> 个音色</string>
++  <string name="setting_tts_page_sherpa_installed">%1$s 已安装</string>
++  <string name="setting_tts_page_sherpa_installed_short">已安装</string>
++  <string name="setting_tts_page_sherpa_download_btn">下载</string>
++  <string name="setting_tts_page_sherpa_delete">删除</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..ba45aec 100644
+index 47ddab2..84da4f6 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -34990,7 +35218,7 @@ index 47ddab2..ba45aec 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,44 @@
+@@ -1815,4 +1817,55 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -35034,6 +35262,17 @@ index 47ddab2..ba45aec 100644
 +  <string name="setting_tts_page_sherpa_silence_desc">Silence inserted between sentences (default 0.2).</string>
 +  <string name="setting_tts_page_sherpa_threads">Inference threads</string>
 +  <string name="setting_tts_page_sherpa_threads_desc">CPU threads used for synthesis. Too many can be slower on phones (default 2).</string>
++
++  <string name="setting_tts_page_sherpa_model">Model</string>
++  <string name="setting_tts_page_sherpa_model_desc">The model used for synthesis. Download one below first.</string>
++  <string name="setting_tts_page_sherpa_no_model">No model installed yet — download one below.</string>
++  <string name="setting_tts_page_sherpa_download">Available models</string>
++  <string name="setting_tts_page_sherpa_download_desc">Downloaded inside the app and extracted locally. Network required; roughly 115MB each.</string>
++  <string name="setting_tts_page_sherpa_voices_suffix"> voices</string>
++  <string name="setting_tts_page_sherpa_installed">%1$s installed</string>
++  <string name="setting_tts_page_sherpa_installed_short">installed</string>
++  <string name="setting_tts_page_sherpa_download_btn">Download</string>
++  <string name="setting_tts_page_sherpa_delete">Delete</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -37245,10 +37484,10 @@ index 8aa7cb7..0000000
 -    f.writelines(result)
 -print("Patched timezonefinder pyproject.toml: removed numpy/h3/cffi")
 diff --git a/gradle/libs.versions.toml b/gradle/libs.versions.toml
-index d597c01..a80e498 100644
+index d597c01..0ae038b 100644
 --- a/gradle/libs.versions.toml
 +++ b/gradle/libs.versions.toml
-@@ -66,9 +66,16 @@ slf4j = "2.0.18"
+@@ -66,9 +66,20 @@ slf4j = "2.0.18"
  sqlite-android = "-SNAPSHOT"
  termux = "0.118.0"
  diffutils = "4.17"
@@ -37257,14 +37496,31 @@ index d597c01..a80e498 100644
 +# （JSch 在 java.version < 15 时会把 keypairgen.eddsa 指向 com.jcraft.jsch.bc.*）
 +# 选 1.78.1：class-file 上限 65(Java21)，在 AGP 9.x 的 D8 支持范围内
 +bcprov = "1.78.1"
++# 仅用于解压 sherpa-onnx 模型包（.tar.bz2）。Android 无内置 bz2 解压。
++# class-file 52(Java 8)，Android 兼容。zstd-jni/dec/xz/asm 均为 optional，不会被传递引入。
++commons-compress = "1.28.0"
  
  [libraries]
  android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 +jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 +bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
++commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
  kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
  kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
  androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }
+diff --git a/speech/build.gradle.kts b/speech/build.gradle.kts
+index d5a74c6..c525d65 100644
+--- a/speech/build.gradle.kts
++++ b/speech/build.gradle.kts
+@@ -25,6 +25,8 @@ dependencies {
+ 
+     implementation(libs.androidx.core.ktx)
+     implementation(libs.okhttp)
++    // tar + bzip2：解压 sherpa-onnx 模型包
++    implementation(libs.commons.compress)
+ 
+     implementation(libs.kotlinx.serialization.json)
+     implementation(libs.kotlinx.coroutines.core)
 diff --git a/speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt b/speech/src/main/java/com/k2fsa/sherpa/onnx/Tts.kt
 new file mode 100644
 index 0000000..d5dd08a
@@ -37724,10 +37980,10 @@ index 9f40830..b10b4aa 100644
      }
  }
 diff --git a/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt b/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
-index 18a0061..8b03e7b 100644
+index 18a0061..a48c7da 100644
 --- a/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
 +++ b/speech/src/main/java/me/rerere/tts/provider/TTSProviderSetting.kt
-@@ -56,6 +56,53 @@ sealed class TTSProviderSetting {
+@@ -56,6 +56,64 @@ sealed class TTSProviderSetting {
          }
      }
  
@@ -37742,7 +37998,12 @@ index 18a0061..8b03e7b 100644
 +    data class SherpaOnnx(
 +        override var id: Uuid = Uuid.random(),
 +        override var name: String = "本地神经网络语音",
-+        /** 模型目录；留空则用 App 私有目录下的 [DEFAULT_MODEL_DIR_NAME] */
++        /**
++         * 选中的模型 ID（见 SherpaModelCatalog，如 "keqing" / "eula"）。
++         * 目录为 filesDir/tts_models/<modelId>；与 [modelDir] 二选一，后者优先。
++         */
++        var modelId: String = "",
++        /** 手动指定的模型目录；非空时优先于 [modelId] */
 +        var modelDir: String = "",
 +        /** 音色序号，范围 [0, numSpeakers-1]；越界会在读取时被夹紧 */
 +        var speakerId: Int = 0,
@@ -37767,10 +38028,16 @@ index 18a0061..8b03e7b 100644
 +            )
 +        }
 +
-+        /** 解析实际使用的模型目录：用户指定优先，否则用 App 私有目录下的默认位置 */
++        /**
++         * 解析实际使用的模型目录，优先级：
++         * 1) 手动指定的 [modelDir]
++         * 2) [modelId] 对应的 filesDir/tts_models/<modelId>
++         * 3) 兜底返回模型根目录（此时通常尚未下载模型，provider 会给出可操作的报错）
++         */
 +        fun resolvedModelDir(context: android.content.Context): java.io.File {
 +            if (modelDir.isNotBlank()) return java.io.File(modelDir)
-+            return java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
++            val root = java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
++            return if (modelId.isNotBlank()) java.io.File(root, modelId) else root
 +        }
 +
 +        companion object {
@@ -37783,10 +38050,10 @@ index 18a0061..8b03e7b 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..803ed36
+index 0000000..3a4c5f1
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,250 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -37973,9 +38240,17 @@ index 0000000..803ed36
 + *
 + * 目前只保留一份（单模型场景足够）；换模型时释放旧的。
 + */
-+private object SherpaTtsCache {
++internal object SherpaTtsCache {
 +    private var cachedKey: String? = null
 +    private var cached: OfflineTts? = null
++
++    /** 模型被下载/删除/替换后调用，释放 native 实例并清空缓存 */
++    @Synchronized
++    fun invalidateAll() {
++        runCatching { cached?.free() }.onFailure { Log.w(TAG, "invalidate free failed", it) }
++        cached = null
++        cachedKey = null
++    }
 +
 +    @Synchronized
 +    fun obtain(dir: File, setting: TTSProviderSetting.SherpaOnnx): OfflineTts {
@@ -37983,9 +38258,7 @@ index 0000000..803ed36
 +        cached?.let { if (cachedKey == key) return it }
 +
 +        // 释放旧实例，避免 native 内存泄漏
-+        runCatching { cached?.free() }.onFailure { Log.w(TAG, "free previous OfflineTts failed", it) }
-+        cached = null
-+        cachedKey = null
++        invalidateAll()
 +
 +        val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
 +            ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
@@ -38030,4 +38303,413 @@ index 0000000..803ed36
 +            ?.sortedBy { it.name }
 +            ?.joinToString(",") { it.absolutePath }
 +            .orEmpty()
++}
+diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
+new file mode 100644
+index 0000000..31b79f5
+--- /dev/null
++++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
+@@ -0,0 +1,134 @@
++package me.rerere.tts.sherpa
++
++/**
++ * sherpa-onnx 中文 TTS 模型清单。
++ *
++ * 全部来自官方 release `tts-models`：
++ *   https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
++ *
++ * 体积与大小均为**实测值**（HTTP HEAD 的 content-length / release 资产 size），非估算。
++ *
++ * ── 关于"音色数" ──
++ * 多个模型共享同一批说话人（804 个），模型名对应的其实是"以该角色为特色的版本"，
++ * 因此同一个模型里既有角色音色也有其它音色。想找角色本人的音色，建议从 sid=0 开始逐个试。
++ *
++ * ── 关于体积 ──
++ * 除 aishell3 外均为 115MB 左右。模型不随 APK 分发，由用户在设置页按需下载。
++ */
++data class SherpaModelInfo(
++    /** 稳定标识，同时用作本地目录名 */
++    val id: String,
++    /** 界面上显示的名称 */
++    val displayName: String,
++    /** release 资产文件名 */
++    val fileName: String,
++    /** 压缩包字节数（实测） */
++    val sizeBytes: Long,
++    /** 解压后大小（约，用于提示用户留出空间） */
++    val extractedBytes: Long,
++    /** 该模型的说话人数（来自官方文档） */
++    val speakers: Int,
++    /** 简介 */
++    val description: String,
++) {
++    val url: String get() = "$BASE_URL/$fileName"
++    val sizeMb: Float get() = sizeBytes / 1048576f
++    val extractedMb: Float get() = extractedBytes / 1048576f
++
++    companion object {
++        const val BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
++    }
++}
++
++object SherpaModelCatalog {
++
++    /** 官方 VITS 模型解压后约为压缩包的 1.4 倍（含 .onnx + 词典 + 音色表） */
++    private fun extracted(compressed: Long) = (compressed * 1.4).toLong()
++
++    /** 游戏/角色音色（用户主要诉求）+ 通用模型 */
++    val ALL: List<SherpaModelInfo> = listOf(
++        SherpaModelInfo(
++            id = "keqing",
++            displayName = "刻晴（原神）",
++            fileName = "vits-zh-hf-keqing.tar.bz2",
++            sizeBytes = 120592220L,
++            extractedBytes = extracted(120592220L),
++            speakers = 804,
++            description = "原神 刻晴 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "eula",
++            displayName = "优菈（原神）",
++            fileName = "vits-zh-hf-eula.tar.bz2",
++            sizeBytes = 120562119L,
++            extractedBytes = extracted(120562119L),
++            speakers = 804,
++            description = "原神 优菈 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "theresa",
++            displayName = "德丽莎（崩坏3）",
++            fileName = "vits-zh-hf-theresa.tar.bz2",
++            sizeBytes = 120596617L,
++            extractedBytes = extracted(120596617L),
++            speakers = 804,
++            description = "崩坏3 德丽莎 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "bronya",
++            displayName = "布洛妮娅（崩坏3）",
++            fileName = "vits-zh-hf-bronya.tar.bz2",
++            sizeBytes = 120595102L,
++            extractedBytes = extracted(120595102L),
++            speakers = 804,
++            description = "崩坏3 布洛妮娅 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "zenyatta",
++            displayName = "禅雅塔（守望先锋）",
++            fileName = "vits-zh-hf-zenyatta.tar.bz2",
++            sizeBytes = 120588994L,
++            extractedBytes = extracted(120588994L),
++            speakers = 804,
++            description = "守望先锋 禅雅塔 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "abyssinvoker",
++            displayName = "深渊召唤者（Dota2）",
++            fileName = "vits-zh-hf-abyssinvoker.tar.bz2",
++            sizeBytes = 120579632L,
++            extractedBytes = extracted(120579632L),
++            speakers = 804,
++            description = "Dota2 深渊召唤者 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "echo",
++            displayName = "回声（守望先锋）",
++            fileName = "vits-zh-hf-echo.tar.bz2",
++            sizeBytes = 120559956L,
++            extractedBytes = extracted(120559956L),
++            speakers = 804,
++            description = "守望先锋 回声 音色，804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "doom",
++            displayName = "毁灭战士",
++            fileName = "vits-zh-hf-doom.tar.bz2",
++            sizeBytes = 120556412L,
++            extractedBytes = extracted(120556412L),
++            speakers = 804,
++            description = "804 个说话人可选",
++        ),
++        SherpaModelInfo(
++            id = "aishell3",
++            displayName = "aishell3（通用中文，体积小）",
++            fileName = "vits-icefall-zh-aishell3.tar.bz2",
++            sizeBytes = 31559701L,
++            extractedBytes = extracted(31559701L),
++            speakers = 174,
++            description = "通用中文女声数据集，174 个说话人。体积只有其它模型的三分之一，建议先用它验证效果",
++        ),
++    )
++
++    fun find(id: String): SherpaModelInfo? = ALL.firstOrNull { it.id == id }
++}
+diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
+new file mode 100644
+index 0000000..dbbc6ef
+--- /dev/null
++++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
+@@ -0,0 +1,263 @@
++package me.rerere.tts.sherpa
++
++import android.content.Context
++import android.util.Log
++import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.withContext
++import okhttp3.OkHttpClient
++import okhttp3.Request
++import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
++import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
++import java.io.BufferedInputStream
++import java.io.File
++import java.io.FileOutputStream
++import java.io.IOException
++import java.io.InputStream
++import java.util.concurrent.TimeUnit
++
++private const val TAG = "SherpaModelManager"
++
++/** 模型安装进度 */
++sealed interface SherpaInstallProgress {
++    /** 下载中；total 为 0 表示服务器未给出长度 */
++    data class Downloading(val bytes: Long, val total: Long) : SherpaInstallProgress {
++        val fraction: Float get() = if (total > 0) (bytes.toFloat() / total) else 0f
++    }
++
++    /** 解压中 */
++    data class Extracting(val entriesDone: Int, val bytesWritten: Long) : SherpaInstallProgress
++
++    data class Done(val modelDir: File) : SherpaInstallProgress
++}
++
++/**
++ * sherpa-onnx 模型的下载 / 解压 / 管理。
++ *
++ * 为什么需要它：模型包是 `.tar.bz2`，而 **Android 没有内置 bz2 解压**
++ * （`java.util.zip` 只有 zip/gzip），因此引入 commons-compress。
++ *
++ * 为什么要流式：模型包 115MB、解压后约 160MB。把整个包读进内存再解压
++ * （项目里技能包的做法）在这里会直接 OOM，所以全程流式处理。
++ */
++class SherpaModelManager(private val context: Context) {
++
++    private val http = OkHttpClient.Builder()
++        .connectTimeout(30, TimeUnit.SECONDS)
++        // 115MB 下载可能超过默认读超时，放宽到 5 分钟
++        .readTimeout(5, TimeUnit.MINUTES)
++        .callTimeout(30, TimeUnit.MINUTES)
++        .build()
++
++    /** 所有模型的根目录 */
++    val rootDir: File get() = File(context.filesDir, ROOT_DIR_NAME)
++
++    private val tmpDir: File get() = File(rootDir, ".tmp")
++
++    /** 某模型解压后的目录 */
++    fun modelDir(model: SherpaModelInfo): File = File(rootDir, model.id)
++
++    fun isInstalled(model: SherpaModelInfo): Boolean {
++        val dir = modelDir(model)
++        if (!dir.isDirectory) return false
++        // 判定「已安装」需要同时满足：有 .onnx 与 tokens.txt —— 半途解压的目录不算
++        val hasModel = dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }?.isNotEmpty() == true
++        return hasModel && File(dir, "tokens.txt").isFile
++    }
++
++    fun listInstalled(): List<SherpaModelInfo> = SherpaModelCatalog.ALL.filter { isInstalled(it) }
++
++    /** 已安装模型的占用空间（字节） */
++    fun installedSize(model: SherpaModelInfo): Long = modelDir(model).walkBottomUp()
++        .filter { it.isFile }
++        .sumOf { it.length() }
++
++    fun delete(model: SherpaModelInfo): Boolean {
++        val dir = modelDir(model)
++        if (!dir.exists()) return true
++        return dir.deleteRecursively().also {
++            Log.i(TAG, "delete ${model.id}: $it")
++            if (it) onModelsChanged()
++        }
++    }
++
++    /**
++     * 下载并安装模型。整个过程在 IO 线程；[onProgress] 会在 IO 线程回调，
++     * 调用方若需更新 UI 请自行切回主线程。
++     */
++    suspend fun install(
++        model: SherpaModelInfo,
++        onProgress: (SherpaInstallProgress) -> Unit,
++    ): Result<File> = withContext(Dispatchers.IO) {
++        val staging = File(tmpDir, model.id)
++        try {
++            if (isInstalled(model)) {
++                onProgress(SherpaInstallProgress.Done(modelDir(model)))
++                return@withContext Result.success(modelDir(model))
++            }
++
++            // 空间检查：压缩包 + 解压后 + 余量
++            rootDir.mkdirs()
++            val need = model.sizeBytes + model.extractedBytes + 64L * 1024 * 1024
++            val free = rootDir.usableSpace
++            if (free in 1 until need) {
++                return@withContext Result.failure(
++                    IOException("存储空间不足：需要约 ${need / 1048576}MB，可用 ${free / 1048576}MB")
++                )
++            }
++
++            staging.deleteRecursively()
++            staging.mkdirs()
++            val archive = File(staging, "model.tar.bz2")
++
++            // ── 1) 下载 ──
++            download(model, archive, onProgress)
++
++            // ── 2) 解压到 staging/extracted ──
++            val extractTo = File(staging, "extracted").apply { mkdirs() }
++            extractTarBz2(archive, extractTo, onProgress)
++
++            // ── 3) 探测模型所在目录（tar 可能带一层顶层目录）──
++            val payloadDir = findModelRoot(extractTo)
++                ?: return@withContext Result.failure(
++                    IOException("解压后未找到 .onnx 模型文件，压缩包可能已损坏")
++                )
++
++            // ── 4) 落位 ──
++            val finalDir = modelDir(model)
++            finalDir.deleteRecursively()
++            finalDir.parentFile?.mkdirs()
++            if (!payloadDir.renameTo(finalDir)) {
++                // 跨文件系统或失败时退化为复制
++                payloadDir.copyRecursively(finalDir, overwrite = true)
++                payloadDir.deleteRecursively()
++            }
++
++            if (!isInstalled(model)) {
++                return@withContext Result.failure(IOException("安装校验失败：缺少 .onnx 或 tokens.txt"))
++            }
++
++            archive.delete()
++            staging.deleteRecursively()
++            onModelsChanged()
++            Log.i(TAG, "install ${model.id} -> ${finalDir.absolutePath}")
++            onProgress(SherpaInstallProgress.Done(finalDir))
++            Result.success(finalDir)
++        } catch (e: Throwable) {
++            Log.e(TAG, "install ${model.id} failed", e)
++            runCatching { staging.deleteRecursively() }
++            Result.failure(e)
++        }
++    }
++
++    private fun download(
++        model: SherpaModelInfo,
++        target: File,
++        onProgress: (SherpaInstallProgress) -> Unit,
++    ) {
++        val request = Request.Builder().url(model.url).build()
++        http.newCall(request).execute().use { resp ->
++            if (!resp.isSuccessful) {
++                throw IOException("下载失败：HTTP ${resp.code}")
++            }
++            val body = resp.body
++            val total = body.contentLength().takeIf { it > 0 } ?: model.sizeBytes
++            body.byteStream().use { input ->
++                FileOutputStream(target).use { out ->
++                    val buf = ByteArray(256 * 1024)
++                    var written = 0L
++                    var lastReported = 0L
++                    while (true) {
++                        val n = input.read(buf)
++                        if (n <= 0) break
++                        out.write(buf, 0, n)
++                        written += n
++                        // 每 512KB 上报一次，避免过于频繁地触发重组
++                        if (written - lastReported >= 512 * 1024) {
++                            lastReported = written
++                            onProgress(SherpaInstallProgress.Downloading(written, total))
++                        }
++                    }
++                    out.flush()
++                    onProgress(SherpaInstallProgress.Downloading(written, total))
++                }
++            }
++        }
++    }
++
++    private fun extractTarBz2(
++        archive: File,
++        destDir: File,
++        onProgress: (SherpaInstallProgress) -> Unit,
++    ) {
++        var entries = 0
++        var bytes = 0L
++        val destPath = destDir.canonicalPath
++
++        archive.inputStream().let { raw: InputStream ->
++            BufferedInputStream(raw, 256 * 1024).let { buffered ->
++                BZip2CompressorInputStream(buffered, true).let { bz ->
++                    TarArchiveInputStream(bz).use { tar ->
++                        val buf = ByteArray(256 * 1024)
++                        while (true) {
++                            val entry = tar.nextEntry ?: break
++                            val name = entry.name
++                            // 防路径穿越：拒绝绝对路径与 ..
++                            if (name.contains("..") || name.startsWith("/")) {
++                                Log.w(TAG, "skip suspicious entry: $name")
++                                continue
++                            }
++                            val outFile = File(destDir, name)
++                            if (!outFile.canonicalPath.startsWith(destPath)) {
++                                Log.w(TAG, "skip out-of-tree entry: $name")
++                                continue
++                            }
++                            if (entry.isDirectory) {
++                                outFile.mkdirs()
++                                continue
++                            }
++                            outFile.parentFile?.mkdirs()
++                            FileOutputStream(outFile).use { out ->
++                                while (true) {
++                                    val n = tar.read(buf)
++                                    if (n <= 0) break
++                                    out.write(buf, 0, n)
++                                    bytes += n
++                                }
++                            }
++                            entries++
++                            onProgress(SherpaInstallProgress.Extracting(entries, bytes))
++                        }
++                    }
++                }
++            }
++        }
++        Log.i(TAG, "extract done: entries=$entries bytes=$bytes")
++    }
++
++    /** 在解压结果里找到包含 .onnx 的目录 */
++    private fun findModelRoot(root: File): File? {
++        if (hasOnnx(root)) return root
++        val sub = root.listFiles { f -> f.isDirectory } ?: return null
++        sub.firstOrNull { hasOnnx(it) }?.let { return it }
++        for (d in sub) {
++            val deeper = d.listFiles { f -> f.isDirectory } ?: continue
++            deeper.firstOrNull { hasOnnx(it) }?.let { return it }
++        }
++        return null
++    }
++
++    private fun hasOnnx(dir: File): Boolean =
++        dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }?.isNotEmpty() == true
++
++    companion object {
++        const val ROOT_DIR_NAME = "tts_models"
++
++        /**
++         * 模型目录变化后让 provider 的 OfflineTts 缓存失效。
++         * 由于缓存是进程级的（换模型/删模型后旧实例已无效），这里统一通知。
++         */
++        private fun onModelsChanged() {
++            runCatching { me.rerere.tts.provider.providers.SherpaTtsCache.invalidateAll() }
++        }
++    }
 +}

@@ -1857,4 +1857,15 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="setting_tts_page_sherpa_silence_desc">句子之间插入的静音比例（默认 0.2）。</string>
   <string name="setting_tts_page_sherpa_threads">推理线程数</string>
   <string name="setting_tts_page_sherpa_threads_desc">用于合成的 CPU 线程数，手机上过多反而变慢（默认 2）。</string>
+
+  <string name="setting_tts_page_sherpa_model">模型</string>
+  <string name="setting_tts_page_sherpa_model_desc">用于合成的模型。请先在下方下载一个。</string>
+  <string name="setting_tts_page_sherpa_no_model">尚未安装模型 —— 请在下方下载一个。</string>
+  <string name="setting_tts_page_sherpa_download">可用模型</string>
+  <string name="setting_tts_page_sherpa_download_desc">在应用内下载并本地解压，需要联网；每个约 115MB。</string>
+  <string name="setting_tts_page_sherpa_voices_suffix"> 个音色</string>
+  <string name="setting_tts_page_sherpa_installed">%1$s 已安装</string>
+  <string name="setting_tts_page_sherpa_installed_short">已安装</string>
+  <string name="setting_tts_page_sherpa_download_btn">下载</string>
+  <string name="setting_tts_page_sherpa_delete">删除</string>
 </resources>

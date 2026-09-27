@@ -25,6 +25,8 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.okhttp)
+    // tar + bzip2：解压 sherpa-onnx 模型包
+    implementation(libs.commons.compress)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)

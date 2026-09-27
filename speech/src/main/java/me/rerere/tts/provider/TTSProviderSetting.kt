@@ -67,7 +67,12 @@ sealed class TTSProviderSetting {
     data class SherpaOnnx(
         override var id: Uuid = Uuid.random(),
         override var name: String = "本地神经网络语音",
-        /** 模型目录；留空则用 App 私有目录下的 [DEFAULT_MODEL_DIR_NAME] */
+        /**
+         * 选中的模型 ID（见 SherpaModelCatalog，如 "keqing" / "eula"）。
+         * 目录为 filesDir/tts_models/<modelId>；与 [modelDir] 二选一，后者优先。
+         */
+        var modelId: String = "",
+        /** 手动指定的模型目录；非空时优先于 [modelId] */
         var modelDir: String = "",
         /** 音色序号，范围 [0, numSpeakers-1]；越界会在读取时被夹紧 */
         var speakerId: Int = 0,
@@ -92,10 +97,16 @@ sealed class TTSProviderSetting {
             )
         }
 
-        /** 解析实际使用的模型目录：用户指定优先，否则用 App 私有目录下的默认位置 */
+        /**
+         * 解析实际使用的模型目录，优先级：
+         * 1) 手动指定的 [modelDir]
+         * 2) [modelId] 对应的 filesDir/tts_models/<modelId>
+         * 3) 兜底返回模型根目录（此时通常尚未下载模型，provider 会给出可操作的报错）
+         */
         fun resolvedModelDir(context: android.content.Context): java.io.File {
             if (modelDir.isNotBlank()) return java.io.File(modelDir)
-            return java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
+            val root = java.io.File(context.filesDir, DEFAULT_MODEL_DIR_NAME)
+            return if (modelId.isNotBlank()) java.io.File(root, modelId) else root
         }
 
         companion object {

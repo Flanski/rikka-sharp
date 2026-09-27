@@ -1857,4 +1857,15 @@
   <string name="setting_tts_page_sherpa_silence_desc">Silence inserted between sentences (default 0.2).</string>
   <string name="setting_tts_page_sherpa_threads">Inference threads</string>
   <string name="setting_tts_page_sherpa_threads_desc">CPU threads used for synthesis. Too many can be slower on phones (default 2).</string>
+
+  <string name="setting_tts_page_sherpa_model">Model</string>
+  <string name="setting_tts_page_sherpa_model_desc">The model used for synthesis. Download one below first.</string>
+  <string name="setting_tts_page_sherpa_no_model">No model installed yet — download one below.</string>
+  <string name="setting_tts_page_sherpa_download">Available models</string>
+  <string name="setting_tts_page_sherpa_download_desc">Downloaded inside the app and extracted locally. Network required; roughly 115MB each.</string>
+  <string name="setting_tts_page_sherpa_voices_suffix"> voices</string>
+  <string name="setting_tts_page_sherpa_installed">%1$s installed</string>
+  <string name="setting_tts_page_sherpa_installed_short">installed</string>
+  <string name="setting_tts_page_sherpa_download_btn">Download</string>
+  <string name="setting_tts_page_sherpa_delete">Delete</string>
 </resources>

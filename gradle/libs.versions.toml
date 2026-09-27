@@ -71,11 +71,15 @@ jsch = "2.28.7"
 # （JSch 在 java.version < 15 时会把 keypairgen.eddsa 指向 com.jcraft.jsch.bc.*）
 # 选 1.78.1：class-file 上限 65(Java21)，在 AGP 9.x 的 D8 支持范围内
 bcprov = "1.78.1"
+# 仅用于解压 sherpa-onnx 模型包（.tar.bz2）。Android 无内置 bz2 解压。
+# class-file 52(Java 8)，Android 兼容。zstd-jni/dec/xz/asm 均为 optional，不会被传递引入。
+commons-compress = "1.28.0"
 
 [libraries]
 android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
 jsch = { module = "com.github.mwiede:jsch", version.ref = "jsch" }
 bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bcprov" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commons-compress" }
 kotlin-compose-gradle-plugin = { module = "org.jetbrains.kotlin:compose-compiler-gradle-plugin", version.ref = "kotlin" }
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "cameraCore" }

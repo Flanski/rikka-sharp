@@ -25,14 +25,20 @@ import re
 import sys
 
 # 接收「非 @Composable lambda」的函数名（精确匹配标识符最后一段）
+# 只有 **builder DSL** 的 lambda 不允许 composable 调用。
+#
+# 实证结论（本项目 run#14 失败 / run#15 成功 对比得到）：
+#   ❌ buildList { stringResource(...) }  → 编译错误
+#        "@Composable invocations can only happen from the context of a @Composable function"
+#   ✅ items.forEach { item(headlineContent = { Text(...) }) } → 编译通过
+#
+# 原因：forEach/map/let/apply 等是**简单 inline 函数**，lambda 会被内联到调用点，
+# 因此内联后仍在 composable 上下文；而 buildList/buildString 这类 builder DSL
+# 的 receiver lambda 不被 Compose 编译器视为 composable 上下文。
+#
+# 早期版本把 forEach/map/let/onClick 等一并列入黑名单，产生大量**误报**。
 NON_COMPOSABLE_FNS = {
-    'buildList', 'buildMap', 'buildSet', 'forEach', 'map', 'mapNotNull', 'filter',
-    'filterNot', 'any', 'all', 'none', 'first', 'firstOrNull', 'lastOrNull',
-    'joinToString', 'sortedBy', 'sortedWith', 'sumOf', 'count', 'associate',
-    'associateBy', 'groupBy', 'distinctBy', 'takeIf', 'takeUnless', 'let', 'run',
-    'apply', 'also', 'with', 'repeat', 'onEach', 'flatMap', 'fold', 'reduce',
-    'onClick', 'onCheckedChange', 'onValueChange', 'onDismissRequest', 'onSelect',
-    'ifEmpty', 'ifBlank', 'launch', 'invoke',
+    'buildList', 'buildMap', 'buildSet', 'buildString',
 }
 
 # @Composable 函数名（不含普通属性访问，如 MaterialTheme.xxx 属正常代码）
