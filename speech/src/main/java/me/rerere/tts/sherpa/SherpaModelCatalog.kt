@@ -15,6 +15,19 @@ package me.rerere.tts.sherpa
  * ── 关于体积 ──
  * 除 aishell3 外均为 115MB 左右。模型不随 APK 分发，由用户在设置页按需下载。
  */
+/**
+ * 模型的打包形式。
+ *
+ *  - [TARBZ2]：官方发布形式（tar.bz2，含 onnx + tokens + lexicon + fst + dict）
+ *  - [RAW_ONNX]：裸 onnx 文件。上游未发布的角色由本项目在 GitHub Actions 里
+ *    用官方转换脚本（`tools/vits-zh-hf-models.py`）从 .pth 导出后放到 Release，
+ *    tokens/lexicon 等**共用文件**单独打包（见 [SherpaModelInfo.sharedResourcesUrl]）。
+ *
+ * 为什么需要区分：两者下载与安装流程不同 —— tar.bz2 要解压并探测目录，
+ * 裸 onnx 直接落位并确保共用文件就位即可。
+ */
+enum class ModelPackage { TARBZ2, RAW_ONNX }
+
 /** 用于界面筛选的粗分类（由文件名推断，不追求精确语言识别） */
 enum class ModelCategory(val label: String) {
     CHINESE("中文"),
@@ -57,8 +70,18 @@ data class SherpaModelInfo(
     val source: String = "",
     /** 模型语言（上游 info.json 的 language 字段） */
     val language: String = "Chinese",
+    /** 打包形式 */
+    val pkg: ModelPackage = ModelPackage.TARBZ2,
 ) {
-    val url: String get() = "$BASE_URL/$fileName"
+    /**
+     * 下载地址。
+     * 官方模型来自 sherpa-onnx 的 tts-models；自转模型（RAW_ONNX）来自本项目 Release。
+     */
+    val url: String
+        get() = when (pkg) {
+            ModelPackage.TARBZ2 -> "$BASE_URL/$fileName"
+            ModelPackage.RAW_ONNX -> "$EXTRA_BASE_URL/$id.onnx"
+        }
     val sizeMb: Float get() = sizeBytes / 1048576f
     val extractedMb: Float get() = extractedBytes / 1048576f
 
@@ -67,6 +90,29 @@ data class SherpaModelInfo(
 
     companion object {
         const val BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+
+        /**
+         * 本项目自转模型的 Release。
+         *
+         * 上游 38 个角色里只发布了 8 个角色（其余 30 个需自行从 .pth 转换）。
+         * 本项目用 GitHub Actions（`.github/workflows/convert-vits-batch.yml`）
+         * 跑官方转换脚本生成，实测产出与官方同类文件仅差约 99 字节，
+         * 且能被 sherpa-onnx 加载并用中文合成。
+         */
+        const val EXTRA_BASE_URL =
+            "https://github.com/Flanski/rikka-sharp/releases/download/tts-models-v1"
+
+        /**
+         * 共用资源包（tokens.txt + lexicon.txt + 4 个 .fst）。
+         *
+         * 所有 `vits-zh-hf-*` 模型的这些文件**逐字节相同**（已用 md5 逐一验证），
+         * 因为它们由同一份 `config/config.json` 与同一套 pypinyin 词典生成。
+         * 故只在首次安装 RAW_ONNX 模型时下载一次（压缩后约 0.5MB，解压约 2.9MB）。
+         */
+        const val SHARED_ARCHIVE_URL = "$EXTRA_BASE_URL/vits-zh-hf-shared.tar.bz2"
+
+        /** 共用资源的存放目录名（位于模型根目录下） */
+        const val SHARED_DIR_NAME = "_shared"
 
         /**
          * 已知模型的友好名称。只覆盖常用项；未命中的回退为文件名本身
@@ -264,6 +310,75 @@ object SherpaModelCatalog {
             speakers = 1,
             description = "中英文混读（英文仅能读 lexicon.txt 里收录的词）",
         ),
+    ) + EXTRA
+
+    /**
+     * 裸 onnx 模型的声明辅助 —— 上游未发布的 30 个角色都由它构造。
+     *
+     * 这些角色的**原始数据均为日语**（上游 info.json 的 language 字段），
+     * 但生成时用的 cleaner 是 `zh_ja_mixture_cleaners`（中英日混合），
+     * 所以**读中文也没问题**（已在设备上用 C API 实测：卡芙卡 multi 与
+     * 纳西妲 single 两种类型都能正常合成中文）。
+     */
+    private fun raw(
+        id: String,
+        nameZh: String,
+        source: String,
+        sid: Int,
+        sizeBytes: Long,
+    ) = SherpaModelInfo(
+        id = id,
+        displayName = "$nameZh（$source）",
+        fileName = "$id.onnx",
+        sizeBytes = sizeBytes,
+        // 裸 onnx 无需解压，但安装时还要取共用资源（约 2.9MB），故留 4MB 余量
+        extractedBytes = sizeBytes + 4L * 1024 * 1024,
+        speakers = 804,
+        description = "$source $nameZh。日语语音模型（实测也能读中文）。选中后会自动把音色设为 $sid",
+        featuredSid = sid,
+        source = source,
+        language = "Japanese",
+        pkg = ModelPackage.RAW_ONNX,
+    )
+
+    /**
+     * 上游**未发布**的 30 个角色（含 4 个米哈游）。
+     *
+     * 由本项目在 GitHub Actions 上用官方转换脚本从 .pth 导出后发布到 Release，
+     * 见 `.github/workflows/convert-vits-batch.yml`。
+     * 实测：产出 onnx 与官方同类文件大小仅差约 99 字节（121,914,005 vs 121,913,906）。
+     */
+    val EXTRA: List<SherpaModelInfo> = listOf(
+        raw("ameth", "爱梅斯", "公主连结", 0, 114041674L),
+        raw("eriko", "惠理子", "公主连结", 0, 114041674L),
+        raw("hatsune", "柏崎初音", "公主连结", 10, 121914005L),
+        raw("hiyori", "日和莉", "公主连结", 0, 114041674L),
+        raw("kokoro", "可可萝", "公主连结", 0, 114041674L),
+        raw("kyaru", "凯露", "公主连结", 10, 121914005L),
+        raw("kyoka", "镜华", "公主连结", 0, 121914005L),
+        raw("misora", "美空", "公主连结", 0, 114041674L),
+        raw("pecorine", "佩可莉姆", "公主连结", 10, 121914005L),
+        raw("yuni", "优妮", "公主连结", 0, 114041674L),
+        raw("ayaka-jp", "神里绫华-日语", "原神", 303, 121914005L),
+        raw("nahida-jp", "纳西妲-日语", "原神", 0, 114041674L),
+        raw("herta", "黑塔", "星穹铁道", 10, 121914005L),
+        raw("kafka", "卡芙卡", "星穹铁道", 10, 121914005L),
+        raw("chisato", "锦木千束", "莉可丽丝", 0, 114041674L),
+        raw("takina", "井上泷奈", "莉可丽丝", 0, 114041674L),
+        raw("alice", "天童爱丽丝", "蔚蓝档案", 10, 121914005L),
+        raw("asuna", "一之濑明日奈", "蔚蓝档案", 10, 121914005L),
+        raw("azusa", "白洲梓", "蔚蓝档案", 10, 121914005L),
+        raw("hina", "空崎日奈", "蔚蓝档案", 10, 121914005L),
+        raw("hoshino", "小鸟游星野", "蔚蓝档案", 10, 121914005L),
+        raw("iori", "银镜伊织", "蔚蓝档案", 10, 121914005L),
+        raw("iroha", "枣伊吕波", "蔚蓝档案", 10, 121914005L),
+        raw("izuna", "久田泉奈", "蔚蓝档案", 10, 121914005L),
+        raw("karin", "角楯花凛", "蔚蓝档案", 10, 121914005L),
+        raw("mika", "圣园未花", "蔚蓝档案", 10, 121914005L),
+        raw("miyu", "霞泽美游", "蔚蓝档案", 10, 121914005L),
+        raw("momoi", "才羽桃井", "蔚蓝档案", 10, 121914005L),
+        raw("shiroko", "砂狼白子", "蔚蓝档案", 10, 121914005L),
+        raw("yuuka", "早濑优香", "蔚蓝档案", 40, 121914005L),
     )
 
     fun find(id: String): SherpaModelInfo? = ALL.firstOrNull { it.id == id }

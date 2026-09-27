@@ -56,12 +56,24 @@ class SherpaModelManager(private val context: Context) {
     /** 某模型解压后的目录 */
     fun modelDir(model: SherpaModelInfo): File = File(rootDir, model.id)
 
+    /**
+     * 共用资源目录（tokens.txt + lexicon.txt + 4 个 .fst）。
+     *
+     * 只有 [ModelPackage.RAW_ONNX] 模型需要它 —— 官方 tar.bz2 包自带这些文件。
+     * 之所以共用：所有 `vits-zh-hf-*` 模型的这几个文件**逐字节相同**
+     * （同一份 config.json 与同一套 pypinyin 词典生成，已用 md5 逐一验证），
+     * 所以不随每个模型重复分发，避免 30 × 2.9MB 的冗余。
+     */
+    val sharedDir: File get() = File(rootDir, SherpaModelCatalog.SHARED_DIR_NAME)
+
     fun isInstalled(model: SherpaModelInfo): Boolean {
         val dir = modelDir(model)
         if (!dir.isDirectory) return false
-        // 判定「已安装」需要同时满足：有 .onnx 与 tokens.txt —— 半途解压的目录不算
+        // 判定「已安装」需要同时满足：有 .onnx，且能取到 tokens.txt
+        // （RAW_ONNX 的 tokens 来自共用目录；半途解压的目录两者都缺，不算已装）
         val hasModel = dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }?.isNotEmpty() == true
-        return hasModel && File(dir, "tokens.txt").isFile
+        if (!hasModel) return false
+        return File(dir, "tokens.txt").isFile || File(sharedDir, "tokens.txt").isFile
     }
 
     fun listInstalled(): List<SherpaModelInfo> = SherpaModelCatalog.ALL.filter { isInstalled(it) }
@@ -86,6 +98,21 @@ class SherpaModelManager(private val context: Context) {
      * 调用方若需更新 UI 请自行切回主线程。
      */
     suspend fun install(
+        model: SherpaModelInfo,
+        onProgress: (SherpaInstallProgress) -> Unit,
+    ): Result<File> = withContext(Dispatchers.IO) {
+        if (isInstalled(model)) {
+            onProgress(SherpaInstallProgress.Done(modelDir(model)))
+            return@withContext Result.success(modelDir(model))
+        }
+        when (model.pkg) {
+            ModelPackage.RAW_ONNX -> installRawOnnx(model, onProgress)
+            ModelPackage.TARBZ2 -> installFromArchive(model, onProgress)
+        }
+    }
+
+    /** 官方 tar.bz2 包的安装流程：下载 → 解压 → 探测目录 → 落位 */
+    private suspend fun installFromArchive(
         model: SherpaModelInfo,
         onProgress: (SherpaInstallProgress) -> Unit,
     ): Result<File> = withContext(Dispatchers.IO) {
@@ -154,14 +181,25 @@ class SherpaModelManager(private val context: Context) {
         model: SherpaModelInfo,
         target: File,
         onProgress: (SherpaInstallProgress) -> Unit,
+    ) = downloadUrl(model.url, model.sizeBytes, target, onProgress)
+
+    /**
+     * 实际下载逻辑。把 url 抽出来是为了让「共用资源包」也能复用同一套
+     * 进度上报与超时处理（它不对应任何 [SherpaModelInfo]）。
+     */
+    private fun downloadUrl(
+        url: String,
+        fallbackSize: Long,
+        target: File,
+        onProgress: (SherpaInstallProgress) -> Unit,
     ) {
-        val request = Request.Builder().url(model.url).build()
+        val request = Request.Builder().url(url).build()
         http.newCall(request).execute().use { resp ->
             if (!resp.isSuccessful) {
                 throw IOException("下载失败：HTTP ${resp.code}")
             }
             val body = resp.body
-            val total = body.contentLength().takeIf { it > 0 } ?: model.sizeBytes
+            val total = body.contentLength().takeIf { it > 0 } ?: fallbackSize
             body.byteStream().use { input ->
                 FileOutputStream(target).use { out ->
                     val buf = ByteArray(256 * 1024)
@@ -236,6 +274,108 @@ class SherpaModelManager(private val context: Context) {
     }
 
     /** 在解压结果里找到包含 .onnx 的目录 */
+    /**
+     * 裸 onnx 模型的安装流程（上游未发布的 30 个角色）。
+     *
+     * 与官方 tar.bz2 的差别：
+     *  · 只下载单个 .onnx，无需解压
+     *  · tokens / lexicon / fst 走**共用资源**（[ensureSharedResources]），不随模型分发
+     *
+     * 已验证：multi 类型（如卡芙卡 sid=10）与 single 类型（如纳西妲 sid=0）
+     * 都能被 sherpa-onnx 加载，并用**中文**正常合成
+     * 　（生成时用的是 `zh_ja_mixture_cleaners`，故日语角色模型也能读中文）。
+     */
+    private suspend fun installRawOnnx(
+        model: SherpaModelInfo,
+        onProgress: (SherpaInstallProgress) -> Unit,
+    ): Result<File> = withContext(Dispatchers.IO) {
+        val staging = File(tmpDir, model.id)
+        try {
+            rootDir.mkdirs()
+            val need = model.sizeBytes + SHARED_RESERVE_BYTES + 64L * 1024 * 1024
+            val free = rootDir.usableSpace
+            if (free in 1 until need) {
+                return@withContext Result.failure(
+                    IOException("存储空间不足：需要约 ${need / 1048576}MB，可用 ${free / 1048576}MB")
+                )
+            }
+
+            staging.deleteRecursively()
+            staging.mkdirs()
+            val onnx = File(staging, "${model.id}.onnx")
+
+            // 1) 下载 onnx
+            download(model, onnx, onProgress)
+
+            // 2) 确保共用资源（仅首次真正下载，之后直接返回）
+            ensureSharedResources(onProgress)
+
+            // 3) 落位
+            val finalDir = modelDir(model)
+            finalDir.deleteRecursively()
+            finalDir.parentFile?.mkdirs()
+            finalDir.mkdirs()
+            val dest = File(finalDir, onnx.name)
+            if (!onnx.renameTo(dest)) {
+                onnx.copyTo(dest, overwrite = true)
+            }
+
+            if (!isInstalled(model)) {
+                return@withContext Result.failure(IOException("安装校验失败：缺少 .onnx 或共用资源"))
+            }
+
+            staging.deleteRecursively()
+            onModelsChanged()
+            Log.i(TAG, "install raw ${model.id} -> ${finalDir.absolutePath}")
+            onProgress(SherpaInstallProgress.Done(finalDir))
+            Result.success(finalDir)
+        } catch (e: Throwable) {
+            Log.e(TAG, "install raw ${model.id} failed", e)
+            runCatching { staging.deleteRecursively() }
+            Result.failure(e)
+        }
+    }
+
+    /** 确保共用资源就位；已就位则立即返回 */
+    private fun ensureSharedResources(onProgress: (SherpaInstallProgress) -> Unit) {
+        val dir = sharedDir
+        if (File(dir, "tokens.txt").isFile && File(dir, "lexicon.txt").isFile) return
+
+        dir.mkdirs()
+        val archive = File(tmpDir, "shared.tar.bz2")
+        archive.parentFile?.mkdirs()
+        downloadUrl(SherpaModelCatalog.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
+
+        val stage = File(tmpDir, "shared_extract")
+        stage.deleteRecursively()
+        stage.mkdirs()
+        extractTarBz2(archive, stage, onProgress)
+
+        // 共用资源包里没有 .onnx，故不能用 findModelRoot，改按 tokens.txt 定位
+        val payload = findDirContaining(stage, "tokens.txt")
+            ?: throw IOException("共用资源包解压后未找到 tokens.txt")
+        payload.listFiles()?.forEach { f ->
+            val dst = File(dir, f.name)
+            if (dst.exists()) dst.deleteRecursively()
+            if (!f.renameTo(dst)) f.copyRecursively(dst, overwrite = true)
+        }
+        archive.delete()
+        stage.deleteRecursively()
+        Log.i(TAG, "shared resources ready: ${dir.absolutePath}")
+    }
+
+    /** 在 [root] 及其子目录里找第一个包含指定文件名的目录 */
+    private fun findDirContaining(root: File, fileName: String): File? {
+        if (File(root, fileName).isFile) return root
+        val sub = root.listFiles { f -> f.isDirectory } ?: return null
+        sub.firstOrNull { File(it, fileName).isFile }?.let { return it }
+        for (d in sub) {
+            val deeper = d.listFiles { f -> f.isDirectory } ?: continue
+            deeper.firstOrNull { File(it, fileName).isFile }?.let { return it }
+        }
+        return null
+    }
+
     private fun findModelRoot(root: File): File? {
         if (hasOnnx(root)) return root
         val sub = root.listFiles { f -> f.isDirectory } ?: return null
@@ -252,6 +392,9 @@ class SherpaModelManager(private val context: Context) {
 
     companion object {
         const val ROOT_DIR_NAME = "tts_models"
+
+        /** 共用资源（tokens/lexicon/fst）解压后约 2.9MB，留 4MB 余量做空间检查 */
+        private const val SHARED_RESERVE_BYTES = 4L * 1024 * 1024
 
         /**
          * 模型目录变化后让 provider 的 OfflineTts 缓存失效。

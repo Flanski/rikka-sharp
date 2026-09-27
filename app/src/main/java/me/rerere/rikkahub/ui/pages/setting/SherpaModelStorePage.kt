@@ -76,6 +76,9 @@ fun SherpaModelStorePage() {
     var query by remember { mutableStateOf("") }
     var categoryFilter by remember { mutableStateOf<ModelCategory?>(null) }
     var onlyInstalled by remember { mutableStateOf(false) }
+    // 角色音色筛选：catalog 里有 8 个官方角色 + 30 个自转角色，
+    // 与通用模型混在一起不便查找，故单独给一个筛选入口。
+    var onlyCharacters by remember { mutableStateOf(false) }
     var refreshing by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf(store.currentModels()) }
     var installingId by remember { mutableStateOf<String?>(null) }
@@ -95,9 +98,10 @@ fun SherpaModelStorePage() {
     val useLabel = stringResource(R.string.sherpa_store_use)
     val currentLabel = stringResource(R.string.sherpa_store_current)
 
-    val visible = remember(models, query, categoryFilter, onlyInstalled, installedIds) {
+    val visible = remember(models, query, categoryFilter, onlyInstalled, onlyCharacters, installedIds) {
         models.filter { m ->
             if (onlyInstalled && m.id !in installedIds) return@filter false
+            if (onlyCharacters && m.featuredSid < 0) return@filter false
             if (categoryFilter != null && m.category != categoryFilter) return@filter false
             if (query.isNotBlank()) {
                 val q = query.trim().lowercase()
@@ -163,18 +167,29 @@ fun SherpaModelStorePage() {
             // 分类筛选
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(
-                    selected = categoryFilter == null && !onlyInstalled,
-                    onClick = { categoryFilter = null; onlyInstalled = false },
+                    selected = categoryFilter == null && !onlyInstalled && !onlyCharacters,
+                    onClick = { categoryFilter = null; onlyInstalled = false; onlyCharacters = false },
                     label = { Text(stringResource(R.string.sherpa_store_filter_all)) },
                 )
                 FilterChip(
+                    selected = onlyCharacters,
+                    onClick = {
+                        onlyCharacters = !onlyCharacters
+                        if (onlyCharacters) { categoryFilter = null; onlyInstalled = false }
+                    },
+                    label = { Text(stringResource(R.string.sherpa_store_filter_characters)) },
+                )
+                FilterChip(
                     selected = categoryFilter == ModelCategory.CHINESE,
-                    onClick = { categoryFilter = ModelCategory.CHINESE; onlyInstalled = false },
+                    onClick = { categoryFilter = ModelCategory.CHINESE; onlyInstalled = false; onlyCharacters = false },
                     label = { Text(ModelCategory.CHINESE.label) },
                 )
                 FilterChip(
                     selected = onlyInstalled,
-                    onClick = { onlyInstalled = !onlyInstalled; if (onlyInstalled) categoryFilter = null },
+                    onClick = {
+                        onlyInstalled = !onlyInstalled
+                        if (onlyInstalled) { categoryFilter = null; onlyCharacters = false }
+                    },
                     label = { Text(installedLabel) },
                 )
             }
@@ -325,6 +340,8 @@ private fun SherpaModelRow(
                             text = buildString {
                                 append(model.sizeMb.toInt())
                                 append("MB")
+                                // 自转的 30 个角色原始数据是日语，但也能读中文 —— 标出来避免误解
+                                if (model.language.startsWith("Japanese")) append(" · 日语")
                                 if (model.source.isNotBlank()) {
                                     append(" · ")
                                     append(model.source)

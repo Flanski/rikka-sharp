@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.rerere.tts.model.AudioChunk
+import me.rerere.tts.sherpa.SherpaModelCatalog
 import me.rerere.tts.model.AudioFormat
 import me.rerere.tts.model.TTSRequest
 import me.rerere.tts.provider.TTSProvider
@@ -249,14 +250,31 @@ class SherpaOnnxTTSProvider : TTSProvider<TTSProviderSetting.SherpaOnnx> {
             return "模型目录中未找到 .onnx 模型文件：${dir.absolutePath}\n" +
                 "请确认已完整解压模型包（应包含 model.onnx / lexicon.txt / tokens.txt）。"
         }
-        val tokens = File(dir, "tokens.txt")
-        if (!tokens.isFile) {
-            return "模型目录缺少 tokens.txt：${dir.absolutePath}"
+        if (resolveAuxFile(dir, "tokens.txt") == null) {
+            return "缺少 tokens.txt：${dir.absolutePath}\n" +
+                "（上游未发布的角色模型为裸 onnx，其 tokens.txt 由共用资源提供，\n" +
+                "  若刚安装完仍报此错，可删除该模型后重新下载）"
         }
         return null
     }
 
     companion object {
+        /**
+         * 解析模型的辅助文件（tokens.txt / lexicon.txt / *.fst）。
+         *
+         * 优先取模型目录内的；取不到则回退到**共用资源目录**。
+         *
+         * 为什么需要回退：上游未发布的角色（见 `SherpaModelCatalog.EXTRA`）
+         * 是以**裸 onnx** 形式分发的，没有自己的 tokens/lexicon —— 这些文件在
+         * 所有 `vits-zh-hf-*` 模型之间**逐字节相同**，故只在共用目录放一份
+         * （避免 30 × 2.9MB 冗余）。
+         */
+        fun resolveAuxFile(dir: File, name: String): File? {
+            File(dir, name).let { if (it.isFile) return it }
+            val shared = dir.parentFile?.let { File(it, SherpaModelCatalog.SHARED_DIR_NAME) }
+            return shared?.let { File(it, name) }?.takeIf { it.isFile }
+        }
+
         /** 模型文件命名在不同模型里可能是 model.onnx / *.onnx，逐个探测 */
         fun resolveModelFile(dir: File): File? {
             val exact = File(dir, "model.onnx")
@@ -342,8 +360,9 @@ internal object SherpaTtsCache {
 
         val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
             ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
-        val tokens = File(dir, "tokens.txt").absolutePath
-        val lexicon = File(dir, "lexicon.txt").let { if (it.isFile) it.absolutePath else "" }
+        // tokens/lexicon 可能来自共用资源目录（裸 onnx 模型），故统一走 resolveAuxFile
+        val tokens = resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
+        val lexicon = resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
 
         // ★ data_dir 只在其**确实是 espeak-ng 数据目录**时才设置 —— 判据是存在 phontab。
         //

@@ -1892,4 +1892,6 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
 
   <string name="sherpa_speaker_recommended">推荐音色：%1$s（sid %2$d）</string>
   <string name="sherpa_speaker_use">使用</string>
+
+  <string name="sherpa_store_filter_characters">角色音色</string>
 </resources>

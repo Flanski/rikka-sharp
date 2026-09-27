@@ -1892,4 +1892,6 @@
 
   <string name="sherpa_speaker_recommended">Recommended: %1$s (sid %2$d)</string>
   <string name="sherpa_speaker_use">Use</string>
+
+  <string name="sherpa_store_filter_characters">Characters</string>
 </resources>

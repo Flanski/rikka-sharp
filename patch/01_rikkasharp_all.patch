@@ -16765,10 +16765,10 @@ index 0000000..6bccb56
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt
 new file mode 100644
-index 0000000..3dc7251
+index 0000000..c044b45
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SherpaModelStorePage.kt
-@@ -0,0 +1,405 @@
+@@ -0,0 +1,422 @@
 +package me.rerere.rikkahub.ui.pages.setting
 +
 +import androidx.compose.foundation.layout.Arrangement
@@ -16847,6 +16847,9 @@ index 0000000..3dc7251
 +    var query by remember { mutableStateOf("") }
 +    var categoryFilter by remember { mutableStateOf<ModelCategory?>(null) }
 +    var onlyInstalled by remember { mutableStateOf(false) }
++    // 角色音色筛选：catalog 里有 8 个官方角色 + 30 个自转角色，
++    // 与通用模型混在一起不便查找，故单独给一个筛选入口。
++    var onlyCharacters by remember { mutableStateOf(false) }
 +    var refreshing by remember { mutableStateOf(false) }
 +    var models by remember { mutableStateOf(store.currentModels()) }
 +    var installingId by remember { mutableStateOf<String?>(null) }
@@ -16866,9 +16869,10 @@ index 0000000..3dc7251
 +    val useLabel = stringResource(R.string.sherpa_store_use)
 +    val currentLabel = stringResource(R.string.sherpa_store_current)
 +
-+    val visible = remember(models, query, categoryFilter, onlyInstalled, installedIds) {
++    val visible = remember(models, query, categoryFilter, onlyInstalled, onlyCharacters, installedIds) {
 +        models.filter { m ->
 +            if (onlyInstalled && m.id !in installedIds) return@filter false
++            if (onlyCharacters && m.featuredSid < 0) return@filter false
 +            if (categoryFilter != null && m.category != categoryFilter) return@filter false
 +            if (query.isNotBlank()) {
 +                val q = query.trim().lowercase()
@@ -16934,18 +16938,29 @@ index 0000000..3dc7251
 +            // 分类筛选
 +            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 +                FilterChip(
-+                    selected = categoryFilter == null && !onlyInstalled,
-+                    onClick = { categoryFilter = null; onlyInstalled = false },
++                    selected = categoryFilter == null && !onlyInstalled && !onlyCharacters,
++                    onClick = { categoryFilter = null; onlyInstalled = false; onlyCharacters = false },
 +                    label = { Text(stringResource(R.string.sherpa_store_filter_all)) },
 +                )
 +                FilterChip(
++                    selected = onlyCharacters,
++                    onClick = {
++                        onlyCharacters = !onlyCharacters
++                        if (onlyCharacters) { categoryFilter = null; onlyInstalled = false }
++                    },
++                    label = { Text(stringResource(R.string.sherpa_store_filter_characters)) },
++                )
++                FilterChip(
 +                    selected = categoryFilter == ModelCategory.CHINESE,
-+                    onClick = { categoryFilter = ModelCategory.CHINESE; onlyInstalled = false },
++                    onClick = { categoryFilter = ModelCategory.CHINESE; onlyInstalled = false; onlyCharacters = false },
 +                    label = { Text(ModelCategory.CHINESE.label) },
 +                )
 +                FilterChip(
 +                    selected = onlyInstalled,
-+                    onClick = { onlyInstalled = !onlyInstalled; if (onlyInstalled) categoryFilter = null },
++                    onClick = {
++                        onlyInstalled = !onlyInstalled
++                        if (onlyInstalled) { categoryFilter = null; onlyCharacters = false }
++                    },
 +                    label = { Text(installedLabel) },
 +                )
 +            }
@@ -17096,6 +17111,8 @@ index 0000000..3dc7251
 +                            text = buildString {
 +                                append(model.sizeMb.toInt())
 +                                append("MB")
++                                // 自转的 30 个角色原始数据是日语，但也能读中文 —— 标出来避免误解
++                                if (model.language.startsWith("Japanese")) append(" · 日语")
 +                                if (model.source.isNotBlank()) {
 +                                    append(" · ")
 +                                    append(model.source)
@@ -35665,7 +35682,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..51924e4 100644
+index 8cb3cf1..c823483 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -35677,7 +35694,7 @@ index 8cb3cf1..51924e4 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,79 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,81 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -35756,9 +35773,11 @@ index 8cb3cf1..51924e4 100644
 +
 +  <string name="sherpa_speaker_recommended">推荐音色：%1$s（sid %2$d）</string>
 +  <string name="sherpa_speaker_use">使用</string>
++
++  <string name="sherpa_store_filter_characters">角色音色</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..b228d4a 100644
+index 47ddab2..deef172 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -35772,7 +35791,7 @@ index 47ddab2..b228d4a 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,79 @@
+@@ -1815,4 +1817,81 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -35851,6 +35870,8 @@ index 47ddab2..b228d4a 100644
 +
 +  <string name="sherpa_speaker_recommended">Recommended: %1$s (sid %2$d)</string>
 +  <string name="sherpa_speaker_use">Use</string>
++
++  <string name="sherpa_store_filter_characters">Characters</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644
@@ -38767,10 +38788,10 @@ index 18a0061..a48c7da 100644
      data class SystemTTS(
 diff --git a/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
 new file mode 100644
-index 0000000..35c35df
+index 0000000..0369493
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/provider/providers/SherpaOnnxTTSProvider.kt
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,446 @@
 +package me.rerere.tts.provider.providers
 +
 +import android.content.Context
@@ -38789,6 +38810,7 @@ index 0000000..35c35df
 +import kotlinx.coroutines.sync.withLock
 +import kotlinx.coroutines.withContext
 +import me.rerere.tts.model.AudioChunk
++import me.rerere.tts.sherpa.SherpaModelCatalog
 +import me.rerere.tts.model.AudioFormat
 +import me.rerere.tts.model.TTSRequest
 +import me.rerere.tts.provider.TTSProvider
@@ -39022,14 +39044,31 @@ index 0000000..35c35df
 +            return "模型目录中未找到 .onnx 模型文件：${dir.absolutePath}\n" +
 +                "请确认已完整解压模型包（应包含 model.onnx / lexicon.txt / tokens.txt）。"
 +        }
-+        val tokens = File(dir, "tokens.txt")
-+        if (!tokens.isFile) {
-+            return "模型目录缺少 tokens.txt：${dir.absolutePath}"
++        if (resolveAuxFile(dir, "tokens.txt") == null) {
++            return "缺少 tokens.txt：${dir.absolutePath}\n" +
++                "（上游未发布的角色模型为裸 onnx，其 tokens.txt 由共用资源提供，\n" +
++                "  若刚安装完仍报此错，可删除该模型后重新下载）"
 +        }
 +        return null
 +    }
 +
 +    companion object {
++        /**
++         * 解析模型的辅助文件（tokens.txt / lexicon.txt / *.fst）。
++         *
++         * 优先取模型目录内的；取不到则回退到**共用资源目录**。
++         *
++         * 为什么需要回退：上游未发布的角色（见 `SherpaModelCatalog.EXTRA`）
++         * 是以**裸 onnx** 形式分发的，没有自己的 tokens/lexicon —— 这些文件在
++         * 所有 `vits-zh-hf-*` 模型之间**逐字节相同**，故只在共用目录放一份
++         * （避免 30 × 2.9MB 冗余）。
++         */
++        fun resolveAuxFile(dir: File, name: String): File? {
++            File(dir, name).let { if (it.isFile) return it }
++            val shared = dir.parentFile?.let { File(it, SherpaModelCatalog.SHARED_DIR_NAME) }
++            return shared?.let { File(it, name) }?.takeIf { it.isFile }
++        }
++
 +        /** 模型文件命名在不同模型里可能是 model.onnx / *.onnx，逐个探测 */
 +        fun resolveModelFile(dir: File): File? {
 +            val exact = File(dir, "model.onnx")
@@ -39115,8 +39154,9 @@ index 0000000..35c35df
 +
 +        val modelFile = SherpaOnnxTTSProvider.resolveModelFile(dir)
 +            ?: error("未找到 .onnx 模型文件：${dir.absolutePath}")
-+        val tokens = File(dir, "tokens.txt").absolutePath
-+        val lexicon = File(dir, "lexicon.txt").let { if (it.isFile) it.absolutePath else "" }
++        // tokens/lexicon 可能来自共用资源目录（裸 onnx 模型），故统一走 resolveAuxFile
++        val tokens = resolveAuxFile(dir, "tokens.txt")?.absolutePath ?: ""
++        val lexicon = resolveAuxFile(dir, "lexicon.txt")?.absolutePath ?: ""
 +
 +        // ★ data_dir 只在其**确实是 espeak-ng 数据目录**时才设置 —— 判据是存在 phontab。
 +        //
@@ -39200,10 +39240,10 @@ index 0000000..35c35df
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
 new file mode 100644
-index 0000000..d1f56a0
+index 0000000..2edc5f3
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelCatalog.kt
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,385 @@
 +package me.rerere.tts.sherpa
 +
 +/**
@@ -39221,6 +39261,19 @@ index 0000000..d1f56a0
 + * ── 关于体积 ──
 + * 除 aishell3 外均为 115MB 左右。模型不随 APK 分发，由用户在设置页按需下载。
 + */
++/**
++ * 模型的打包形式。
++ *
++ *  - [TARBZ2]：官方发布形式（tar.bz2，含 onnx + tokens + lexicon + fst + dict）
++ *  - [RAW_ONNX]：裸 onnx 文件。上游未发布的角色由本项目在 GitHub Actions 里
++ *    用官方转换脚本（`tools/vits-zh-hf-models.py`）从 .pth 导出后放到 Release，
++ *    tokens/lexicon 等**共用文件**单独打包（见 [SherpaModelInfo.sharedResourcesUrl]）。
++ *
++ * 为什么需要区分：两者下载与安装流程不同 —— tar.bz2 要解压并探测目录，
++ * 裸 onnx 直接落位并确保共用文件就位即可。
++ */
++enum class ModelPackage { TARBZ2, RAW_ONNX }
++
 +/** 用于界面筛选的粗分类（由文件名推断，不追求精确语言识别） */
 +enum class ModelCategory(val label: String) {
 +    CHINESE("中文"),
@@ -39263,8 +39316,18 @@ index 0000000..d1f56a0
 +    val source: String = "",
 +    /** 模型语言（上游 info.json 的 language 字段） */
 +    val language: String = "Chinese",
++    /** 打包形式 */
++    val pkg: ModelPackage = ModelPackage.TARBZ2,
 +) {
-+    val url: String get() = "$BASE_URL/$fileName"
++    /**
++     * 下载地址。
++     * 官方模型来自 sherpa-onnx 的 tts-models；自转模型（RAW_ONNX）来自本项目 Release。
++     */
++    val url: String
++        get() = when (pkg) {
++            ModelPackage.TARBZ2 -> "$BASE_URL/$fileName"
++            ModelPackage.RAW_ONNX -> "$EXTRA_BASE_URL/$id.onnx"
++        }
 +    val sizeMb: Float get() = sizeBytes / 1048576f
 +    val extractedMb: Float get() = extractedBytes / 1048576f
 +
@@ -39273,6 +39336,29 @@ index 0000000..d1f56a0
 +
 +    companion object {
 +        const val BASE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
++
++        /**
++         * 本项目自转模型的 Release。
++         *
++         * 上游 38 个角色里只发布了 8 个角色（其余 30 个需自行从 .pth 转换）。
++         * 本项目用 GitHub Actions（`.github/workflows/convert-vits-batch.yml`）
++         * 跑官方转换脚本生成，实测产出与官方同类文件仅差约 99 字节，
++         * 且能被 sherpa-onnx 加载并用中文合成。
++         */
++        const val EXTRA_BASE_URL =
++            "https://github.com/Flanski/rikka-sharp/releases/download/tts-models-v1"
++
++        /**
++         * 共用资源包（tokens.txt + lexicon.txt + 4 个 .fst）。
++         *
++         * 所有 `vits-zh-hf-*` 模型的这些文件**逐字节相同**（已用 md5 逐一验证），
++         * 因为它们由同一份 `config/config.json` 与同一套 pypinyin 词典生成。
++         * 故只在首次安装 RAW_ONNX 模型时下载一次（压缩后约 0.5MB，解压约 2.9MB）。
++         */
++        const val SHARED_ARCHIVE_URL = "$EXTRA_BASE_URL/vits-zh-hf-shared.tar.bz2"
++
++        /** 共用资源的存放目录名（位于模型根目录下） */
++        const val SHARED_DIR_NAME = "_shared"
 +
 +        /**
 +         * 已知模型的友好名称。只覆盖常用项；未命中的回退为文件名本身
@@ -39470,16 +39556,85 @@ index 0000000..d1f56a0
 +            speakers = 1,
 +            description = "中英文混读（英文仅能读 lexicon.txt 里收录的词）",
 +        ),
++    ) + EXTRA
++
++    /**
++     * 裸 onnx 模型的声明辅助 —— 上游未发布的 30 个角色都由它构造。
++     *
++     * 这些角色的**原始数据均为日语**（上游 info.json 的 language 字段），
++     * 但生成时用的 cleaner 是 `zh_ja_mixture_cleaners`（中英日混合），
++     * 所以**读中文也没问题**（已在设备上用 C API 实测：卡芙卡 multi 与
++     * 纳西妲 single 两种类型都能正常合成中文）。
++     */
++    private fun raw(
++        id: String,
++        nameZh: String,
++        source: String,
++        sid: Int,
++        sizeBytes: Long,
++    ) = SherpaModelInfo(
++        id = id,
++        displayName = "$nameZh（$source）",
++        fileName = "$id.onnx",
++        sizeBytes = sizeBytes,
++        // 裸 onnx 无需解压，但安装时还要取共用资源（约 2.9MB），故留 4MB 余量
++        extractedBytes = sizeBytes + 4L * 1024 * 1024,
++        speakers = 804,
++        description = "$source $nameZh。日语语音模型（实测也能读中文）。选中后会自动把音色设为 $sid",
++        featuredSid = sid,
++        source = source,
++        language = "Japanese",
++        pkg = ModelPackage.RAW_ONNX,
++    )
++
++    /**
++     * 上游**未发布**的 30 个角色（含 4 个米哈游）。
++     *
++     * 由本项目在 GitHub Actions 上用官方转换脚本从 .pth 导出后发布到 Release，
++     * 见 `.github/workflows/convert-vits-batch.yml`。
++     * 实测：产出 onnx 与官方同类文件大小仅差约 99 字节（121,914,005 vs 121,913,906）。
++     */
++    val EXTRA: List<SherpaModelInfo> = listOf(
++        raw("ameth", "爱梅斯", "公主连结", 0, 114041674L),
++        raw("eriko", "惠理子", "公主连结", 0, 114041674L),
++        raw("hatsune", "柏崎初音", "公主连结", 10, 121914005L),
++        raw("hiyori", "日和莉", "公主连结", 0, 114041674L),
++        raw("kokoro", "可可萝", "公主连结", 0, 114041674L),
++        raw("kyaru", "凯露", "公主连结", 10, 121914005L),
++        raw("kyoka", "镜华", "公主连结", 0, 121914005L),
++        raw("misora", "美空", "公主连结", 0, 114041674L),
++        raw("pecorine", "佩可莉姆", "公主连结", 10, 121914005L),
++        raw("yuni", "优妮", "公主连结", 0, 114041674L),
++        raw("ayaka-jp", "神里绫华-日语", "原神", 303, 121914005L),
++        raw("nahida-jp", "纳西妲-日语", "原神", 0, 114041674L),
++        raw("herta", "黑塔", "星穹铁道", 10, 121914005L),
++        raw("kafka", "卡芙卡", "星穹铁道", 10, 121914005L),
++        raw("chisato", "锦木千束", "莉可丽丝", 0, 114041674L),
++        raw("takina", "井上泷奈", "莉可丽丝", 0, 114041674L),
++        raw("alice", "天童爱丽丝", "蔚蓝档案", 10, 121914005L),
++        raw("asuna", "一之濑明日奈", "蔚蓝档案", 10, 121914005L),
++        raw("azusa", "白洲梓", "蔚蓝档案", 10, 121914005L),
++        raw("hina", "空崎日奈", "蔚蓝档案", 10, 121914005L),
++        raw("hoshino", "小鸟游星野", "蔚蓝档案", 10, 121914005L),
++        raw("iori", "银镜伊织", "蔚蓝档案", 10, 121914005L),
++        raw("iroha", "枣伊吕波", "蔚蓝档案", 10, 121914005L),
++        raw("izuna", "久田泉奈", "蔚蓝档案", 10, 121914005L),
++        raw("karin", "角楯花凛", "蔚蓝档案", 10, 121914005L),
++        raw("mika", "圣园未花", "蔚蓝档案", 10, 121914005L),
++        raw("miyu", "霞泽美游", "蔚蓝档案", 10, 121914005L),
++        raw("momoi", "才羽桃井", "蔚蓝档案", 10, 121914005L),
++        raw("shiroko", "砂狼白子", "蔚蓝档案", 10, 121914005L),
++        raw("yuuka", "早濑优香", "蔚蓝档案", 40, 121914005L),
 +    )
 +
 +    fun find(id: String): SherpaModelInfo? = ALL.firstOrNull { it.id == id }
 +}
 diff --git a/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
 new file mode 100644
-index 0000000..7499000
+index 0000000..8cf48f1
 --- /dev/null
 +++ b/speech/src/main/java/me/rerere/tts/sherpa/SherpaModelManager.kt
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,407 @@
 +package me.rerere.tts.sherpa
 +
 +import android.content.Context
@@ -39538,12 +39693,24 @@ index 0000000..7499000
 +    /** 某模型解压后的目录 */
 +    fun modelDir(model: SherpaModelInfo): File = File(rootDir, model.id)
 +
++    /**
++     * 共用资源目录（tokens.txt + lexicon.txt + 4 个 .fst）。
++     *
++     * 只有 [ModelPackage.RAW_ONNX] 模型需要它 —— 官方 tar.bz2 包自带这些文件。
++     * 之所以共用：所有 `vits-zh-hf-*` 模型的这几个文件**逐字节相同**
++     * （同一份 config.json 与同一套 pypinyin 词典生成，已用 md5 逐一验证），
++     * 所以不随每个模型重复分发，避免 30 × 2.9MB 的冗余。
++     */
++    val sharedDir: File get() = File(rootDir, SherpaModelCatalog.SHARED_DIR_NAME)
++
 +    fun isInstalled(model: SherpaModelInfo): Boolean {
 +        val dir = modelDir(model)
 +        if (!dir.isDirectory) return false
-+        // 判定「已安装」需要同时满足：有 .onnx 与 tokens.txt —— 半途解压的目录不算
++        // 判定「已安装」需要同时满足：有 .onnx，且能取到 tokens.txt
++        // （RAW_ONNX 的 tokens 来自共用目录；半途解压的目录两者都缺，不算已装）
 +        val hasModel = dir.listFiles { f -> f.isFile && f.name.endsWith(".onnx") }?.isNotEmpty() == true
-+        return hasModel && File(dir, "tokens.txt").isFile
++        if (!hasModel) return false
++        return File(dir, "tokens.txt").isFile || File(sharedDir, "tokens.txt").isFile
 +    }
 +
 +    fun listInstalled(): List<SherpaModelInfo> = SherpaModelCatalog.ALL.filter { isInstalled(it) }
@@ -39568,6 +39735,21 @@ index 0000000..7499000
 +     * 调用方若需更新 UI 请自行切回主线程。
 +     */
 +    suspend fun install(
++        model: SherpaModelInfo,
++        onProgress: (SherpaInstallProgress) -> Unit,
++    ): Result<File> = withContext(Dispatchers.IO) {
++        if (isInstalled(model)) {
++            onProgress(SherpaInstallProgress.Done(modelDir(model)))
++            return@withContext Result.success(modelDir(model))
++        }
++        when (model.pkg) {
++            ModelPackage.RAW_ONNX -> installRawOnnx(model, onProgress)
++            ModelPackage.TARBZ2 -> installFromArchive(model, onProgress)
++        }
++    }
++
++    /** 官方 tar.bz2 包的安装流程：下载 → 解压 → 探测目录 → 落位 */
++    private suspend fun installFromArchive(
 +        model: SherpaModelInfo,
 +        onProgress: (SherpaInstallProgress) -> Unit,
 +    ): Result<File> = withContext(Dispatchers.IO) {
@@ -39636,14 +39818,25 @@ index 0000000..7499000
 +        model: SherpaModelInfo,
 +        target: File,
 +        onProgress: (SherpaInstallProgress) -> Unit,
++    ) = downloadUrl(model.url, model.sizeBytes, target, onProgress)
++
++    /**
++     * 实际下载逻辑。把 url 抽出来是为了让「共用资源包」也能复用同一套
++     * 进度上报与超时处理（它不对应任何 [SherpaModelInfo]）。
++     */
++    private fun downloadUrl(
++        url: String,
++        fallbackSize: Long,
++        target: File,
++        onProgress: (SherpaInstallProgress) -> Unit,
 +    ) {
-+        val request = Request.Builder().url(model.url).build()
++        val request = Request.Builder().url(url).build()
 +        http.newCall(request).execute().use { resp ->
 +            if (!resp.isSuccessful) {
 +                throw IOException("下载失败：HTTP ${resp.code}")
 +            }
 +            val body = resp.body
-+            val total = body.contentLength().takeIf { it > 0 } ?: model.sizeBytes
++            val total = body.contentLength().takeIf { it > 0 } ?: fallbackSize
 +            body.byteStream().use { input ->
 +                FileOutputStream(target).use { out ->
 +                    val buf = ByteArray(256 * 1024)
@@ -39718,6 +39911,108 @@ index 0000000..7499000
 +    }
 +
 +    /** 在解压结果里找到包含 .onnx 的目录 */
++    /**
++     * 裸 onnx 模型的安装流程（上游未发布的 30 个角色）。
++     *
++     * 与官方 tar.bz2 的差别：
++     *  · 只下载单个 .onnx，无需解压
++     *  · tokens / lexicon / fst 走**共用资源**（[ensureSharedResources]），不随模型分发
++     *
++     * 已验证：multi 类型（如卡芙卡 sid=10）与 single 类型（如纳西妲 sid=0）
++     * 都能被 sherpa-onnx 加载，并用**中文**正常合成
++     * 　（生成时用的是 `zh_ja_mixture_cleaners`，故日语角色模型也能读中文）。
++     */
++    private suspend fun installRawOnnx(
++        model: SherpaModelInfo,
++        onProgress: (SherpaInstallProgress) -> Unit,
++    ): Result<File> = withContext(Dispatchers.IO) {
++        val staging = File(tmpDir, model.id)
++        try {
++            rootDir.mkdirs()
++            val need = model.sizeBytes + SHARED_RESERVE_BYTES + 64L * 1024 * 1024
++            val free = rootDir.usableSpace
++            if (free in 1 until need) {
++                return@withContext Result.failure(
++                    IOException("存储空间不足：需要约 ${need / 1048576}MB，可用 ${free / 1048576}MB")
++                )
++            }
++
++            staging.deleteRecursively()
++            staging.mkdirs()
++            val onnx = File(staging, "${model.id}.onnx")
++
++            // 1) 下载 onnx
++            download(model, onnx, onProgress)
++
++            // 2) 确保共用资源（仅首次真正下载，之后直接返回）
++            ensureSharedResources(onProgress)
++
++            // 3) 落位
++            val finalDir = modelDir(model)
++            finalDir.deleteRecursively()
++            finalDir.parentFile?.mkdirs()
++            finalDir.mkdirs()
++            val dest = File(finalDir, onnx.name)
++            if (!onnx.renameTo(dest)) {
++                onnx.copyTo(dest, overwrite = true)
++            }
++
++            if (!isInstalled(model)) {
++                return@withContext Result.failure(IOException("安装校验失败：缺少 .onnx 或共用资源"))
++            }
++
++            staging.deleteRecursively()
++            onModelsChanged()
++            Log.i(TAG, "install raw ${model.id} -> ${finalDir.absolutePath}")
++            onProgress(SherpaInstallProgress.Done(finalDir))
++            Result.success(finalDir)
++        } catch (e: Throwable) {
++            Log.e(TAG, "install raw ${model.id} failed", e)
++            runCatching { staging.deleteRecursively() }
++            Result.failure(e)
++        }
++    }
++
++    /** 确保共用资源就位；已就位则立即返回 */
++    private fun ensureSharedResources(onProgress: (SherpaInstallProgress) -> Unit) {
++        val dir = sharedDir
++        if (File(dir, "tokens.txt").isFile && File(dir, "lexicon.txt").isFile) return
++
++        dir.mkdirs()
++        val archive = File(tmpDir, "shared.tar.bz2")
++        archive.parentFile?.mkdirs()
++        downloadUrl(SherpaModelCatalog.SHARED_ARCHIVE_URL, 1L * 1024 * 1024, archive, onProgress)
++
++        val stage = File(tmpDir, "shared_extract")
++        stage.deleteRecursively()
++        stage.mkdirs()
++        extractTarBz2(archive, stage, onProgress)
++
++        // 共用资源包里没有 .onnx，故不能用 findModelRoot，改按 tokens.txt 定位
++        val payload = findDirContaining(stage, "tokens.txt")
++            ?: throw IOException("共用资源包解压后未找到 tokens.txt")
++        payload.listFiles()?.forEach { f ->
++            val dst = File(dir, f.name)
++            if (dst.exists()) dst.deleteRecursively()
++            if (!f.renameTo(dst)) f.copyRecursively(dst, overwrite = true)
++        }
++        archive.delete()
++        stage.deleteRecursively()
++        Log.i(TAG, "shared resources ready: ${dir.absolutePath}")
++    }
++
++    /** 在 [root] 及其子目录里找第一个包含指定文件名的目录 */
++    private fun findDirContaining(root: File, fileName: String): File? {
++        if (File(root, fileName).isFile) return root
++        val sub = root.listFiles { f -> f.isDirectory } ?: return null
++        sub.firstOrNull { File(it, fileName).isFile }?.let { return it }
++        for (d in sub) {
++            val deeper = d.listFiles { f -> f.isDirectory } ?: continue
++            deeper.firstOrNull { File(it, fileName).isFile }?.let { return it }
++        }
++        return null
++    }
++
 +    private fun findModelRoot(root: File): File? {
 +        if (hasOnnx(root)) return root
 +        val sub = root.listFiles { f -> f.isDirectory } ?: return null
@@ -39734,6 +40029,9 @@ index 0000000..7499000
 +
 +    companion object {
 +        const val ROOT_DIR_NAME = "tts_models"
++
++        /** 共用资源（tokens/lexicon/fst）解压后约 2.9MB，留 4MB 余量做空间检查 */
++        private const val SHARED_RESERVE_BYTES = 4L * 1024 * 1024
 +
 +        /**
 +         * 模型目录变化后让 provider 的 OfflineTts 缓存失效。
