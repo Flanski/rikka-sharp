@@ -34,6 +34,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -302,9 +303,19 @@ class RouteActivity : ComponentActivity() {
                 // 保留一个注释是为了说明这里**曾经**有什么，避免后人以为漏了。
 
                 // 应用内通知层。
-                // 放在 Toaster 之后、NavDisplay 之前 —— 这样它盖在页面内容上，
-                // 但不拦截触摸（内部 Box 不消费事件），用户仍可正常操作。
-                AppNotificationHost()
+                //
+                // ★必须指定 zIndex —— 原来只写「放在 NavDisplay 之前」并注释说"这样它盖在页面内容上"，
+                //   **那是错的**，而且是我这轮把应用内通知整个搞失效的原因：
+                //   在同一个 Layout 里，**声明顺序靠前的先绘制、因此在下层**；
+                //   下面的 `Box { NavDisplay }` 带 `.background(...)`（不透明）且 fillMaxSize，
+                //   会把这一层**完整遮住** —— 于是所有应用内通知（含 toast 转换来的）都画在页面底下，
+                //   一条都看不见。
+                //
+                //   （被移除的 sonner `Toaster` 能在同样位置显示，是因为它内部自己用了 Popup / 更高层级；
+                //    我们这个是普通 Composable，没有那层保护。）
+                //
+                // zIndex 让它参与同层兄弟的层级比较，绘制在页面内容之上。
+                AppNotificationHost(modifier = Modifier.zIndex(1f))
                 TTSController()
                 Box(
                     modifier = Modifier

@@ -211,23 +211,27 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     put("error", JsonPrimitive("title and message are required and must not be blank"))
                     return@buildJsonObject
                 }
-                // ★权限检查只针对**系统通知**渠道。
-                // 应用内通知（inapp）不经过 NotificationManager，不需要任何权限 ——
-                // 对它做权限检查会让「只想在应用里提示一句」的场景无故失败。
                 val needsSystem = targetChannel == "system" || targetChannel == "both"
-                if (needsSystem && !NotificationUtil.hasNotificationPermission(context)) {
-                    if (targetChannel == "system") {
-                        // 工具内不能弹权限对话框（没有 Activity），因此把情况说清楚让模型转告用户
-                        put("ok", JsonPrimitive(false))
-                        put("error", JsonPrimitive("notification_permission_not_granted"))
-                        put("hint", JsonPrimitive(
-                            "The app lacks the notification permission, so nothing was shown. " +
-                                "Ask the user to grant notifications for this app (Android 13+). " +
-                                "Alternatively use channel=\"inapp\" which needs no permission."
-                        ))
-                        return@buildJsonObject
-                    }
-                    // channel=both 时退化为只发应用内 —— 能送出一部分好过整个失败
+
+                // ★系统通知的「能不能真的送达」要查三件事，而不只是权限 ——
+                //   权限 / 系统里本应用的通知总开关 / 该渠道是否被用户关闭。
+                //   只看权限会得出「成功」的错误结论：用户可以**权限已授予但关了通知**，
+                //   那时 notify() 照旧「成功」，而用户一条都看不到。
+                //   （这正是此前工具返回 ok=true 但用户没收到任何东西的成因之一。）
+                val systemChannelIdForCheck =
+                    if (urgent) AI_NOTIFICATION_URGENT_CHANNEL_ID else AI_NOTIFICATION_CHANNEL_ID
+                val delivery =
+                    if (needsSystem) NotificationUtil.deliveryStatus(context, systemChannelIdForCheck)
+                    else null
+
+                // 系统渠道明确不可送达时**直接如实失败** ——
+                // 不"尽力而为地发一下然后报成功"，那等于骗调用方。
+                if (delivery != null && !delivery.likelyDeliverable && targetChannel == "system") {
+                    put("ok", JsonPrimitive(false))
+                    put("error", JsonPrimitive(delivery.problem() ?: "notification_not_deliverable"))
+                    put("hint", JsonPrimitive(hintFor(delivery)))
+                    put("delivery", deliveryJson(delivery))
+                    return@buildJsonObject
                 }
 
                 val remaining = checkRateLimit()
@@ -245,8 +249,7 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                 val idForIntent = notificationId
                 // ★这个变量名曾经就叫 `channel` —— 与新加的渠道参数重名，
                 //   Kotlin 会报 "conflicting declarations"。改成明确的名字。
-                val systemChannelId =
-                    if (urgent) AI_NOTIFICATION_URGENT_CHANNEL_ID else AI_NOTIFICATION_CHANNEL_ID
+                val systemChannelId = systemChannelIdForCheck
 
                 // 点击行为：有 url 就打开它，否则打开应用
                 val contentIntent = runCatching {
@@ -268,7 +271,9 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
 
                 // ── 系统通知 ──
                 var systemDelivered = false
-                if (needsSystem && NotificationUtil.hasNotificationPermission(context)) {
+                // delivery 已在前面查过；channel=both 且系统不可送达时这里自动跳过，
+                // 退化为只发应用内（能送出一部分好过整个失败）。
+                if (needsSystem && (delivery?.likelyDeliverable == true)) {
                     systemDelivered = NotificationUtil.notify(context, systemChannelId, notificationId) {
                         this.title = title
                         this.content = trim(message)
@@ -323,21 +328,84 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     inAppShown = true
                 }
 
-                val ok = systemDelivered || inAppShown
+                // ── ★`ok` 的含义：**消息大概率能被用户看到** ──
+                //
+                // 不是"我调用过 API"。这两者的差别是这次踩到的核心问题：
+                // 之前写的是 `systemDelivered || inAppShown`，而 `systemDelivered` 只表示
+                // 「notify() 没抛异常」—— 用户在系统设置里关掉通知时它照样为 true，
+                // 于是工具返回 ok=true 而用户一条都没收到，等于**骗了调用方**
+                // （模型据此告诉用户"已通知你"，而事实相反）。
+                //
+                // 现在按「是否真的有可能被看到」判断：
+                //  · 系统通知：API 成功 **且** 可送达性检查没报问题；
+                //  · 应用内通知：已入队（由 AppNotificationHost 渲染到界面上）。
+                val systemVisible = systemDelivered && (delivery == null || delivery.likelyDeliverable)
+                val ok = systemVisible || inAppShown
+
                 put("ok", JsonPrimitive(ok))
-                if (needsSystem) put("system_shown", JsonPrimitive(systemDelivered))
-                if (targetChannel != "system") put("inapp_shown", JsonPrimitive(inAppShown))
+                if (needsSystem) {
+                    put("system_posted", JsonPrimitive(systemDelivered))
+                    delivery?.let { put("system_delivery", deliveryJson(it)) }
+                }
+                if (targetChannel != "system") put("inapp_queued", JsonPrimitive(inAppShown))
                 put("notification_id", JsonPrimitive(notificationId))
                 tag?.let { put("tag", JsonPrimitive(it)) }
                 put("channel", JsonPrimitive(targetChannel))
                 put("remaining_this_minute", JsonPrimitive(remaining - 1))
+
                 if (!ok) {
-                    put("note", JsonPrimitive("Nothing was shown (permission denied or the system rejected it)."))
+                    // 如实说明为什么没送达，并给出可执行的建议 ——
+                    // 模型需要能把这些转告用户，否则用户只知道"没反应"。
+                    val reason = delivery?.problem() ?: "nothing_delivered"
+                    put("error", JsonPrimitive(reason))
+                    put("hint", JsonPrimitive(hintFor(delivery)))
+                } else if (delivery != null && !delivery.likelyDeliverable && inAppShown) {
+                    // 系统通知发不出去、但应用内成功了 → 明确说明只送达了一部分
+                    put("warning", JsonPrimitive(
+                        "Only the in-app notification was shown; the system notification could not be " +
+                            "delivered (${delivery.problem()})."
+                    ))
                 }
             }
         }
     },
 )
+
+/**
+ * 把不可送达的原因转成**可执行的**建议。
+ *
+ * 只说"失败了"没用 —— 用户需要知道去哪里打开什么。
+ * 模型也需要能照着这段话向用户解释。
+ */
+private fun hintFor(status: NotificationUtil.NotificationDeliveryStatus?): String = when (status?.problem()) {
+    "missing_permission" ->
+        "The app has not been granted notification permission. Ask the user to allow notifications " +
+            "for this app in system settings (Android 13+). Alternatively use channel=\"inapp\", " +
+            "which needs no permission."
+
+    "notifications_disabled_in_system_settings" ->
+        "The user has turned OFF notifications for this app in system settings, so the system " +
+            "accepts the request but nothing is displayed. Ask them to re-enable notifications. " +
+            "channel=\"inapp\" still works because it is drawn inside the app."
+
+    "channel_disabled_by_user" ->
+        "The notification channel used here has been switched off by the user. " +
+            "Ask them to re-enable this app's notifications (the specific channel is " +
+            "\"AI notifications\" / \"AI notifications (important)\")."
+
+    else -> "Nothing could be shown. Check that notifications are enabled for this app."
+}
+
+/** 可送达性状态的 JSON 形式 —— 放在返回值里，让调用方能看到真实情况而不是只信一个 ok */
+private fun deliveryJson(
+    status: NotificationUtil.NotificationDeliveryStatus,
+): kotlinx.serialization.json.JsonObject = buildJsonObject {
+    put("permission", JsonPrimitive(status.permissionGranted))
+    put("notifications_enabled", JsonPrimitive(status.notificationsEnabled))
+    put("channel_exists", JsonPrimitive(status.channelExists))
+    status.channelImportance?.let { put("channel_importance", JsonPrimitive(it)) }
+    put("likely_deliverable", JsonPrimitive(status.likelyDeliverable))
+}
 
 private fun cancelNotificationTool(context: Context): Tool = Tool(
     name = "cancel_notification",

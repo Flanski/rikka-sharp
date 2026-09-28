@@ -1,15 +1,14 @@
 package me.rerere.rikkahub.ui.components.notification
 
-import kotlinx.coroutines.delay
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -22,18 +21,19 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Alert01
 import me.rerere.hugeicons.stroke.Cancel01
@@ -102,8 +103,15 @@ fun AppNotificationHost(modifier: Modifier = Modifier) {
                 notifications.forEach { n ->
                     // key 用 id：同一位置的内容变化时不会错误复用动画状态
                     key(n.id) {
+                        // ★用 MutableTransitionState 而不是 `visible = true`：
+                        //   直接传 true 表示"一开始就可见"，**不会播放进场动画** ——
+                        //   通知会突兀地闪现。用 targetState = true 才能让 enter 动画真正跑起来。
+                        //   （这与授权弹窗里那种"出现即播放"的做法一致。）
+                        val visibleState = remember {
+                            MutableTransitionState(false).apply { targetState = true }
+                        }
                         AnimatedVisibility(
-                            visible = true,
+                            visibleState = visibleState,
                             enter = expandVertically(
                                 expandFrom = Alignment.Top,
                                 animationSpec = tween(250, easing = FastOutSlowInEasing),

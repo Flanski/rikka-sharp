@@ -88,6 +88,52 @@ class NotificationConfig {
     var priority: Int = NotificationCompat.PRIORITY_DEFAULT
 }
 
+/**
+ * 通知的**实际可送达性**。
+ *
+ * ── 为什么不能只看权限 ──
+ * `hasNotificationPermission` 只回答「有没有 POST_NOTIFICATIONS 权限」，
+ * 但用户完全可以在**权限已授予**的情况下，从系统设置里关掉本应用的通知、或关掉某一个渠道。
+ * 那时 `NotificationManagerCompat.notify()` **仍然会「成功」**（不抛异常、没有返回值），
+ * 而用户什么都看不到。
+ *
+ * ★这正是「工具返回 ok=true 但用户没收到任何通知」的成因之一 ——
+ *   如果只看权限，调用方（模型）会以为发送成功，于是向用户声称"已通知"，
+ *   而实际上一条都没到。**工具不能这样对使用者撒谎。**
+ *
+ * 因此这里把「能不能真的送达」拆开查明，让上层可以如实报告。
+ */
+data class NotificationDeliveryStatus(
+    /** 有没有 POST_NOTIFICATIONS 权限（Android 13+） */
+    val permissionGranted: Boolean,
+    /** 系统里本应用的通知总开关是否打开 */
+    val notificationsEnabled: Boolean,
+    /** 渠道是否存在（不存在时系统会用默认配置，通常仍能显示） */
+    val channelExists: Boolean,
+    /** 渠道重要性；`IMPORTANCE_NONE`(0) 表示该渠道被用户关闭 */
+    val channelImportance: Int?,
+) {
+    /** 渠道是否被关闭 */
+    val channelBlocked: Boolean get() = channelImportance == NotificationManagerCompat.IMPORTANCE_NONE
+
+    /** 是否**大概率**能送达。注意用词：ROM 行为差异使这里做不到 100% 确定 */
+    val likelyDeliverable: Boolean
+        get() = permissionGranted && notificationsEnabled && !channelBlocked
+
+    /**
+     * 不可送达时的原因（可送达返回 null）。
+     *
+     * 文案刻意写清「应该去哪里打开」，而不是只说失败了 ——
+     * 用户拿到这句能自己解决。
+     */
+    fun problem(): String? = when {
+        !permissionGranted -> "missing_permission"
+        !notificationsEnabled -> "notifications_disabled_in_system_settings"
+        channelBlocked -> "channel_disabled_by_user"
+        else -> null
+    }
+}
+
 object NotificationUtil {
 
     /**
@@ -98,6 +144,29 @@ object NotificationUtil {
             context,
             Manifest.permission.POST_NOTIFICATIONS
         ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * 查明通知的**实际可送达性**（权限 + 总开关 + 渠道状态）。
+     *
+     * 见 [NotificationDeliveryStatus] 的说明：只看权限会得出「成功」的错误结论。
+     *
+     * 注意：本项目 minSdk 26，所以 `getNotificationChannel` 一定可用，无需版本判断。
+     */
+    @SuppressLint("MissingPermission")
+    fun deliveryStatus(context: Context, channelId: String): NotificationDeliveryStatus {
+        val nm = NotificationManagerCompat.from(context)
+        val permission = hasNotificationPermission(context)
+        // areNotificationsEnabled() 在个别 ROM 上可能不准，因此只把它当作
+        // 「可能看不到」的提示，**不据此拦截发送** —— 宁可按用户能看到来尝试。
+        val enabled = runCatching { nm.areNotificationsEnabled() }.getOrDefault(true)
+        val channel = runCatching { nm.getNotificationChannel(channelId) }.getOrNull()
+        return NotificationDeliveryStatus(
+            permissionGranted = permission,
+            notificationsEnabled = enabled,
+            channelExists = channel != null,
+            channelImportance = channel?.importance,
+        )
     }
 
     /**
