@@ -1,8 +1,8 @@
 package me.rerere.rikkahub.data.ai.tools
 
 import android.content.Context
+import me.rerere.rikkahub.data.ai.python.PythonRuntime
 import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.add
@@ -55,12 +55,8 @@ fun createPythonTool(context: Context, timeoutSec: Int = 30): Tool = Tool(
         val code = args.jsonObject["code"]?.jsonPrimitive?.content
             ?: error("code parameter is required")
 
-        // Start Python if needed (must be on main thread for Chaquopy init)
-        if (!Python.isStarted()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                Python.start(AndroidPlatform(context))
-            }
-        }
+        // 统一入口，避免与 CalculatorTool 并发时重复启动（见 PythonRuntime 的说明）
+        PythonRuntime.ensureStarted(context)
 
         val py = Python.getInstance()
         val executor = py.getModule("executor")

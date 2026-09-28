@@ -2,8 +2,8 @@ package me.rerere.rikkahub.data.ai.tools
 
 import android.content.Context
 import android.util.Log
+import me.rerere.rikkahub.data.ai.python.PythonRuntime
 import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import com.whl.quickjs.wrapper.QuickJSContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -281,7 +281,7 @@ private fun parseJsError(message: String?): SyntaxError {
  * 编译错误会带 "line N" 信息，从中提取行号。
  */
 private suspend fun checkPython(context: Context, code: String): List<SyntaxError> {
-    ensurePythonStarted(context)
+    PythonRuntime.ensureStarted(context)
     return try {
         val py = Python.getInstance()
         py.getModule("builtins").callAttr("compile", code, "<syntax_check>", "exec")
@@ -295,14 +295,6 @@ private suspend fun checkPython(context: Context, code: String): List<SyntaxErro
             ?.trim()
             ?: msg.trim()
         listOf(SyntaxError(line = line, column = null, message = cleaned.take(400)))
-    }
-}
-
-private suspend fun ensurePythonStarted(context: Context) {
-    if (Python.isStarted()) return
-    // Chaquopy 要求在主线程启动；execute 本身是 suspend，直接切换调度器即可
-    withContext(Dispatchers.Main) {
-        Python.start(AndroidPlatform(context.applicationContext))
     }
 }
 

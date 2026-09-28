@@ -367,7 +367,8 @@ private fun repoDownloadTool(context: Context): Tool = Tool(
                 task.phase = "解压中"
                 runCatching {
                     val outDir = File(dest.parentFile, dest.name.removeSuffix(".tar.gz"))
-                    outDir.mkdirs()
+                    // mkdirs() 的失败由 extractTarGz 内部统一检查并给出可读原因，
+                    // 这里不再重复判断（否则错误信息会两处不一致）。
                     extractTarGz(dest, outDir)
                     task.phase = "解压完成"
                     task.error = null
@@ -457,22 +458,74 @@ private fun taskResultJson(task: DownloadTask) = buildJsonObject {
 }
 
 /** 解压 .tar.gz，带路径穿越防护 */
+/**
+ * 解压 tar.gz 到 [destDir]。
+ *
+ * ── 为什么这里对每个 mkdirs() 都检查返回值 ──
+ * 用户反馈 `repo_download` 解压必失败，报的是：
+ *     Hello-World-<sha>/README  ENOTDIR
+ * `ENOTDIR` 的含义是「路径中某个组成部分不是目录」—— 也就是**有个同名文件挡住了要创建的目录**。
+ *
+ * 而原来的代码是这样的：
+ * ```kotlin
+ * if (entry.isDirectory) {
+ *     outFile.mkdirs()          // ← 返回值没看
+ * } else {
+ *     outFile.parentFile?.mkdirs()   // ← 同样没看
+ *     outFile.outputStream().use { ... }   // ← 失败时抛出难懂的 errno
+ * }
+ * ```
+ * `File.mkdirs()` 失败时**不抛异常、只返回 false**。于是失败会一路带到
+ * `outputStream()` 才炸，而那时给出的 `ENOTDIR` 完全看不出是哪一步、为什么。
+ *
+ * 现在每步都检查，并在错误里带上**具体路径**和**可能的成因** ——
+ * 这样即使问题出在我没预料到的地方，也能从错误信息直接定位，而不是靠猜。
+ *
+ * ── 另外补上的健壮性 ──
+ *  · 目标目录先确认「存在且是目录」，否则提前给出可读错误；
+ *  · 目录项若已有同名**文件**，明确报出来（这正是 ENOTDIR 的典型成因）；
+ *  · 文件项若父路径被同名文件占住，同样明确报出。
+ */
 private fun extractTarGz(archive: File, destDir: File) {
+    if (!destDir.isDirectory) {
+        if (destDir.exists()) {
+            throw IOException("解压目标已存在但不是目录：${destDir.absolutePath}")
+        }
+        if (!destDir.mkdirs()) {
+            throw IOException("无法创建解压目录：${destDir.absolutePath}")
+        }
+    }
     val destCanonical = destDir.canonicalPath
+
     archive.inputStream().use { fin ->
         GzipCompressorInputStream(fin).use { gz ->
             TarArchiveInputStream(gz).use { tar ->
                 var entry = tar.nextEntry
                 while (entry != null) {
                     val outFile = File(destDir, entry.name)
+
                     // 路径穿越防护：确保解压目标仍在 destDir 内
                     if (!outFile.canonicalPath.startsWith(destCanonical)) {
                         throw IOException("压缩包包含非法路径：${entry.name}")
                     }
+
                     if (entry.isDirectory) {
-                        outFile.mkdirs()
+                        // 注意：mkdirs() 在「已存在同名文件」时返回 false 而不是抛异常
+                        if (!outFile.isDirectory && !outFile.mkdirs()) {
+                            throw IOException(
+                                "无法创建目录：${outFile.absolutePath}" +
+                                    (if (outFile.exists()) "（该路径已被一个同名文件占用）" else "")
+                            )
+                        }
                     } else {
-                        outFile.parentFile?.mkdirs()
+                        val parent = outFile.parentFile
+                        if (parent != null && !parent.isDirectory && !parent.mkdirs()) {
+                            throw IOException(
+                                "无法创建父目录：${parent.absolutePath}" +
+                                    (if (parent.exists()) "（该路径已被一个同名文件占用）" else "") +
+                                    "（正在解压：${entry.name}）"
+                            )
+                        }
                         outFile.outputStream().use { out -> tar.copyTo(out) }
                     }
                     entry = tar.nextEntry

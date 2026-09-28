@@ -1,8 +1,8 @@
 package me.rerere.rikkahub.data.ai.tools
 
 import android.content.Context
+import me.rerere.rikkahub.data.ai.python.PythonRuntime
 import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import kotlinx.serialization.json.*
 import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
@@ -61,14 +61,9 @@ fun createCalculatorTool(context: Context): Tool = Tool(
 
         val executor = Executors.newSingleThreadExecutor()
         try {
-            // Python must be started on main thread (Chaquopy requirement)
-            if (!Python.isStarted()) {
-                kotlinx.coroutines.runBlocking {
-                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                        Python.start(AndroidPlatform(context))
-                    }
-                }
-            }
+            // 统一走 PythonRuntime —— 它把「检查 + 启动」放在同一线程里，
+            // 避免并行工具调用时两个线程都通过检查、第二个抛 "Python already started"。
+            PythonRuntime.ensureStarted(context)
 
             val future = executor.submit<String> {
                 try {
