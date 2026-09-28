@@ -102,7 +102,15 @@ class ResponseAPI(
 
         val response = client.newCall(request).await()
         if (!response.isSuccessful) {
-            throw Exception("Failed to get response: ${response.code} ${response.body.string()}")
+            // ★把失败的请求**与它的 input 结构一起**记下来。
+            //   之前的日志只记请求、不记结果，于是报错发生时报不出「是哪一次请求、当时的 input 长什么样」，
+            //   只能事后翻全部请求去猜 —— 这次就是因为这个卡住的。
+            val errBody = response.body.string()
+            ReasoningTrace.logLazy {
+                "RESP FAILED code=${response.code}\n" +
+                    "    body=${errBody.take(2000)}"
+            }
+            throw Exception("Failed to get response: ${response.code} $errBody")
         }
 
         val bodyStr = response.body?.string() ?: ""
@@ -238,16 +246,65 @@ class ResponseAPI(
             // DeepSeek 的报错（reasoning_text must be passed back）指向的正是这种残缺 item；
             // 一旦报错复现，只要在日志里看到 missingText>0，就直接锁定了成因。
             ReasoningTrace.logLazy {
-                val reasoningItems = inputArray.filterIsInstance<JsonObject>()
+                val inputObjects = inputArray.filterIsInstance<JsonObject>()
+                val reasoningItems = inputObjects
                     .filter { it["type"]?.jsonPrimitiveOrNull?.contentOrNull == "reasoning" }
                 val missingText = reasoningItems.count {
                     it.containsKey("encrypted_content") &&
                         ((it["content"] as? JsonArray)?.isEmpty() != false)
                 }
                 val noId = reasoningItems.count { !it.containsKey("id") }
+
+                // ── ★「漏发」检测 ──
+                // 报错说的是 `reasoning_text ... must be passed back`，即**必须回传**。
+                // 此前我一直在找「发了但格式不对」，但从没检查过「**根本没发**」这种可能 ——
+                // 而 buildMessages 确实有过滤条件，某些消息会被整条丢弃，其 reasoning 也随之漏掉。
+                //
+                // 这里把 messages 里的 reasoning 总数与实际发出的对比：
+                // 不相等就说明有漏发，且差值就是漏掉的数量。
+                val inMessages = messages.sumOf { m ->
+                    m.parts.count { it is me.rerere.ai.ui.UIMessagePart.Reasoning }
+                }
+                val leaked = inMessages - reasoningItems.size
+
+                // ── 结构序列 ──
+                // 把 input 的 item 类型压成一个短串，用于判断 reasoning 的**位置**是否合理
+                // （例如是否出现了孤立的 reasoning、或某个 assistant 轮次少了 reasoning）。
+                // 编码：u=user / a=assistant message / r=reasoning / f=function_call / o=function_call_output
+                val structure = buildString {
+                    inputObjects.take(300).forEach { item ->
+                        val t = item["type"]?.jsonPrimitiveOrNull?.contentOrNull
+                        append(
+                            when {
+                                t == "reasoning" -> 'r'
+                                t == "message" -> when (item["role"]?.jsonPrimitiveOrNull?.contentOrNull) {
+                                    "assistant" -> 'a'
+                                    "user" -> 'u'
+                                    "system", "developer" -> 's'
+                                    else -> 'm'
+                                }
+                                t == "function_call" -> 'f'
+                                t == "function_call_output" -> 'o'
+                                t != null -> '?'
+                                // 没有 type 字段的是普通 role 消息
+                                else -> when (item["role"]?.jsonPrimitiveOrNull?.contentOrNull) {
+                                    "user" -> 'u'
+                                    "assistant" -> 'a'
+                                    "system", "developer" -> 's'
+                                    else -> 'x'
+                                }
+                            }
+                        )
+                    }
+                    if (inputObjects.size > 300) append("...")
+                }
+
                 "REQ input items=${inputArray.size} reasoning=${reasoningItems.size}" +
                     " missingText=$missingText noId=$noId" +
-                    " model=${params.model.modelId} tools=${params.tools.size}"
+                    // ★inMessages/leaked 是这次新加的关键指标
+                    " inMessages=$inMessages leaked=$leaked" +
+                    " model=${params.model.modelId} tools=${params.tools.size}" +
+                    "\n    struct=$structure"
             }
             put("input", inputArray)
 
@@ -316,22 +373,54 @@ class ResponseAPI(
     }
 
     internal fun buildMessages(messages: List<UIMessage>) = buildJsonArray {
-        messages
-            .filter { message ->
-                message.role != MessageRole.SYSTEM && (
-                    message.isValidToUpload() || message.parts.any { part ->
-                        part is UIMessagePart.Reasoning &&
-                            part.metadataAs<OpenAIReasoningMetadata>()?.encryptedContent != null
-                    }
-                )
-            }
-            .forEach { message ->
-                if (message.role == MessageRole.ASSISTANT) {
-                    addAssistantItems(message)
-                } else {
-                    addUserItems(message)
+        // ★这里有一条会**整条丢弃消息**的过滤，是「reasoning 漏发」的唯一入口。
+        //
+        // 报错 `The reasoning_text in the thinking mode must be passed back to the API`
+        // 说的是「必须回传」—— 我一直只在查「发了但格式不对」，
+        // 却忽略了「**根本没发**」这种可能。而这段 filter 正是那种可能发生的地方：
+        // 一条 assistant 消息若 `isValidToUpload()` 为 false，
+        // 且它的 reasoning 都没有 encryptedContent，就会被**整条丢掉**，
+        // 其中的 reasoning 也跟着消失。
+        //
+        // 关键在于：**被丢掉的东西不会出现在任何日志里**（日志记的是"实际发出"的），
+        // 所以此前完全看不见。这里把丢弃行为显式记下来。
+        val (kept, dropped) = messages.partition { message ->
+            message.role != MessageRole.SYSTEM && (
+                message.isValidToUpload() || message.parts.any { part ->
+                    part is UIMessagePart.Reasoning &&
+                        part.metadataAs<OpenAIReasoningMetadata>()?.encryptedContent != null
                 }
+            )
+        }
+
+        ReasoningTrace.logLazy {
+            if (dropped.isEmpty()) {
+                "SEND kept=${kept.size} dropped=0 reasoningInKept=" +
+                    kept.sumOf { m -> m.parts.count { it is UIMessagePart.Reasoning } }
+            } else {
+                // 逐条说明「丢了什么、为什么」—— 特别是里面有没有 reasoning
+                val detail = dropped.joinToString(" | ") { m ->
+                    val reasonings = m.parts.count { it is UIMessagePart.Reasoning }
+                    val blankReasonings = m.parts.filterIsInstance<UIMessagePart.Reasoning>()
+                        .count { it.reasoning.isBlank() }
+                    val withEnc = m.parts.filterIsInstance<UIMessagePart.Reasoning>()
+                        .count { it.metadataAs<OpenAIReasoningMetadata>()?.encryptedContent != null }
+                    "${m.role} parts=${m.parts.size} reasoning=$reasonings(blank=$blankReasonings,enc=$withEnc)"
+                }
+                "SEND ★DROPPED ${dropped.size} messages（其中的 reasoning 会一并漏发）\n" +
+                    "    $detail\n" +
+                    "    kept=${kept.size} reasoningInKept=" +
+                    kept.sumOf { m -> m.parts.count { it is UIMessagePart.Reasoning } }
             }
+        }
+
+        kept.forEach { message ->
+            if (message.role == MessageRole.ASSISTANT) {
+                addAssistantItems(message)
+            } else {
+                addUserItems(message)
+            }
+        }
     }
 
     private fun JsonArrayBuilder.addAssistantItems(message: UIMessage) {
