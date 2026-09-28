@@ -167,8 +167,21 @@ class GenerationHandler(
             identitySection = mainIdentity,
             leadInInstructions = buildString {
                 appendLine("<tool_selection>")
-                appendLine("Workspace files → workspace_read/write/edit (/workspace/...)")
-                appendLine("Workspace shell → workspace_shell (git, builds, Unix tools in sandbox)")
+                // ★workspace 工具只在**确实注册**时才介绍。
+                //
+                // 它们的注册有三重条件（见 ChatService.createWorkspaceToolsIfReady）：
+                //   ① assistant.workspaceId 非空；② 该工作区存在；③ 其 shellStatus == READY。
+                // 任一不满足就**不会注册**这些工具。
+                //
+                // 而这段提示原来是无条件写的 —— 于是模型会被告知"可以用 workspace_* 和 /workspace/..."，
+                // 但那些工具根本不在工具列表里；模型照样去用，然后报出一个让用户以为是应用坏了的错误
+                // （另一侧测试里"`/workspace` 这个路径根本不存在"正是这么来的）。
+                //
+                // 提示必须与实际能力一致，否则比没有提示更糟。
+                if (tools.any { it.name.startsWith("workspace_") }) {
+                    appendLine("Workspace files → workspace_read/write/edit (/workspace/... 是虚拟前缀，映射到工作区根)")
+                    appendLine("Workspace shell → workspace_shell (git, builds, Unix tools in sandbox)")
+                }
                 appendLine("Device files → file action=\"read/write/patch/list/search/copy/move/delete\" (Download/skills dirs)")
                 appendLine("Device shell → execute_command (logcat, device info only)")
                 appendLine("Python → execute_python (data processing, API)")
