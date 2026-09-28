@@ -1954,4 +1954,11 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="system_permission_missing_bt">缺少权限：附近的设备</string>
   <string name="system_permission_missing_wifi">缺少权限：附近的 WiFi 设备 / 位置</string>
   <string name="system_readonly_note">以上工具全部为只读 —— 都不会改变设备状态。</string>
+
+  <string name="system_permission_sms_name">短信</string>
+  <string name="system_permission_sms_usage">允许助手读取收件箱，以便回答关于短信的问题。它不会发送任何消息。</string>
+  <string name="system_permission_bt_name">附近的设备</string>
+  <string name="system_permission_bt_usage">允许助手列出已配对的蓝牙设备及其状态。它无法替你连接或断开设备。</string>
+  <string name="system_permission_wifi_name">WiFi 信息</string>
+  <string name="system_permission_wifi_usage">允许助手读取当前 WiFi 网络并扫描附近的网络。Android 13+ 上这会用到「附近的 WiFi 设备」权限。</string>
 </resources>

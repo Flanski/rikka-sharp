@@ -237,11 +237,11 @@ fun createBatteryTool(context: Context): Tool = Tool(
         Some fields may be missing depending on the device/ROM (many vendors do not implement
         every BatteryManager property); when a value cannot be read it is simply omitted,
         and the percentage is reported as -1 with a note rather than faked as 0.
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ").replace(Regex(" +"), " "),
     needsApproval = { false },
     // 无参数：只读快照
     parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
     execute = {
-        listOf(UIMessagePart.Text(BatteryInfo.snapshot(context).toString()))
+        guarded("battery_info") { BatteryInfo.snapshot(context) }
     },
 )

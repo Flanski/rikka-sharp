@@ -55,3 +55,42 @@ fun resolveLocalToolApproval(name: String, overrides: Map<String, Boolean>): Boo
  */
 fun localToolApprovalChecker(overrides: Map<String, Boolean>): (String) -> Boolean =
     { name -> resolveLocalToolApproval(name, overrides) }
+
+/**
+ * 工具执行的统一保护。
+ *
+ * ── 为什么需要 ──
+ * `Tool.execute` 若抛出**未捕获异常**，会向上冒泡并**中断整轮生成** ——
+ * 这比「返回一条结构化错误」严重得多：用户看到的是生成失败，而不是「这个工具没成功」。
+ *
+ * 而工具要调用的都是系统 API（蓝牙、WiFi、短信、USB…），它们**任何一处都可能抛**：
+ * 权限被拒、服务不可用、设备被拔出、厂商 ROM 行为差异……
+ * 与其在每个调用点都记得包 try/catch（迟早会漏），不如在出口统一兜住。
+ *
+ * 兜住后模型总能拿到可理解的反馈，可以据此换策略或如实告知用户。
+ */
+internal fun guarded(
+    toolName: String,
+    block: () -> kotlinx.serialization.json.JsonObject,
+): List<me.rerere.ai.ui.UIMessagePart> = try {
+    listOf(me.rerere.ai.ui.UIMessagePart.Text(block().toString()))
+} catch (t: Throwable) {
+    listOf(
+        me.rerere.ai.ui.UIMessagePart.Text(
+            kotlinx.serialization.json.buildJsonObject {
+                kotlinx.serialization.json.put("ok", kotlinx.serialization.json.JsonPrimitive(false))
+                kotlinx.serialization.json.put("tool", kotlinx.serialization.json.JsonPrimitive(toolName))
+                kotlinx.serialization.json.put(
+                    "error",
+                    kotlinx.serialization.json.JsonPrimitive("${t.javaClass.simpleName}: ${t.message}")
+                )
+                kotlinx.serialization.json.put(
+                    "hint",
+                    kotlinx.serialization.json.JsonPrimitive(
+                        "工具内部出现未预期的错误（不是权限提示）。该信息可用于反馈问题。"
+                    )
+                )
+            }.toString()
+        )
+    )
+}

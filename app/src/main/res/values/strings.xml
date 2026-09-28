@@ -1954,4 +1954,11 @@
   <string name="system_permission_missing_bt">Missing permission: Nearby devices</string>
   <string name="system_permission_missing_wifi">Missing permission: Nearby WiFi devices / Location</string>
   <string name="system_readonly_note">All of these tools are read-only — none of them changes device state.</string>
+
+  <string name="system_permission_sms_name">SMS</string>
+  <string name="system_permission_sms_usage">Lets the assistant read your inbox so it can answer questions about messages. It never sends anything.</string>
+  <string name="system_permission_bt_name">Nearby devices</string>
+  <string name="system_permission_bt_usage">Lets the assistant list paired Bluetooth devices and their state. It cannot connect or disconnect anything for you.</string>
+  <string name="system_permission_wifi_name">WiFi information</string>
+  <string name="system_permission_wifi_usage">Lets the assistant read the current WiFi network and scan nearby ones. On Android 13+ this uses the nearby-WiFi permission.</string>
 </resources>

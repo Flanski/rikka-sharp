@@ -33,7 +33,21 @@
     android:name="android.permission.NEARBY_WIFI_DEVICES"
     android:usesPermissionFlags="neverForLocation"
     tools:targetApi="tiramisu" />
-  <!-- 系统工具：蓝牙设备列表与状态（Android 12+ 的运行时权限） -->
+  <!-- 系统工具：蓝牙设备列表与状态。
+       ★必须**两个都声明**，因为它们分别对不同的 Android 版本生效：
+
+       · BLUETOOTH —— Android 11 及以下的权限。
+         protectionLevel="normal"（AOSP 已核实）：**只需清单声明、安装即授予、无需运行时申请**。
+         漏声明的后果是调用 BluetoothAdapter 时直接抛
+           SecurityException: Need BLUETOOTH permission
+         而且用户无法在设置页自助修复 —— 属清单级问题，必须重装。
+         加 maxSdkVersion="30" 是为了不在 Android 12+ 上留下无意义的旧权限。
+
+       · BLUETOOTH_CONNECT —— Android 12+ 的运行时权限（dangerous）；
+         在更早的系统上系统不认识它，声明了也不生效（不报错）。 -->
+  <uses-permission
+    android:name="android.permission.BLUETOOTH"
+    android:maxSdkVersion="30" />
   <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
   <!-- 系统工具：读取短信（危险权限，运行时申请） -->
   <uses-permission android:name="android.permission.READ_SMS" />

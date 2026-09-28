@@ -49,10 +49,13 @@ fun createWifiTool(context: Context): Tool = Tool(
         Read the device's WiFi state: whether WiFi is on, and (when permitted) the current
         connection's SSID, BSSID, IP address, frequency, link speed and signal level.
         Set include_scan=true to also list nearby networks — that requires location permission
-        and the system location toggle to be on; if unavailable, the response explains why
+        (Android 12 and below) or NEARBY_WIFI_DEVICES (Android 13+), plus the system location toggle
+        being on. If unavailable, the response carries "missing_permissions" and explains why,
         instead of silently returning nothing.
+        PERMISSIONS: reading the current connection's SSID/BSSID needs the same location/nearby-wifi
+        permission; without it those fields are simply omitted (the network may still be connected).
         Read-only.
-    """.trimIndent().replace("\n", " "),
+    """.trimIndent().replace("\n", " ").replace(Regex(" +"), " "),
     needsApproval = { false },
     parameters = {
         InputSchema.Obj(
@@ -67,7 +70,7 @@ fun createWifiTool(context: Context): Tool = Tool(
     execute = { args ->
         val includeScan = args.jsonObject["include_scan"]?.jsonPrimitive?.contentOrNull
             ?.toBooleanStrictOrNull() ?: false
-        listOf(UIMessagePart.Text(wifiSnapshot(context, includeScan).toString()))
+        guarded("wifi_info") { wifiSnapshot(context, includeScan) }
     },
 )
 
@@ -120,11 +123,18 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
 
         // ── 扫描附近网络（可选）──
         if (includeScan) {
-            val hasLocation = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!hasLocation) {
-                put("scan_error", JsonPrimitive("扫描需要位置权限（ACCESS_FINE_LOCATION），当前未授予"))
+            if (!hasWifiScanPermission(context)) {
+                put("scan_error", JsonPrimitive("扫描附近网络所需的权限未授予"))
+                // ★按版本给出**正确**的权限名：
+                //   Android 13+ 扫描需要 NEARBY_WIFI_DEVICES；更早的版本用位置权限。
+                //   报错里写错权限名会让用户去设置里找一个不存在的授权项。
+                put("missing_permissions", buildJsonArray {
+                    wifiScanPermissions().forEach { add(it) }
+                })
+                put("hint", JsonPrimitive(
+                    "扫描需要上述权限之一；此外多数设备还要求**系统定位开关处于开启状态**，" +
+                        "否则即使权限已授予也会返回空结果。"
+                ))
             } else {
                     runCatching {
                         @Suppress("DEPRECATION")
@@ -167,12 +177,19 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
         description = """
             Read Bluetooth state: whether the adapter is on, and the list of bonded (paired) devices
             with name, address and type.
+        PERMISSIONS: requires android.permission.BLUETOOTH (Android 11 and below — a normal
+        permission that only needs to be declared in the manifest) or BLUETOOTH_CONNECT
+        (Android 12+, a runtime permission the user must grant).
+        This tool probes by actually reading the adapter state, so "permission_granted": false is
+        authoritative; when it is false the response also carries "missing_permissions" and a "hint"
+        stating whether the user can fix it in Settings or the app must be reinstalled.
+        Do not retry blindly while permission_granted is false.
             action="open_settings" opens the system Bluetooth settings page so the user can connect or
             disconnect manually.
             IMPORTANT: a normal (non-system) app cannot programmatically connect or disconnect Bluetooth
             audio devices — BluetoothA2dp.connect()/BluetoothHeadset.connect() are hidden system APIs.
             This tool therefore reports state and guides the user instead of pretending to control it.
-        """.trimIndent().replace("\n", " "),
+        """.trimIndent().replace("\n", " ").replace(Regex(" +"), " "),
         needsApproval = { false },
         parameters = {
             InputSchema.Obj(
@@ -199,12 +216,67 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
                         put("hint", JsonPrimitive("已为用户打开系统设置页 —— 连接/断开蓝牙设备需要用户在那里手动操作。"))
                     }.toString()))
                 }
-                else -> listOf(UIMessagePart.Text(bluetoothSnapshot(context).toString()))
+                else -> guarded("bluetooth_info") { bluetoothSnapshot(context) }
             }
         },
     )
 
-    private fun bluetoothSnapshot(context: Context): kotlinx.serialization.json.JsonObject {
+    /**
+ * 当前 Android 版本下读取蓝牙状态所需的权限。
+ *
+ * 两个版本的权限名**不同**，必须按版本给出正确的那一个，
+ * 否则错误提示会指向一个在本系统上根本不存在的权限。
+ */
+/**
+ * 扫描附近网络所需的权限。
+ *
+ * **按版本不同**：
+ *  · Android 13(T)+ —— NEARBY_WIFI_DEVICES（声明为 neverForLocation 时不强制位置权限）
+ *  · Android 12 及以下 —— ACCESS_FINE_LOCATION
+ * 拿错权限名会让错误提示指向一个本系统上不存在的授权项。
+ */
+private fun wifiScanPermissions(): List<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        listOf(Manifest.permission.NEARBY_WIFI_DEVICES, Manifest.permission.ACCESS_FINE_LOCATION)
+    } else {
+        listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+    }
+
+/** 只要上述权限中**任一**已授予即可（新版本允许用 NEARBY_WIFI_DEVICES 替代位置权限） */
+private fun hasWifiScanPermission(context: Context): Boolean =
+    wifiScanPermissions().any {
+        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+    }
+
+private fun bluetoothRequiredPermissions(): List<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        listOf(Manifest.permission.BLUETOOTH_CONNECT)
+    } else {
+        listOf("android.permission.BLUETOOTH")
+    }
+
+/**
+ * 蓝牙读取失败时的修复指引。
+ *
+ * 刻意区分两种原因，因为**可行的修复方式完全不同**：
+ *  · 运行时权限未授予（Android 12+ 的 BLUETOOTH_CONNECT）→ 用户可在系统设置里授予后重试
+ *  · 清单未声明（Android 11 及以下的 BLUETOOTH 是 normal 权限）→ 用户**无法自助修复**，只能重装
+ * 把两者混为一谈会让用户白折腾。
+ */
+private fun bluetoothFixHint(context: Context): String {
+    val runtimeMissing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) !=
+        PackageManager.PERMISSION_GRANTED
+    return if (runtimeMissing) {
+        "缺少运行时权限「附近的设备」（BLUETOOTH_CONNECT）。" +
+            "可在系统设置 → 应用 → 本应用 → 权限中授予后重试。"
+    } else {
+        "蓝牙 API 调用被拒。所需权限可能未在 AndroidManifest 中声明 —— " +
+            "这种情况用户无法在设置页自助修复，需要重新安装（或更新）应用。"
+    }
+}
+
+private fun bluetoothSnapshot(context: Context): kotlinx.serialization.json.JsonObject {
         val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
         return buildJsonObject {
             if (adapter == null) {
@@ -214,26 +286,38 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
             }
             put("supported", JsonPrimitive(true))
 
-            // Android 12+ 起读蓝牙状态与设备列表需要 BLUETOOTH_CONNECT
-            val needConnect = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-            val hasConnect = !needConnect || ContextCompat.checkSelfPermission(
-                context, Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED
-            if (!hasConnect) {
+            // ★真实探测：直接尝试读一次适配器状态。
+            //
+            // 为什么不按「SDK 版本推断需要什么权限」：
+            //   那种推断只覆盖「运行时权限未授予」，漏掉了「清单里根本没声明」的情况。
+            //   Android 11 及以下的 android.permission.BLUETOOTH 是 **normal 权限**
+            //   （AOSP 已核实 protectionLevel="normal"）—— 不需要运行时申请，
+            //   但**必须清单声明**；漏声明时 API 直接抛 SecurityException，
+            //   而用户无法在系统设置里自助修复（属清单级问题，只能重装）。
+            //   本工具先前正是如此：只声明了 Android 12+ 的 BLUETOOTH_CONNECT，
+            //   于是旧系统上 permission_granted 报 true 却调用失败 —— 状态与真实情况冲突。
+            // 现在以真实调用结果为准：能读到 → true；抛异常 → false + 列出缺失权限。
+            val probe = runCatching { adapter.isEnabled }
+            if (probe.isFailure) {
+                val ex = probe.exceptionOrNull()
                 put("permission_granted", JsonPrimitive(false))
-                put("permission_note", JsonPrimitive(
-                    "Android 12+ 读取蓝牙状态与设备列表需要「附近的设备」权限（BLUETOOTH_CONNECT），当前未授予。"
-                ))
+                put("missing_permissions", buildJsonArray {
+                    bluetoothRequiredPermissions().forEach { add(it) }
+                })
+                put("error", JsonPrimitive("${ex?.javaClass?.simpleName}: ${ex?.message}"))
+                put("hint", JsonPrimitive(bluetoothFixHint(context)))
                 return@buildJsonObject
             }
             put("permission_granted", JsonPrimitive(true))
 
+            val btEnabled = probe.getOrThrow()
+            put("enabled", JsonPrimitive(btEnabled))
+            if (!btEnabled) {
+                put("note", JsonPrimitive("蓝牙未开启。开启蓝牙需要用户操作（应用不能静默开启）。"))
+                return@buildJsonObject
+            }
+
             runCatching {
-                put("enabled", JsonPrimitive(adapter.isEnabled))
-                if (!adapter.isEnabled) {
-                    put("note", JsonPrimitive("蓝牙未开启。开启蓝牙需要用户操作（应用不能静默开启）。"))
-                    return@buildJsonObject
-                }
                 put("name", JsonPrimitive(adapter.name ?: ""))
                 put("state", JsonPrimitive(
                     when (adapter.state) {
@@ -288,11 +372,13 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
         name = "sms_read",
         description = """
             Read SMS messages from the device inbox (read-only — this tool never sends anything).
-            Requires the READ_SMS runtime permission; if it is not granted the response says so.
+            PERMISSIONS: requires the READ_SMS runtime permission (a dangerous permission the user must
+        grant). If it is not granted the response says so explicitly rather than returning an empty
+        list — an empty list would wrongly suggest "no messages".
             Parameters: limit (default 20, max 200), address (filter by phone number, substring match),
             unread_only (only unread messages).
             Message bodies are truncated to 1000 characters each to keep the result readable.
-        """.trimIndent().replace("\n", " "),
+        """.trimIndent().replace("\n", " ").replace(Regex(" +"), " "),
         needsApproval = { false },
         parameters = {
             InputSchema.Obj(
@@ -381,7 +467,7 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
                     put("error", JsonPrimitive("${it.javaClass.simpleName}: ${it.message}"))
                 }
             }
-            listOf(UIMessagePart.Text(result.toString()))
+            guarded("sms_read") { result }
         }
     },
 )
