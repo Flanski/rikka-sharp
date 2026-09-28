@@ -129,7 +129,9 @@ private fun gitCloneTool(context: Context): Tool = Tool(
         Clone a git repository with full history (real git, via JGit) into a local directory.
         Unlike repo_download (which fetches a tarball snapshot with no .git), the result is a working
         repository you can commit to, branch, and push.
-        For large repositories prefer depth=1 (shallow) to keep the download small.
+        NOTE: this build uses JGit 5.x, which has no shallow-clone support — the full history and all
+        branches are always fetched. For very large repositories this can be slow and heavy on storage;
+        if you only need the source code (not history), use repo_download instead.
         If the operation exceeds the tool timeout, clone again later — partially cloned directories
         are left in place and git will refuse to reuse them; delete the directory first.
     """.trimIndent().replace("\n", " "),
@@ -150,10 +152,6 @@ private fun gitCloneTool(context: Context): Tool = Tool(
                     put("type", "string")
                     put("description", "Branch or tag to check out after cloning")
                 })
-                put("depth", buildJsonObject {
-                    put("type", "integer")
-                    put("description", "Shallow clone depth. 1 = only the latest commit (much faster). Omit for full history.")
-                })
             },
             required = listOf("url"),
         )
@@ -163,7 +161,6 @@ private fun gitCloneTool(context: Context): Tool = Tool(
         val url = obj["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: error("url is required")
         val branch = obj["branch"]?.jsonPrimitive?.contentOrNull
-        val depth = obj["depth"]?.jsonPrimitive?.longOrNull?.toInt()?.takeIf { it > 0 }
 
         val repoName = url.substringBefore('?').substringAfterLast('/')
             .removeSuffix(".git").ifBlank { "repo" }
@@ -185,9 +182,10 @@ private fun gitCloneTool(context: Context): Tool = Tool(
             val cmd = Git.cloneRepository()
                 .setURI(url)
                 .setDirectory(dest)
-                .setCloneAllBranches(depth == null)
+                // 5.x 没有浅克隆（CloneCommand.setDepth 在 6.x 才加入），
+                // 因此总是克隆全部分支与完整历史。
+                .setCloneAllBranches(true)
             branch?.takeIf { it.isNotBlank() }?.let { cmd.setBranch(it) }
-            depth?.let { cmd.setDepth(it) }
             cmd.call().use { git ->
                 val head = git.repository.exactRef("HEAD")?.objectId?.name?.take(10) ?: "?"
                 Log.i(TAG, "cloned $url -> ${dest.absolutePath}")
@@ -195,7 +193,7 @@ private fun gitCloneTool(context: Context): Tool = Tool(
                     put("ok", JsonPrimitive(true))
                     put("path", JsonPrimitive(dest.absolutePath))
                     put("head", JsonPrimitive(head))
-                    put("shallow", JsonPrimitive(depth != null))
+                    put("shallow", JsonPrimitive(false))
                 })
             }
         }
