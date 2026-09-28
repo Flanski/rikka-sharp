@@ -24,6 +24,7 @@ import me.rerere.rikkahub.AI_NOTIFICATION_URGENT_CHANNEL_ID
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.notification.AppNotification
 import me.rerere.rikkahub.data.notification.AppNotificationCenter
+import me.rerere.rikkahub.utils.NotificationDeliveryStatus
 import me.rerere.rikkahub.utils.NotificationUtil
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -377,7 +378,7 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
  * 只说"失败了"没用 —— 用户需要知道去哪里打开什么。
  * 模型也需要能照着这段话向用户解释。
  */
-private fun hintFor(status: NotificationUtil.NotificationDeliveryStatus?): String = when (status?.problem()) {
+private fun hintFor(status: NotificationDeliveryStatus?): String = when (status?.problem()) {
     "missing_permission" ->
         "The app has not been granted notification permission. Ask the user to allow notifications " +
             "for this app in system settings (Android 13+). Alternatively use channel=\"inapp\", " +
@@ -398,7 +399,7 @@ private fun hintFor(status: NotificationUtil.NotificationDeliveryStatus?): Strin
 
 /** 可送达性状态的 JSON 形式 —— 放在返回值里，让调用方能看到真实情况而不是只信一个 ok */
 private fun deliveryJson(
-    status: NotificationUtil.NotificationDeliveryStatus,
+    status: NotificationDeliveryStatus,
 ): kotlinx.serialization.json.JsonObject = buildJsonObject {
     put("permission", JsonPrimitive(status.permissionGranted))
     put("notifications_enabled", JsonPrimitive(status.notificationsEnabled))
