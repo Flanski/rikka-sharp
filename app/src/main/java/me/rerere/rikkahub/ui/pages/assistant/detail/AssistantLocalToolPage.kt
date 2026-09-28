@@ -17,7 +17,6 @@ import androidx.compose.material3.LargeFlexibleTopAppBar
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
@@ -26,9 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dokar.sonner.ToastType
@@ -38,13 +35,11 @@ import me.rerere.hugeicons.stroke.ArrowRight01
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.ai.tools.LocalToolOption
-import me.rerere.rikkahub.data.ai.tools.resolveLocalToolApproval
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.model.Assistant
 import me.rerere.rikkahub.ui.components.ai.ModelSelector
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
-import me.rerere.rikkahub.ui.components.ui.CardGroupScope
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionInfo
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
@@ -153,102 +148,6 @@ private fun AssistantLocalToolContent(
             .imePadding(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CardGroup {
-            item(
-                headlineContent = {
-                    Text("并行执行工具")
-                },
-                supportingContent = {
-                    Text("同时执行多个工具调用，加速搜索、文件操作等")
-                },
-                trailingContent = {
-                    Switch(
-                        checked = assistant.enableParallelToolExecution,
-                        onCheckedChange = { onUpdate(assistant.copy(enableParallelToolExecution = it)) }
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("工具重复调用上限") },
-                supportingContent = { Text("同一批内相同工具调用超过此数打断，默认8") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.toolRecurringLimit.toString(),
-                        onValueChange = { v ->
-                            v.toIntOrNull()?.let { onUpdate(assistant.copy(toolRecurringLimit = it)) }
-                        },
-                        modifier = Modifier.width(70.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("总工具调用轮数上限") },
-                supportingContent = { Text("整个对话AI调工具的总次数上限，默认256") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.totalStepsLimit.toString(),
-                        onValueChange = { v ->
-                            v.toIntOrNull()?.let { onUpdate(assistant.copy(totalStepsLimit = it)) }
-                        },
-                        modifier = Modifier.width(70.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("单工具执行超时(秒)") },
-                supportingContent = { Text("每个工具调用最长执行时间，默认60") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.toolExecTimeout.toString(),
-                        onValueChange = { v ->
-                            v.toIntOrNull()?.let { onUpdate(assistant.copy(toolExecTimeout = it)) }
-                        },
-                        modifier = Modifier.width(70.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("JS引擎超时(秒)") },
-                supportingContent = { Text("JavaScript代码执行超时，默认15") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.jsTimeout.toString(),
-                        onValueChange = { v ->
-                            v.toIntOrNull()?.let { onUpdate(assistant.copy(jsTimeout = it)) }
-                        },
-                        modifier = Modifier.width(70.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-            )
-            item(
-                headlineContent = { Text("Shell超时(秒)") },
-                supportingContent = { Text("shell命令执行超时，默认30") },
-                trailingContent = {
-                    OutlinedTextField(
-                        value = assistant.shellTimeout.toString(),
-                        onValueChange = { v ->
-                            v.toIntOrNull()?.let { onUpdate(assistant.copy(shellTimeout = it)) }
-                        },
-                        modifier = Modifier.width(70.dp),
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    )
-                }
-            )
-        }
         CardGroup {
             item(
                 headlineContent = {
@@ -445,7 +344,12 @@ private fun AssistantLocalToolContent(
                     )
                 }
             )
-            // 设备传感器：左侧总开关控制该能力，点行尾箭头进入明细页逐个放行
+            // 设备传感器：**纯入口**（无总开关）—— 总开关在子页面的第一个选项里。
+            //
+            // 为什么把总开关挪走：与「编程开发工具」「系统工具」保持同一种交互 ——
+            // 主列表只负责「进哪个分类」，具体开关一律在分类页内部。
+            // 之前这个条目同时承担「开关」与「进入」两种操作，容易误触
+            // （想进去看明细，结果把总开关关了）。
             item(
                 onClick = { nav.navigate(Screen.AssistantSensors(assistant.id.toString())) },
                 headlineContent = {
@@ -455,16 +359,7 @@ private fun AssistantLocalToolContent(
                     Text(stringResource(R.string.assistant_page_local_tools_sensors_desc))
                 },
                 trailingContent = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Switch(
-                            checked = assistant.localTools.contains(LocalToolOption.Sensors),
-                            onCheckedChange = { toggleLocalTool(LocalToolOption.Sensors, it) }
-                        )
-                        Icon(HugeIcons.ArrowRight01, contentDescription = null)
-                    }
+                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
                 }
             )
             // 编程开发工具：纯入口（无总开关）—— 它是分类容器，具体工具在子页面里各自开关
@@ -493,6 +388,32 @@ private fun AssistantLocalToolContent(
                     Icon(HugeIcons.ArrowRight01, contentDescription = null)
                 }
             )
+            // 本地工具设置：纯入口（无开关）—— 并行执行、各类上限与超时
+            item(
+                onClick = { nav.navigate(Screen.AssistantLocalToolSettings(assistant.id.toString())) },
+                headlineContent = {
+                    Text(stringResource(R.string.local_tool_settings_entry))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.local_tool_settings_entry_desc))
+                },
+                trailingContent = {
+                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
+                }
+            )
+            // 工具授权：纯入口（无开关）—— 哪些工具执行前需用户确认
+            item(
+                onClick = { nav.navigate(Screen.AssistantToolApproval(assistant.id.toString())) },
+                headlineContent = {
+                    Text(stringResource(R.string.tool_approval_entry))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.tool_approval_entry_desc))
+                },
+                trailingContent = {
+                    Icon(HugeIcons.ArrowRight01, contentDescription = null)
+                }
+            )
             // 下载类工具：HTTP 下载 / 仓库快照下载，支持同步与异步两种模式
             item(
                 headlineContent = {
@@ -510,65 +431,5 @@ private fun AssistantLocalToolContent(
             )
         }
 
-        // ────────── 工具授权 ──────────
-        // 部分工具会改动设备、触碰远程主机或涉及隐私。它们默认在执行前请求用户批准
-        // （走 ToolApprovalState：模型先暂停 → 用户在消息里点同意/拒绝 → 生成继续）。
-        // 这里可以逐个关闭 —— 关闭后模型会**直接执行**，风险由使用者自行承担。
-        //
-        // ★注意：CardGroup 的 content 是 `CardGroupScope.() -> Unit`（**非 @Composable**），
-        //   所以 stringResource 等 @Composable 必须在 CardGroup **之前**求值，
-        //   条目本身也要做成 CardGroupScope 的扩展函数（见下方 ApprovalItem）。
-        val lShell = stringResource(R.string.assistant_page_tool_approval_shell)
-        val lSshExec = stringResource(R.string.assistant_page_tool_approval_ssh_exec)
-        val lSshUpload = stringResource(R.string.assistant_page_tool_approval_ssh_upload)
-        val lSshDownload = stringResource(R.string.assistant_page_tool_approval_ssh_download)
-        val lSensors = stringResource(R.string.assistant_page_tool_approval_sensors)
-        val approvals = assistant.toolApprovalOverrides
-        val onToggleApproval: (String, Boolean) -> Unit = { name, required ->
-            onUpdate(
-                assistant.copy(
-                    toolApprovalOverrides = assistant.toolApprovalOverrides + (name to required)
-                )
-            )
-        }
-        CardGroup {
-            item(
-                headlineContent = { Text(stringResource(R.string.assistant_page_tool_approval)) },
-                supportingContent = { Text(stringResource(R.string.assistant_page_tool_approval_desc)) },
-            )
-            ApprovalItem("execute_command", lShell, approvals, onToggleApproval)
-            ApprovalItem("ssh_exec", lSshExec, approvals, onToggleApproval)
-            ApprovalItem("ssh_upload", lSshUpload, approvals, onToggleApproval)
-            ApprovalItem("ssh_download", lSshDownload, approvals, onToggleApproval)
-            ApprovalItem("get_sensors", lSensors, approvals, onToggleApproval)
-        }
     }
-}
-
-/**
- * 单个工具的授权开关（作为 CardGroup 的一个条目）。
- *
- * 开关打开 = 调用前需用户批准；取值优先用户覆盖，其次默认表（见 [resolveLocalToolApproval]）。
- *
- * ★为什么是 `CardGroupScope` 的扩展、而不是 @Composable 函数：
- * `CardGroup(content: CardGroupScope.() -> Unit)` 的 content **不是 @Composable**，
- * 在其中既不能直接调用 composable，也不能调用其它 @Composable 函数。
- * 因此把 UI 放进 `item(...)` 的 @Composable lambda 里，函数自身保持普通函数。
- */
-private fun CardGroupScope.ApprovalItem(
-    toolName: String,
-    label: String,
-    overrides: Map<String, Boolean>,
-    onToggle: (String, Boolean) -> Unit,
-) {
-    item(
-        headlineContent = { Text(label) },
-        supportingContent = { Text(toolName) },
-        trailingContent = {
-            Switch(
-                checked = resolveLocalToolApproval(toolName, overrides),
-                onCheckedChange = { onToggle(toolName, it) },
-            )
-        },
-    )
 }

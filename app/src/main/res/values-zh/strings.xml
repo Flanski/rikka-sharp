@@ -2006,4 +2006,32 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="assistant_page_local_tools_calculator_desc">用计算器精确求值，而不是让模型自己心算</string>
   <string name="assistant_page_local_tools_present_file_title">分享文件</string>
   <string name="assistant_page_local_tools_present_file_desc">允许助手通过系统分享面板把文件交给你</string>
+
+  <!-- 本地工具设置子页面 -->
+  <string name="local_tool_settings_title">本地工具设置</string>
+  <string name="local_tool_settings_parallel">并行执行工具</string>
+  <string name="local_tool_settings_parallel_desc">同时执行多个工具调用，加速搜索、文件操作等</string>
+  <string name="local_tool_settings_recurring">工具重复调用上限</string>
+  <string name="local_tool_settings_recurring_desc">同一批内相同工具调用超过此数即打断（默认 8）</string>
+  <string name="local_tool_settings_total_steps">总工具调用轮数上限</string>
+  <string name="local_tool_settings_total_steps_desc">整个对话中 AI 调用工具的总次数上限（默认 256）</string>
+  <string name="local_tool_settings_tool_timeout">单工具空闲超时（秒）</string>
+  <string name="local_tool_settings_tool_timeout_desc">连续这么久**没有任何活动上报**才判定卡死并中断；会报告进度的工具（如下载）不会因总时长被误杀（默认 120）</string>
+  <string name="local_tool_settings_js_timeout">JS 引擎超时（秒）</string>
+  <string name="local_tool_settings_js_timeout_desc">JavaScript 代码执行超时（默认 15）</string>
+  <string name="local_tool_settings_shell_timeout">Shell 超时（秒）</string>
+  <string name="local_tool_settings_shell_timeout_desc">shell 命令执行超时（默认 30）</string>
+  <string name="local_tool_settings_entry">本地工具设置</string>
+  <string name="local_tool_settings_entry_desc">并行执行、调用上限与各类超时</string>
+
+  <!-- 工具授权子页面 -->
+  <string name="tool_approval_page_title">工具授权</string>
+  <string name="tool_approval_switch_on">执行前询问我</string>
+  <string name="tool_approval_switch_off">直接执行（不询问）</string>
+  <string name="tool_approval_entry">工具授权</string>
+  <string name="tool_approval_entry_desc">选择哪些工具在执行前必须经你确认</string>
+
+  <!-- 传感器子页面：总开关 -->
+  <string name="sensor_page_master_switch">设备传感器</string>
+  <string name="sensor_page_master_switch_desc">是否允许助手读取传感器。关闭后该工具根本不会提供给模型</string>
 </resources>

@@ -2003,4 +2003,32 @@
   <string name="assistant_page_local_tools_calculator_desc">Evaluate arithmetic expressions accurately instead of doing the maths itself</string>
   <string name="assistant_page_local_tools_present_file_title">Share files</string>
   <string name="assistant_page_local_tools_present_file_desc">Let the assistant hand a file to you through the system share sheet</string>
+
+  <!-- 本地工具设置子页面 -->
+  <string name="local_tool_settings_title">Local tool settings</string>
+  <string name="local_tool_settings_parallel">Run tools in parallel</string>
+  <string name="local_tool_settings_parallel_desc">Execute several tool calls at once — speeds up searches and file operations</string>
+  <string name="local_tool_settings_recurring">Repeated-call limit</string>
+  <string name="local_tool_settings_recurring_desc">Break off when the same tool is called more than this many times in one batch (default 8)</string>
+  <string name="local_tool_settings_total_steps">Total tool-call limit</string>
+  <string name="local_tool_settings_total_steps_desc">Upper bound on tool calls across the whole conversation (default 256)</string>
+  <string name="local_tool_settings_tool_timeout">Tool idle timeout (seconds)</string>
+  <string name="local_tool_settings_tool_timeout_desc">Interrupt only after this long with NO activity reported. Tools that report progress (e.g. downloads) are not killed by total duration (default 120)</string>
+  <string name="local_tool_settings_js_timeout">JS engine timeout (seconds)</string>
+  <string name="local_tool_settings_js_timeout_desc">Limit for JavaScript execution (default 15)</string>
+  <string name="local_tool_settings_shell_timeout">Shell timeout (seconds)</string>
+  <string name="local_tool_settings_shell_timeout_desc">Limit for shell command execution (default 30)</string>
+  <string name="local_tool_settings_entry">Local tool settings</string>
+  <string name="local_tool_settings_entry_desc">Parallel execution, call limits and timeouts</string>
+
+  <!-- 工具授权子页面 -->
+  <string name="tool_approval_page_title">Tool approval</string>
+  <string name="tool_approval_switch_on">asks before running</string>
+  <string name="tool_approval_switch_off">runs directly (no prompt)</string>
+  <string name="tool_approval_entry">Tool approval</string>
+  <string name="tool_approval_entry_desc">Choose which tools must ask for your confirmation before running</string>
+
+  <!-- 传感器子页面：总开关 -->
+  <string name="sensor_page_master_switch">Device sensors</string>
+  <string name="sensor_page_master_switch_desc">Allow the assistant to read sensors at all. With this off, the tool is not even offered to the model</string>
 </resources>

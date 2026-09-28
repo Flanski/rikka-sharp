@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.rerere.rikkahub.data.ai.tools.LocalToolOption
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.ai.tools.local.SensorCatalog
 import me.rerere.rikkahub.ui.components.nav.BackButton
@@ -127,6 +128,29 @@ fun AssistantSensorsPage(id: String) {
                 )
             } else {
                 CardGroup {
+                    // ── 第一个选项：传感器工具总开关 ──
+                    // 它控制的是「AI 能不能用传感器工具」（LocalToolOption.Sensors），
+                    // 与下面每个传感器的开关是**两层**：
+                    //   · 总开关关 → 整个 get_sensors 工具不注册，AI 完全看不到它
+                    //   · 总开关开 → 工具可用，但只有被单独放行的传感器才会真正上报数据
+                    // 放在第一个位置是因为它是这一页的「前提」——关掉时下面的开关没有意义。
+                    item(
+                        headlineContent = { Text(stringResource(R.string.sensor_page_master_switch)) },
+                        supportingContent = { Text(stringResource(R.string.sensor_page_master_switch_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = assistant.localTools.contains(LocalToolOption.Sensors),
+                                onCheckedChange = { enabled ->
+                                    val newTools = if (enabled) {
+                                        assistant.localTools + LocalToolOption.Sensors
+                                    } else {
+                                        assistant.localTools - LocalToolOption.Sensors
+                                    }
+                                    vm.update(assistant.copy(localTools = newTools))
+                                }
+                            )
+                        }
+                    )
                     entries.forEach { entry ->
                         // 权限是否已授予（读取 Compose 状态，权限变化后会自动重组）
                         val granted = when (entry.permission) {

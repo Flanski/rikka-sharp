@@ -79,6 +79,8 @@ import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantExtensionsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantLocalToolSettingsPage
+import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantToolApprovalPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantProgrammingToolsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSensorsPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantSystemToolsPage
@@ -398,6 +400,12 @@ class RouteActivity : ComponentActivity() {
                                 AssistantLocalToolPage(key.id)
                             }
 
+                            entry<Screen.AssistantLocalToolSettings> { key ->
+                                AssistantLocalToolSettingsPage(key.id)
+                            }
+                            entry<Screen.AssistantToolApproval> { key ->
+                                AssistantToolApprovalPage(key.id)
+                            }
                             entry<Screen.AssistantSensors> { key ->
                                 AssistantSensorsPage(key.id)
                             }
@@ -678,6 +686,12 @@ sealed interface Screen : NavKey {
     data class AssistantLocalTool(val id: String) : Screen
 
     @Serializable
+    /** 本地工具设置（并行执行、各类上限与超时） */
+    data class AssistantLocalToolSettings(val id: String) : Screen
+
+    /** 工具授权（哪些工具执行前需用户确认） */
+    data class AssistantToolApproval(val id: String) : Screen
+
     data class AssistantSensors(val id: String) : Screen
 
     /** 本地 TTS 模型仓库（全量列表 / 搜索 / 下载 / 删除） */

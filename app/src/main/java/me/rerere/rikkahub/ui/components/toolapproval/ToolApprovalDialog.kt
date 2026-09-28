@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -28,6 +29,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -91,6 +96,10 @@ fun ToolApprovalDialog(
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,   // 由我们自己控制宽度（移动端贴边、宽屏 480dp 居中）
+            // ★让弹窗窗口延伸到系统栏区域。
+            // 不加这一项时，Dialog 的窗口会避开状态栏/导航栏，于是那两条区域**不被遮罩覆盖** ——
+            // 表现为「背景半透明遮罩不完全覆盖」（模板里是 `position: fixed; inset: 0`，全屏覆盖）。
+            decorFitsSystemWindows = false,
             dismissOnBackPress = false,
             dismissOnClickOutside = false,
         ),
@@ -175,10 +184,53 @@ private fun ApprovalBody(
     argumentsPreview: String,
     modifier: Modifier = Modifier,
 ) {
+    val scrollState = rememberScrollState()
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
+            // ── 自绘滚动条 ──
+            //
+            // 模板用的是 CSS 伪元素：
+            //     ::-webkit-scrollbar        { width: 6px }
+            //     ::-webkit-scrollbar-track  { background: rgba(255,255,255,0.1) }
+            //     ::-webkit-scrollbar-thumb  { background: rgba(255,255,255,0.3); border-radius: 3px }
+            // Compose 的 verticalScroll **不提供滚动条**，所以上一版视觉上「丢了滚动条」。
+            // 这里用 drawWithContent 把同样规格的轨道与滑块画出来。
+            //
+            // 注意 Modifier 顺序：drawWithContent 放在 verticalScroll **之后**，
+            // 这样拿到的是**视口**尺寸（而非内容总高），滚动条才能固定在右侧。
+            .drawWithContent {
+                drawContent()
+                // 内容没超出时不画 —— 与 CSS 的 `overflow-y: auto` 语义一致
+                val maxScroll = scrollState.maxValue
+                if (maxScroll <= 0) return@drawWithContent
+
+                val barWidth = 6.dp.toPx()
+                val radius = CornerRadius(3.dp.toPx())
+                val left = size.width - barWidth
+
+                // 轨道：rgba(255,255,255,0.1)
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.1f),
+                    topLeft = Offset(left, 0f),
+                    size = Size(barWidth, size.height),
+                    cornerRadius = radius,
+                )
+
+                // 滑块：rgba(255,255,255,0.3)
+                // 高度按「视口 / 内容」比例，并给一个下限（否则内容极长时滑块细到看不见/点不中）
+                val visibleRatio = size.height / (size.height + maxScroll).toFloat()
+                val thumbHeight = (size.height * visibleRatio).coerceAtLeast(24.dp.toPx())
+                val scrollRatio = if (maxScroll > 0) scrollState.value.toFloat() / maxScroll else 0f
+                val thumbTop = (size.height - thumbHeight) * scrollRatio
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.3f),
+                    topLeft = Offset(left, thumbTop),
+                    size = Size(barWidth, thumbHeight),
+                    cornerRadius = radius,
+                )
+            }
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -236,17 +288,25 @@ private fun ApprovalFooter(onApprove: () -> Unit, onDeny: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TextButton(onClick = onDeny) {
+        // 次要按钮：模板 .btn-retry（半透明白底 + 白字）
+        TextButton(
+            onClick = onDeny,
+            colors = ButtonDefaults.textButtonColors(containerColor = ApprovalColors.secondaryButton),
+        ) {
             Text(
                 text = stringResource(R.string.tool_approval_deny),
                 color = ApprovalColors.onContainer,
                 fontWeight = FontWeight.Medium,
             )
         }
-        TextButton(onClick = onApprove) {
+        // 主要按钮：模板 .notification-btn（白底 + 蓝字）
+        TextButton(
+            onClick = onApprove,
+            colors = ButtonDefaults.textButtonColors(containerColor = Color.White),
+        ) {
             Text(
                 text = stringResource(R.string.tool_approval_allow),
-                color = ApprovalColors.header,
+                color = ApprovalColors.buttonText,
                 fontWeight = FontWeight.Bold,
             )
         }
@@ -254,15 +314,38 @@ private fun ApprovalFooter(onApprove: () -> Unit, onDeny: () -> Unit) {
 }
 
 /**
- * 弹窗配色。
+ * 弹窗配色 —— **严格照搬模板**（用户明确要求「最大限度保留模板中的样式」）。
  *
- * 与模板的差异：模板整体是蓝色底（`#409eff`），但**授权**的语义是「先停一下、请你确认」，
- * 用蓝色会显得像普通通知而被忽略。这里改为「深底 + 橙色强调」，保留模板的结构与动画，
- * 只调整语义色 —— 醒目是这次改造的目的。
+ * 模板里的配色关系：
+ *   .notification-modal { background: #409eff }            ← 整体蓝底
+ *   .notification-body  { /* 无 background *\/ }             ← 内容区**透明**，显示的是容器的蓝
+ *   .notification-header { background: 随类型变化 }
+ *       type-normal → #409eff（蓝，配白字）
+ *       type-warning → #e6a23c（橙，配黑字）
+ *       type-error → #f56c6c（红，配白字）
+ *   .notification-btn { background: #fff; color: #409eff }  ← 白底蓝字
+ *   .btn-retry { background: rgba(255,255,255,0.2); color: #fff }
+ *
+ * ★我上一版自作主张改成「深底 + 橙头」，理由是「授权的语义应该更醒目」——
+ * 那是错的：用户要的是移植模板、保留原样式，不是我重新设计一套配色。
+ * 现在按模板还原：整体蓝底、内容区透明显蓝、橙色只用在 header（warning 类型）。
  */
 private object ApprovalColors {
-    val header = Color(0xFFE6A23C)        // 模板的 warning 色
-    val container = Color(0xFF2B2F36)     // 深色容器，保证白字可读
-    val onHeader = Color(0xFF1A1A1A)
+    /** 模板 .notification-modal 的 background */
+    val container = Color(0xFF409EFF)
+
+    /** 模板 .notification-modal.type-warning .notification-header 的背景 */
+    val header = Color(0xFFE6A23C)
+
+    /** warning header 用黑字（模板里 type-warning 的 color 是 #000） */
+    val onHeader = Color(0xFF000000)
+
+    /** 模板里 body / 按钮区的文字色为 #fff */
     val onContainer = Color(0xFFFFFFFF)
+
+    /** 模板 .notification-btn 的白底蓝字 */
+    val buttonText = Color(0xFF409EFF)
+
+    /** 模板 .btn-retry（次要按钮）的半透明白底 */
+    val secondaryButton = Color(0x33FFFFFF)
 }
