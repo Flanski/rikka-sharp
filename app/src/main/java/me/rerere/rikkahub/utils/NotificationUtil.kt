@@ -51,6 +51,41 @@ class NotificationConfig {
 
     /** 操作按钮（系统最多显示 3 个，超出部分不显示） */
     var actions: List<NotificationAction> = emptyList()
+
+    // ── 以下为「AI 通知工具」需要的扩展项 ──
+
+    /**
+     * 多行列表（InboxStyle）。
+     *
+     * 适用「一次汇报好几件事」：比在正文里堆换行更清晰，
+     * 系统会把每行独立显示。
+     */
+    var inboxLines: List<String> = emptyList()
+
+    /** 大文本样式；与 [useBigTextStyle] 等价，但用于让 AI 明确选择 */
+    var style: String? = null
+
+    /** 进度条：0..100 显示确定进度；null 不显示 */
+    var progress: Int? = null
+
+    /** 进度不确定（转圈），仅当 [progress] 为 null 且此项为 true 时生效 */
+    var indeterminate: Boolean = false
+
+    /**
+     * 过多久自动消失（毫秒）。
+     *
+     * AI 汇报类通知若一直堆着会变成垃圾，设置超时可让它自己清理掉。
+     */
+    var timeoutAfterMs: Long? = null
+
+    /** 分组键：同组通知在系统里会折叠在一起 */
+    var groupKey: String? = null
+
+    /** 是否响铃/震动/亮屏（需配合渠道的 importance 才有实际效果） */
+    var enableVibration: Boolean = false
+
+    /** 优先级（仅 Android 7.1 及以下有效；更高版本由渠道 importance 决定） */
+    var priority: Int = NotificationCompat.PRIORITY_DEFAULT
 }
 
 object NotificationUtil {
@@ -116,6 +151,37 @@ object NotificationUtil {
             if (config.useBigTextStyle) {
                 setStyle(NotificationCompat.BigTextStyle().bigText(config.content))
             }
+
+            // ── 样式：显式指定时优先于 useBigTextStyle ──
+            when (config.style) {
+                "bigtext" -> setStyle(NotificationCompat.BigTextStyle().bigText(config.content))
+                "inbox" -> {
+                    val st = NotificationCompat.InboxStyle()
+                    config.inboxLines.take(7).forEach { st.addLine(it) }
+                    // 超过 7 行时给个汇总，避免系统静默截断让人以为只有这些
+                    if (config.inboxLines.size > 7) st.setSummaryText("+${config.inboxLines.size - 7}")
+                    setStyle(st)
+                }
+                else -> Unit
+            }
+
+            // ── 进度 ──
+            config.progress?.let { p ->
+                setProgress(100, p.coerceIn(0, 100), false)
+            } ?: if (config.indeterminate) {
+                setProgress(0, 0, true)
+            }
+
+            // ── 自动消失：AI 汇报类通知不该永久堆积 ──
+            config.timeoutAfterMs?.let { setTimeoutAfter(it.coerceAtLeast(1000L)) }
+
+            config.groupKey?.let { setGroup(it) }
+
+            if (config.enableVibration) {
+                setVibrate(longArrayOf(0, 200, 120, 200))
+            }
+
+            setPriority(config.priority)
 
             if (config.useDefaults) {
                 setDefaults(NotificationCompat.DEFAULT_ALL)

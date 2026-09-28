@@ -1972,4 +1972,13 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="tool_approval_not_provided">（未提供）</string>
   <string name="tool_approval_allow">允许</string>
   <string name="tool_approval_deny">拒绝</string>
+
+  <!-- 系统工具：AI 主动通知 -->
+  <string name="notification_channel_ai">AI 通知</string>
+  <string name="notification_channel_ai_urgent">AI 通知（重要）</string>
+  <string name="system_notification">通知</string>
+  <string name="system_notification_desc">允许助手发送通知——适合在你没盯着对话时汇报「长任务已完成」这类事情。</string>
+  <string name="system_notification_desc_no_permission">通知已被禁止。打开开关以授予权限，否则助手无法通知你。</string>
+  <string name="system_permission_notif_name">通知</string>
+  <string name="system_permission_notif_usage">允许助手在长任务完成或有要紧事时告知你，而不必一直盯着对话。</string>
 </resources>

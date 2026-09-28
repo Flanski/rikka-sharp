@@ -1972,4 +1972,13 @@
   <string name="tool_approval_not_provided">(not provided)</string>
   <string name="tool_approval_allow">Allow</string>
   <string name="tool_approval_deny">Deny</string>
+
+  <!-- 系统工具：AI 主动通知 -->
+  <string name="notification_channel_ai">AI notifications</string>
+  <string name="notification_channel_ai_urgent">AI notifications (important)</string>
+  <string name="system_notification">Notifications</string>
+  <string name="system_notification_desc">Lets the assistant post notifications — useful for reporting a finished long task when you are not looking at the chat.</string>
+  <string name="system_notification_desc_no_permission">Notifications are blocked. Tap the switch to grant permission, otherwise the assistant cannot notify you.</string>
+  <string name="system_permission_notif_name">Notifications</string>
+  <string name="system_permission_notif_usage">Lets the assistant tell you about finished or important things without you having to watch the chat.</string>
 </resources>

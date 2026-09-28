@@ -61,6 +61,17 @@ const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
  */
 const val TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID = "tool_activity"
 
+/**
+ * AI 主动发起的通知（通过 `send_notification` 工具）。
+ *
+ * 单开渠道而不复用其它：用户可以在系统设置里**单独**控制它的行为，
+ * 或直接整个关掉 —— 不至于因为 AI 爱发通知而被迫放弃「对话完成」「工具授权」等更重要的提醒。
+ */
+const val AI_NOTIFICATION_CHANNEL_ID = "ai_notification"
+
+/** 同上，但 importance=HIGH：用于 AI 标注为「重要」的通知（会响铃/震动） */
+const val AI_NOTIFICATION_URGENT_CHANNEL_ID = "ai_notification_urgent"
+
 class RikkaHubApp : Application() {
     override fun onCreate() {
         super.onCreate()
@@ -239,6 +250,22 @@ class RikkaHubApp : Application() {
             .setShowBadge(false)
             .build()
         notificationManager.createNotificationChannel(generationForegroundChannel)
+
+        // AI 主动通知（普通）：IMPORTANCE_DEFAULT —— 会出现在状态栏，但不强行打断
+        val aiNotificationChannel = NotificationChannelCompat
+            .Builder(AI_NOTIFICATION_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_DEFAULT)
+            .setName(getString(R.string.notification_channel_ai))
+            .setVibrationEnabled(false)
+            .build()
+        notificationManager.createNotificationChannel(aiNotificationChannel)
+
+        // AI 主动通知（重要）：IMPORTANCE_HIGH —— 响铃/震动，用于 AI 明确判断需要用户留意的事
+        val aiUrgentChannel = NotificationChannelCompat
+            .Builder(AI_NOTIFICATION_URGENT_CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_HIGH)
+            .setName(getString(R.string.notification_channel_ai_urgent))
+            .setVibrationEnabled(true)
+            .build()
+        notificationManager.createNotificationChannel(aiUrgentChannel)
     }
 
     override fun onTerminate() {

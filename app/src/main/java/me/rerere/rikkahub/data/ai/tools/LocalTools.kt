@@ -200,6 +200,17 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("battery")
     data object Battery : LocalToolOption()
+
+    /**
+     * AI 主动发送系统通知。
+     *
+     * 与「工具授权通知」「工具活动通知」用途不同：那两个是**系统**发出的过程提醒，
+     * 这个是 **AI 主动汇报**（长任务完成、需要留意的事），因此单开一个通知渠道 ——
+     * 用户可以只关掉它而不影响其它提醒。
+     */
+    @Serializable
+    @SerialName("notification")
+    data object Notification : LocalToolOption()
 }
 
 class LocalTools(
@@ -568,6 +579,9 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.Battery)) {
             tools.add(createBatteryTool(context))
+        }
+        if (options.contains(LocalToolOption.Notification)) {
+            tools.addAll(createNotificationTools(context))
         }
         return tools
     }

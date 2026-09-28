@@ -100,6 +100,22 @@ fun AssistantSystemToolsPage(id: String) {
     )
     PermissionManager(permissionState = bluetoothPermission)
 
+    /**
+     * 通知：**仅 Android 13(T)+ 需要** POST_NOTIFICATIONS；
+     * 更早的系统上该权限不存在，声明了也不会请求 —— 此时视为已授予。
+     */
+    val notificationPermission = rememberPermissionState(
+        permissions = setOf(
+            PermissionInfo(
+                permission = Manifest.permission.POST_NOTIFICATIONS,
+                displayName = { Text(stringResource(R.string.system_permission_notif_name)) },
+                usage = { Text(stringResource(R.string.system_permission_notif_usage)) },
+                required = true,
+            )
+        )
+    )
+    PermissionManager(permissionState = notificationPermission)
+
     /** WiFi：Android 13+ 用 NEARBY_WIFI_DEVICES；更早用位置权限 */
     val wifiPermission = rememberPermissionState(
         permissions = setOf(
@@ -128,6 +144,12 @@ fun AssistantSystemToolsPage(id: String) {
                     if (!bluetoothPermission.allPermissionsGranted) bluetoothPermission.requestPermissions()
                 LocalToolOption.Wifi ->
                     if (!wifiPermission.allPermissionsGranted) wifiPermission.requestPermissions()
+                LocalToolOption.Notification ->
+                    // Android 13 以下没有这个权限，checkSelfPermission 会一直返回"已授予"，
+                    // 因此这里不需要额外的版本判断
+                    if (!notificationPermission.allPermissionsGranted) {
+                        notificationPermission.requestPermissions()
+                    }
                 else -> Unit
             }
         }
@@ -142,6 +164,7 @@ fun AssistantSystemToolsPage(id: String) {
     val smsGranted = smsPermission.allPermissionsGranted
     val btGranted = bluetoothPermission.allPermissionsGranted
     val wifiGranted = wifiPermission.allPermissionsGranted
+    val notificationGranted = notificationPermission.allPermissionsGranted
 
     // @Composable 求值必须在 CardGroup 之前
     val tWifi = stringResource(R.string.system_wifi)
@@ -150,6 +173,12 @@ fun AssistantSystemToolsPage(id: String) {
     val dBt = stringResource(R.string.system_bluetooth_desc)
     val tSms = stringResource(R.string.system_sms)
     val dSms = stringResource(R.string.system_sms_desc)
+    val tNotification = stringResource(R.string.system_notification)
+    val dNotification = if (notificationGranted) {
+        stringResource(R.string.system_notification_desc)
+    } else {
+        stringResource(R.string.system_notification_desc_no_permission)
+    }
     val tBat = stringResource(R.string.system_battery)
     val dBat = stringResource(R.string.system_battery_desc)
     val grantedText = stringResource(R.string.system_permission_granted)
@@ -216,6 +245,16 @@ fun AssistantSystemToolsPage(id: String) {
                         Switch(
                             checked = assistant.localTools.contains(LocalToolOption.Battery),
                             onCheckedChange = { toggle(LocalToolOption.Battery, it) },
+                        )
+                    },
+                )
+                item(
+                    headlineContent = { Text(tNotification) },
+                    supportingContent = { Text(dNotification) },
+                    trailingContent = {
+                        Switch(
+                            checked = assistant.localTools.contains(LocalToolOption.Notification),
+                            onCheckedChange = { toggle(LocalToolOption.Notification, it) },
                         )
                     },
                 )
