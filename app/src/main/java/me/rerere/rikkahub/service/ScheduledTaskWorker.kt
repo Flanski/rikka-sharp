@@ -14,22 +14,27 @@ import me.rerere.rikkahub.utils.NotificationUtil
 /**
  * 定时任务到期时执行的 Worker。
  *
- * ── 职责刻意保持最小 ──
- * 只做两件事：**标记任务已触发** + **发一条通知**。
+ * ── 做三件事（按重要性递减）──
+ *  1. **尝试在目标对话里触发一次生成** —— 这是定时任务的主要用途：
+ *     让 AI 自动继续（回复消息、必要时调用工具）。
+ *     实现方式是通过 Koin 取 [ChatService] 并调用 `sendMessage(..., answer = true)`，
+ *     它在**同一个 job 内**先插入消息再触发生成，因此不存在「消息还没写完就生成」的竞态。
+ *  2. **标记任务已触发** —— 这决定下一次生成时要不要把 prompt 注入给 AI（兜底路径）。
+ *  3. **发一条通知** —— 保证用户至少能看到。
  *
- * 不做「自动让 AI 做事」，原因是手机上的后台执行不可靠（尤其华为/鸿蒙）：
- *  - 应用可能已被系统冻结或杀死；
- *  - 即使 Worker 被唤醒，也没有正在进行的生成可以「插入」内容；
- *  - 想强行拉起一次生成，会牵扯前台服务、通知权限、后台启动限制等一系列问题，
- *    并且在被限制的机型上**失败得毫无声息**。
- *
- * 因此这里只保证「用户一定会收到提醒」，把「AI 知晓」交给下一次生成的注入
- * （见 [ScheduledTaskStore.takePendingForAi]）。这样即使通知之外的环节全部失败，
- * 这个功能仍然有用。
+ * ── 为什么第 1 步之后仍然保留「下次生成时注入」──
+ * 第 1 步**可能失败**，而且在某些机型上会静默失败：
+ *  · 应用已被系统冻结或杀死；
+ *  · Android 12+ 限制后台启动前台服务（`ForegroundServiceStartNotAllowedException`），
+ *    生成会因无法保活而在中途被系统掐掉；
+ *  · 华为/鸿蒙的后台管理更激进。
+ * 所以通知与「待注入」两条兜底路径必须留着 —— 即使触发彻底失败，
+ * 用户仍会收到提醒、AI 下次也会知道这件事。
  *
  * ── 为什么不用 CoroutineWorker ──
- * 这里没有挂起操作（读写一个小 JSON 文件 + 发通知都是同步的），
- * 用 [Worker] 更直接，也少一层调度开销。
+ * 触发生成本身是「发出去就不管」的（[ChatService.sendMessage] 内部自己 launch），
+ * 这里没有需要 await 的挂起操作，用 [Worker] 更直接。
+ * 生成的实际存活由 ChatService 自己的前台服务负责，不由 Worker 负责。
  */
 class ScheduledTaskWorker(
     context: Context,
@@ -44,6 +49,12 @@ class ScheduledTaskWorker(
 
         /** 通知 ID 的命名空间，避免与其它通知（工具授权、生成完成等）撞 ID */
         private const val NOTIFICATION_ID_BASE = 40_000
+
+        /**
+         * Worker 返回前滞留多久（毫秒），留给生成启动前台服务的时间。
+         * 见 doWork 末尾的说明 —— 太短会让触发变得不稳定，太长则拖延 WorkManager。
+         */
+        private const val TRIGGER_GRACE_MS = 3_000L
     }
 
     override fun doWork(): Result {
@@ -66,7 +77,10 @@ class ScheduledTaskWorker(
             Log.i(TAG, "存储中未找到或未能标记 id=$taskId（若用户已取消则属正常）")
         }
 
-        // 2. 发通知
+        // 2. 尝试触发 AI 生成（定时任务的主要用途）
+        val triggered = tryTriggerGeneration(marked)
+
+        // 3. 发通知 —— 内容随触发结果变化，让用户知道 AI 到底有没有被唤醒
         val notificationId = NOTIFICATION_ID_BASE + (taskId?.hashCode()?.let { it and 0xFFFF } ?: 0)
 
         val contentIntent = runCatching {
@@ -89,9 +103,14 @@ class ScheduledTaskWorker(
             notificationId,
         ) {
             this.title = title
-            this.content = message.ifBlank { "（无内容）" }
+            // 若无法触发 AI（没绑定对话 / 触发失败），在通知里说明，
+            // 避免用户以为「AI 已经在处理了」而一直等
+            this.content = buildString {
+                append(message.ifBlank { "（无内容）" })
+                if (!triggered) append("\n（已记录，将在下次打开应用时告知 AI）")
+            }
             this.autoCancel = true
-            this.useBigTextStyle = message.length > 60
+            this.useBigTextStyle = this.content.length > 60
             this.contentIntent = contentIntent
             this.smallIcon = R.drawable.small_icon
             // 定时提醒是用户自己安排的，值得响一下；渠道本身是 DEFAULT importance，
@@ -105,6 +124,67 @@ class ScheduledTaskWorker(
             // 所以用户回到应用后 AI 仍会看到它 —— 不算彻底失败。
             Log.w(TAG, "通知未能发出 id=$taskId（可能是通知权限未授予）")
         }
+
+    /**
+     * 在目标对话里触发一次生成。
+     *
+     * @return true = 已把生成请求交出去（不代表一定会跑完，后台保活由 ChatService 负责）
+     *
+     * ── 为什么用 Koin 的全局上下文取 ChatService ──
+     * Worker 是独立的进程组件，没有 Activity/Fragment 的注入环境。
+     * 项目里已有同样做法的先例（`WorkspaceDocumentsProvider` 用 `GlobalContext.get().get()`）。
+     *
+     * ★这里**必须全程容错**：Worker 里抛异常会让 WorkManager 记一次失败，
+     * 而这个任务本身已经「触发过」了（markFired），重试只会重复打扰用户。
+     */
+    private fun tryTriggerGeneration(task: me.rerere.rikkahub.data.schedule.ScheduledTask?): Boolean {
+        val conversationIdRaw = task?.conversationId
+        if (conversationIdRaw.isNullOrBlank()) {
+            // 没绑定对话（旧数据，或排期时拿不到）→ 只能走通知 + 下次注入
+            Log.i(TAG, "任务未绑定对话，跳过触发 id=${task?.id}")
+            return false
+        }
+
+        val uuid = runCatching { java.util.UUID.fromString(conversationIdRaw) }.getOrNull()
+        if (uuid == null) {
+            Log.w(TAG, "conversationId 格式非法: $conversationIdRaw")
+            return false
+        }
+
+        return runCatching {
+            val chatService = org.koin.core.context.GlobalContext.get()
+                .get<me.rerere.rikkahub.service.ChatService>()
+
+            // sendMessage 内部：先把消息写进对话，再在同一个 job 里触发生成。
+            // 用 answer=true 才会真的让模型回复（这正是「定时任务」与「定时通知」的区别）。
+            //
+            // 消息文本带上来源标记，让模型能分辨这是系统按计划触发的、而不是用户随手发的。
+            chatService.sendMessage(
+                conversationId = uuid,
+                content = listOf(
+                    me.rerere.ai.ui.UIMessagePart.Text(
+                        "（定时提醒）" + (task.prompt.ifBlank { task.title })
+                    )
+                ),
+                answer = true,
+            )
+            Log.i(TAG, "已触发对话生成 id=$conversationIdRaw")
+            true
+        }.onFailure {
+            // 常见原因：Koin 尚未初始化、对话已被删除、后台限制导致无法启动前台服务
+            Log.w(TAG, "触发对话生成失败 id=$conversationIdRaw（将走通知 + 下次注入兜底）", it)
+        }.getOrDefault(false)
+    }
+
+        // ── 短暂滞留，让生成真正启动起来 ──
+        //
+        // 为什么需要：Worker 一旦返回，WorkManager 就不再「替我们撑住」这个进程了。
+        // 而生成要经过几道初始化（取助手配置、准备消息、启动前台服务）才会进入受保护状态。
+        // 若 Worker 立刻返回，系统可能在生成站稳之前就回收进程 —— 表现是「有时能触发、有时不能」。
+        //
+        // 3 秒是折中：足够让 ChatService 把前台服务拉起来（之后由服务保活，不再依赖 Worker），
+        // 又不会明显拖延 WorkManager。这段阻塞发生在 WorkManager 的后台线程上，不影响 UI。
+        runCatching { kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(TRIGGER_GRACE_MS) } }
 
         // 永远返回 success：
         // retry 会让 WorkManager 重跑，导致同一个提醒被重复发出；

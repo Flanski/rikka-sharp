@@ -533,7 +533,12 @@ class LocalTools(
 
     val calendarCreateTool by lazy { buildCalendarCreateTool(context) }
 
-    fun getTools(options: List<LocalToolOption>): List<Tool> {
+    /**
+     * @param conversationId 当前对话 id。只有需要「知道自己在哪个对话里」的工具会用到
+     *   （目前是 `schedule_reminder` —— 它要记住到期后该触发哪个对话的生成）。
+     *   为 null 时那些工具仍可用，只是退化为「只发通知、不触发 AI」。
+     */
+    fun getTools(options: List<LocalToolOption>, conversationId: String? = null): List<Tool> {
         val tools = mutableListOf<Tool>()
         if (options.contains(LocalToolOption.JavascriptEngine)) {
             tools.add(javascriptTool)
@@ -594,7 +599,7 @@ class LocalTools(
             tools.addAll(createNotificationTools(context))
         }
         if (options.contains(LocalToolOption.Schedule)) {
-            tools.addAll(createScheduleTools(context))
+            tools.addAll(createScheduleTools(context, conversationId))
         }
         return tools
     }

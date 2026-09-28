@@ -320,6 +320,53 @@ private fun AssistantLocalToolContent(
                     )
                 }
             )
+            // ── 以下三项此前**有枚举、无开关** ──
+            // 也就是说：它们的注册逻辑取决于 assistant.localTools 里有没有这项，
+            // 但界面上没有任何入口能增删它 —— 用户既看不到、也改不了。
+            // TaskTools 与 Calculator 还在 Assistant 的默认列表里（默认开启），
+            // 结果就是「默认在跑、却找不到地方关」。
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_task_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_task_desc))
+                },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.TaskTools),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.TaskTools, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_calculator_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_calculator_desc))
+                },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.Calculator),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.Calculator, it) }
+                    )
+                }
+            )
+            item(
+                headlineContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_present_file_title))
+                },
+                supportingContent = {
+                    Text(stringResource(R.string.assistant_page_local_tools_present_file_desc))
+                },
+                trailingContent = {
+                    Switch(
+                        checked = assistant.localTools.contains(LocalToolOption.PresentFile),
+                        onCheckedChange = { toggleLocalTool(LocalToolOption.PresentFile, it) }
+                    )
+                }
+            )
             item(
                 headlineContent = { Text("Python 引擎") },
                 supportingContent = { Text("允许 AI 执行 Python 代码处理数据、调用 API、生成文件") },

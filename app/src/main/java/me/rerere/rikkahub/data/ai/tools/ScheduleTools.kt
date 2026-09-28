@@ -89,24 +89,27 @@ private fun formatLocal(epochMs: Long): String =
  * **不适合**「到点必须精确执行动作」（精度与后台执行都不保证）。
  * 描述里把这条讲明白，避免模型对能力有错误预期而做出不可靠的承诺。
  */
-fun createScheduleTools(context: Context): List<Tool> = listOf(
-    scheduleReminderTool(context),
+fun createScheduleTools(context: Context, conversationId: String? = null): List<Tool> = listOf(
+    scheduleReminderTool(context, conversationId),
     listRemindersTool(context),
     cancelReminderTool(context),
 )
 
-private fun scheduleReminderTool(context: Context): Tool = Tool(
+private fun scheduleReminderTool(context: Context, conversationId: String?): Tool = Tool(
     name = "schedule_reminder",
     description = """
         Schedule a reminder for a later time.
 
-        WHAT ACTUALLY HAPPENS at that time — read this before promising anything to the user:
-          1. A system notification is posted with `title` / `message`. This is the reliable part.
-          2. The `prompt` is delivered to you the next time a generation runs in this app, as a
-             system message. That is how you "remember" it later.
-        The app does NOT wake up and act on its own at that moment — phone background limits make
-        that unreliable, especially on Huawei/HONOR devices. So never tell the user you will
-        "do X at time T"; say you will remind them at T.
+        WHAT HAPPENS at that time:
+          1. The system tries to START A GENERATION in the conversation this was scheduled from,
+             using your `prompt` as the incoming message. You will then be asked to respond —
+             and you may call tools during that response, exactly as in a normal turn.
+          2. A notification is posted as well, so the user still sees it if the app cannot run
+             in the background.
+        CAVEAT: step 1 depends on the OS allowing the app to run at that moment. On phones with
+        aggressive background limits (notably Huawei/HONOR) it may be delayed or skipped, and then
+        only the notification happens. So do not promise the user exact timing, and do not promise
+        that something will definitely be executed at time T.
 
         ACCURACY: not guaranteed to be exact. The scheduler may delay the notification by minutes
         (or longer in deep sleep / battery saver / vendor background restrictions).
@@ -196,6 +199,7 @@ private fun scheduleReminderTool(context: Context): Tool = Tool(
                     title = title,
                     message = message,
                     prompt = promptRaw?.takeIf { it.isNotEmpty() } ?: "$title：$message",
+                    conversationId = conversationId,
                     dueAt = dueAt,
                 )
 
@@ -207,9 +211,16 @@ private fun scheduleReminderTool(context: Context): Tool = Tool(
                 put("due_at", JsonPrimitive(formatLocal(task.dueAt)))
                 put("in", JsonPrimitive(humanDelay(task.dueAt - System.currentTimeMillis())))
                 put("note", JsonPrimitive(
-                    "A notification will be posted at that time (it may be a few minutes late — " +
-                        "background scheduling is not exact). Your `prompt` will reach you the next " +
-                        "time a generation runs. Cancel with cancel_reminder using this task_id."
+                    if (conversationId != null) {
+                        "At that time the system will try to START A GENERATION IN THIS CONVERSATION " +
+                            "with your `prompt` — so you will be asked to respond, and you may call tools " +
+                            "as usual. A notification is also posted (in case the app cannot run in the " +
+                            "background). Timing may be a few minutes late; background scheduling is not exact."
+                    } else {
+                        "A notification will be posted at that time (it may be a few minutes late). " +
+                            "This reminder has no conversation attached, so it cannot trigger a reply — " +
+                            "your `prompt` will instead be delivered the next time a generation runs."
+                    }
                 ))
             }
         }

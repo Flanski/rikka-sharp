@@ -1998,4 +1998,12 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <!-- 系统工具：定时任务 -->
   <string name="system_schedule">定时提醒</string>
   <string name="system_schedule_desc">允许助手安排提醒：到点给你发通知，并在下次运行时记得这件事</string>
+
+  <!-- 本地工具：补齐此前「有枚举、无开关」的三项 -->
+  <string name="assistant_page_local_tools_task_title">任务列表</string>
+  <string name="assistant_page_local_tools_task_desc">允许助手维护任务清单、跟踪长任务的进度</string>
+  <string name="assistant_page_local_tools_calculator_title">计算器</string>
+  <string name="assistant_page_local_tools_calculator_desc">用计算器精确求值，而不是让模型自己心算</string>
+  <string name="assistant_page_local_tools_present_file_title">分享文件</string>
+  <string name="assistant_page_local_tools_present_file_desc">允许助手通过系统分享面板把文件交给你</string>
 </resources>

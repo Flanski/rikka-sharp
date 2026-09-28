@@ -53,6 +53,19 @@ data class ScheduledTask(
      */
     val prompt: String,
 
+    /**
+     * 到期后要触发哪个对话的生成。
+     *
+     * ── 为什么需要它 ──
+     * 定时任务的**主要用途**是「到点让 AI 自动继续」—— 自动回复消息、必要时调用工具。
+     * 而这必须指定一个对话：生成要有上下文（历史消息、助手配置、工作区）。
+     *
+     * 为 null 时（旧数据、或排期时拿不到对话）退化为**只发通知**，
+     * 不再尝试触发生成 —— 这样旧任务不会因为缺字段而报错。
+     */
+    @SerialName("conversation_id")
+    val conversationId: String? = null,
+
     /** 到期时间（epoch 毫秒） */
     @SerialName("due_at")
     val dueAt: Long,

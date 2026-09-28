@@ -1170,7 +1170,7 @@ class ChatService(
                         addAll(createConversationTools(conversationRepo, assistant.id))
                     }
                     addAll(createWorkspaceToolsIfReady(assistant.workspaceId?.toString(), conversation.workspaceCwd))
-                    addAll(localTools.getTools(assistant.localTools))
+                    addAll(localTools.getTools(assistant.localTools, conversationId.toString()))
                     if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
                         addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                     }
@@ -1580,7 +1580,7 @@ class ChatService(
                 if (assistant.enableWebSearch) {
                     addAll(createSearchTools(settings))
                 }
-                addAll(localTools.getTools(assistant.localTools))
+                addAll(localTools.getTools(assistant.localTools, conversationId?.toString()))
                 if (assistant.localTools.contains(LocalToolOption.ShellTools)) {
                     addAll(createShellTools { resolveLocalToolApproval(it, assistant.toolApprovalOverrides) })
                 }

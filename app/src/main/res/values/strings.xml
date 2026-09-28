@@ -1995,4 +1995,12 @@
   <!-- 系统工具：定时任务 -->
   <string name="system_schedule">Scheduled reminders</string>
   <string name="system_schedule_desc">Let the assistant schedule a reminder: you get a notification at that time, and it remembers the task when it next runs</string>
+
+  <!-- 本地工具：补齐此前「有枚举、无开关」的三项 -->
+  <string name="assistant_page_local_tools_task_title">Task list</string>
+  <string name="assistant_page_local_tools_task_desc">Let the assistant keep a task list and track progress across a long job</string>
+  <string name="assistant_page_local_tools_calculator_title">Calculator</string>
+  <string name="assistant_page_local_tools_calculator_desc">Evaluate arithmetic expressions accurately instead of doing the maths itself</string>
+  <string name="assistant_page_local_tools_present_file_title">Share files</string>
+  <string name="assistant_page_local_tools_present_file_desc">Let the assistant hand a file to you through the system share sheet</string>
 </resources>
