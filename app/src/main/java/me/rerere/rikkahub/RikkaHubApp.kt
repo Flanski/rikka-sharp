@@ -75,7 +75,9 @@ const val AI_NOTIFICATION_CHANNEL_ID = "ai_notification"
 const val AI_NOTIFICATION_URGENT_CHANNEL_ID = "ai_notification_urgent"
 
 /**
- * ★实现了 [Configuration.Provider] —— 这是**必需**的，不是可选优化。
+ * ★实现了 [Configuration.Provider]，但**实际不依赖它** —— 真正生效的是 [onCreate]
+ * 里的显式 `WorkManager.initialize(...)`。理由见 onCreate 中的详细注释
+ * （简言之：Provider 靠运行期 instanceof，R8 会删掉实现；静态调用不会）。
  *
  * 原因：`AndroidManifest.xml` 里把 WorkManager 的自动初始化移除了
  * （`androidx.work.WorkManagerInitializer` 带 `tools:node="remove"`），
@@ -140,6 +142,28 @@ class RikkaHubApp : Application(), Configuration.Provider {
         // 位置：Android/data/<包名>/files/reasoning_trace.log（无需权限，外部工具可读）
         // 日志含推理文本，仅用于排查；修复后把 ReasoningTrace.sink 置空即可完全关闭（关闭时零开销）。
         runCatching { ReasoningTraceFile.start(this) }
+
+        // ── 显式初始化 WorkManager ──
+        //
+        // ★这里刻意**不依赖** Configuration.Provider 的运行期 `instanceof` 检查。
+        //
+        // 原因（已在构建产物中实测确认，不是推测）：那个 instanceof 是 WorkManager 库内部行为，
+        // **不在我们代码的静态调用图里** → R8 认为接口无人使用 → 把 RikkaHubApp 的接口实现删掉。
+        // 证据：dex 里 `Landroidx/work/Configuration$Provider;` 出现 **0 次**，
+        // 连 `Configuration$Builder`（实现体里用到的）也是 0 次 —— 说明整个方法体被优化掉了。
+        //
+        // 而且加 keep 规则**救不回来**：`-keep class * implements androidx.work.Configuration$Provider`
+        // 依赖"接口存在"这个前提，但接口本身先被删了 → 匹配不到任何类（鸡生蛋问题）。
+        // 实测加规则后 `Landroidx/work/Configuration$Provider;` 仍然是 0 次。
+        //
+        // 改用**静态方法调用**：它明确出现在调用图里，R8 不会删。
+        // 代价是初始化时机从"首次用到"提前到"进程启动"，但我们的 Configuration 是默认构造，
+        // 开销很小，而**可靠性比这点启动时间重要得多**（定时任务一旦静默失效很难排查）。
+        runCatching {
+            if (!androidx.work.WorkManager.isInitialized()) {
+                androidx.work.WorkManager.initialize(this, workManagerConfiguration)
+            }
+        }.onFailure { Log.w(TAG, "WorkManager 初始化失败", it) }
 
         // 恢复定时任务的排期。
         //
