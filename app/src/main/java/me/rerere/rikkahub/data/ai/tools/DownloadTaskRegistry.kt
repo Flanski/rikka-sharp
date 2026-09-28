@@ -34,7 +34,28 @@ class DownloadTask(
     @Volatile var phase: String = "准备中"
     @Volatile var error: String? = null
     @Volatile var finishedAt: Long? = null
+
+    /**
+     * 最近一次**有实际进展**的时刻（毫秒）。
+     *
+     * ── 为什么需要它 ──
+     * 用户反馈「下载任务 done 之后，再次罗列仍显示 running / 连接中，bytes 为 0」。
+     * 排查发现 `state` 本身并没错 —— 任务确实还在 RUNNING；
+     * **缺的是「它到底有没有在推进」这个信息**：
+     *  · 一个正常下载中的任务（bytes 在涨）与一个卡住的连接（bytes 一直是 0）
+     *    在 `state` 上**完全一样**，调用方无法区分。
+     *
+     * 有了这个时间戳就能算出「安静了多久」，从而区分「慢但在动」与「卡住了」。
+     * （与工具执行那边用活动看门狗替代固定超时是同一个思路：
+     *   用「有没有进展」代替「过了多久」。）
+     */
+    @Volatile var lastUpdateAt: Long = System.currentTimeMillis()
+
     val startedAt: Long = System.currentTimeMillis()
+
+    /** 距上次进展的秒数。用于识别「卡住」—— state 仍是 RUNNING，但已经很久没动静 */
+    val idleSeconds: Long
+        get() = (System.currentTimeMillis() - lastUpdateAt) / 1000
 
     val elapsedMs: Long get() = (finishedAt ?: System.currentTimeMillis()) - startedAt
 
@@ -52,6 +73,7 @@ class DownloadTask(
         put("total", total)
         put("progress", progress.toDouble())
         put("elapsed_ms", elapsedMs)
+        put("idle_seconds", idleSeconds)
         put("path", destPath)
         error?.let { put("error", it) }
     }

@@ -195,6 +195,8 @@ private suspend fun runHttpDownload(task: DownloadTask, url: String, dest: File)
             task.total = body.contentLength().takeIf { it > 0 } ?: -1L
             task.phase = "下载中"
             task.bytes = 0L
+            // 阶段变化也算「有动静」—— 否则一个长时间握手的连接会被误判成卡住
+            task.lastUpdateAt = System.currentTimeMillis()
 
             dest.parentFile?.mkdirs()
             body.byteStream().use { input ->
@@ -207,6 +209,8 @@ private suspend fun runHttpDownload(task: DownloadTask, url: String, dest: File)
                         if (n <= 0) break
                         out.write(buf, 0, n)
                         task.bytes += n
+                        // 有实际进展 → 刷新时间戳（供 download_status 判断是否卡住）
+                        task.lastUpdateAt = System.currentTimeMillis()
                     }
                     out.flush()
                 }
@@ -450,6 +454,15 @@ private fun taskResultJson(task: DownloadTask) = buildJsonObject {
     put("state", task.state.name.lowercase())
     put("phase", task.phase)
     put("bytes", task.bytes)
+    // ★让调用方能区分「慢但在动」与「卡住了」：
+    //   state 在两种情况下都是 running，只看它无法判断。
+    //   经验阈值 60 秒 —— 正常网络下不该这么久没有任何字节。
+    put("idle_seconds", task.idleSeconds)
+    if (task.state == DownloadState.RUNNING && task.idleSeconds > 60) {
+        put("stalled", true)
+        put("stalled_hint", "No progress for ${task.idleSeconds}s. It may be stuck on a slow or " +
+            "unreachable host. Use download_cancel to stop it, then retry.")
+    }
     put("total", task.total)
     put("elapsed_ms", task.elapsedMs)
     put("path", task.destPath)

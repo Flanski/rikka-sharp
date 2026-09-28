@@ -263,11 +263,26 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                         val path = obj["path"]?.jsonPrimitive?.content ?: error("path required")
                         val file = resolveFile(path)
                         if (!file.exists()) error("File not found: $path")
-                        if (!file.canWrite()) error("Cannot delete (no write permission): $path")
+                        // ★权限不足时给出**可执行的**指引，而不是只丢一句 "no write permission"。
+                        //   用户实际反馈过：`file` 删不掉 /storage/emulated/0/... 下的文件，
+                        //   但 SSH（Termux）上传到同一路径却成功 ——
+                        //   说明不是文件的问题，而是**本应用缺少公共存储的写权限**。
+                        //
+                        // ★注意：这里**只改错误文案，不动删除流程**。
+                        //   我第一版写成了 `if (!file.canWrite() && !file.delete())` —— 那会先试着删一次，
+                        //   若删成功，下面的第二次 delete 必然返回 false → 误报 "Failed to delete"。
+                        //   （对目录还更糟：`delete()` 只能删空目录。）
+                        if (!file.canWrite()) error(explainNoWriteAccess(path))
+
                         val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
                         if (deleted) {
                             listOf(UIMessagePart.Text("OK: deleted ${if (file.isDirectory) "directory" else "file"} $path"))
-                        } else error("Failed to delete: $path")
+                        } else {
+                            // 走到这里说明 canWrite() 说能写、实际却删不掉（少见但确实有，
+                            // 例如文件被其它进程占用、或权限位与挂载点不一致）。
+                            // 错误里带上权限说明，省得用户再猜一轮。
+                            error("Failed to delete: $path\n" + explainNoWriteAccess(path))
+                        }
                     }
                     "patch" -> {
                         val path = obj["path"]?.jsonPrimitive?.content ?: error("path required")
@@ -427,4 +442,50 @@ private fun String.toGlobRegexForFile(): Regex {
         .replace("\\*", ".*")
         .replace("\\?", ".")
     return Regex("^${pattern}$", RegexOption.IGNORE_CASE)
+}
+
+/**
+ * 写权限不足时的**可执行**说明。
+ *
+ * ── 为什么需要它 ──
+ * 原来的错误只有一句 `Cannot delete (no write permission): <path>`。
+ * 用户看到后无法判断：
+ *  · 是文件本身有问题？还是应用的权限问题？
+ *  · 该去哪里解决？
+ *
+ * 实测反馈印证了这个困惑：同一个路径 `file` 工具删不掉，而 **SSH（Termux）上传却成功** ——
+ * 说明文件没问题，是**本应用**缺少公共存储的写权限。这类情况必须说清楚。
+ *
+ * ── 权限模型（Android 11 起变了）──
+ *  · Android 11+：读改 `/storage/emulated/0` 下的任意文件需要
+ *    **MANAGE_EXTERNAL_STORAGE**（"所有文件访问"）。它是**特殊权限**，
+ *    只能在系统设置里手动开启，运行时权限对话框里没有它。
+ *  · Android 10 及以下：走传统的 `WRITE_EXTERNAL_STORAGE` 运行时权限。
+ *
+ * 应用私有目录（`filesDir` 等）**不受**这些限制，永远可写 ——
+ * 所以提示里也给出「改用私有目录」这条退路。
+ */
+private fun explainNoWriteAccess(path: String): String {
+    val allFilesAccess = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+        runCatching { android.os.Environment.isExternalStorageManager() }.getOrDefault(false)
+    } else {
+        // API 30 以下没有「所有文件访问」这个概念，走的是传统存储权限；
+        // 这里不冒充知道结果，按"未知"处理（措辞上不把话说死）。
+        false
+    }
+
+    val suffix = if (allFilesAccess) {
+        "本应用**已**获得「所有文件访问」权限，因此更可能是文件系统本身的限制" +
+            "（例如该路径由其它应用创建、或位于不可写的挂载上）。"
+    } else {
+        "本应用**没有**「所有文件访问」权限。请到「系统设置 → 应用 → 本应用 → 权限」中开启" +
+            "「所有文件访问」/「管理所有文件」；Android 10 及以下请开启「存储」权限。"
+    }
+
+    return buildString {
+        append("无法写入：$path\n")
+        append(suffix)
+        append("\n提示：应用私有目录（如 filesDir 下的路径）不受此限制，可直接读写；")
+        append("也可以改用 SSH 工具操作公共目录（它不受应用的存储权限约束）。")
+    }
 }
