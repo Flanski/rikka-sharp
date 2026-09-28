@@ -1156,7 +1156,7 @@ class ChatService(
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
                     // 定时任务：把已触发但还没送达的提醒注入给 AI
-                    pendingScheduledReminders(this)?.let { add(it) }
+                    pendingScheduledReminders(this@ChatService.context)?.let { add(it) }
                 },
                 outputTransformers = outputTransformers,
                 tools = buildList {
@@ -1630,7 +1630,7 @@ class ChatService(
             inputTransformers = buildList {
                 addAll(inputTransformers)
                 add(templateTransformer)
-                pendingScheduledReminders(this)?.let { add(it) }
+                pendingScheduledReminders(this@ChatService.context)?.let { add(it) }
             },
             outputTransformers = outputTransformers,
             // 官方 /gen length=：临时覆盖响应长度（TempResponseLength 语义），用完即弃

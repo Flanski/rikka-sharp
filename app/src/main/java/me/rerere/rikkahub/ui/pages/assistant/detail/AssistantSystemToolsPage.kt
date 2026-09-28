@@ -173,6 +173,8 @@ fun AssistantSystemToolsPage(id: String) {
     val dBt = stringResource(R.string.system_bluetooth_desc)
     val tSms = stringResource(R.string.system_sms)
     val dSms = stringResource(R.string.system_sms_desc)
+    val tSchedule = stringResource(R.string.system_schedule)
+    val dSchedule = stringResource(R.string.system_schedule_desc)
     val tNotification = stringResource(R.string.system_notification)
     val dNotification = if (notificationGranted) {
         stringResource(R.string.system_notification_desc)

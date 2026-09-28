@@ -9,6 +9,7 @@ import androidx.work.workDataOf
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import me.rerere.rikkahub.service.ScheduledTaskWorker
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.TimeUnit
