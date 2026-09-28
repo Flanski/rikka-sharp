@@ -125,6 +125,23 @@ class ScheduledTaskWorker(
             Log.w(TAG, "通知未能发出 id=$taskId（可能是通知权限未授予）")
         }
 
+        // ── 短暂滞留，让生成真正启动起来 ──
+        //
+        // 为什么需要：Worker 一旦返回，WorkManager 就不再「替我们撑住」这个进程了。
+        // 而生成要经过几道初始化（取助手配置、准备消息、启动前台服务）才会进入受保护状态。
+        // 若 Worker 立刻返回，系统可能在生成站稳之前就回收进程 —— 表现是「有时能触发、有时不能」。
+        //
+        // 3 秒是折中：足够让 ChatService 把前台服务拉起来（之后由服务保活，不再依赖 Worker），
+        // 又不会明显拖延 WorkManager。这段阻塞发生在 WorkManager 的后台线程上，不影响 UI。
+        runCatching { kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(TRIGGER_GRACE_MS) } }
+
+        // 永远返回 success：
+        // retry 会让 WorkManager 重跑，导致同一个提醒被重复发出；
+        // 而 failure 会丢记录。这里没有「值得重试」的失败模式 ——
+        // 存储问题与权限问题重试也不会变好。
+        return Result.success()
+    }
+
     /**
      * 在目标对话里触发一次生成。
      *
@@ -145,7 +162,9 @@ class ScheduledTaskWorker(
             return false
         }
 
-        val uuid = runCatching { java.util.UUID.fromString(conversationIdRaw) }.getOrNull()
+        // 项目用的是 kotlin.uuid.Uuid（已有全局 optIn），**不是** java.util.UUID ——
+        // 两者的类型不兼容，用错会在编译期报 "actual type is 'UUID', but 'Uuid' was expected"。
+        val uuid = runCatching { kotlin.uuid.Uuid.parse(conversationIdRaw) }.getOrNull()
         if (uuid == null) {
             Log.w(TAG, "conversationId 格式非法: $conversationIdRaw")
             return false
@@ -174,22 +193,5 @@ class ScheduledTaskWorker(
             // 常见原因：Koin 尚未初始化、对话已被删除、后台限制导致无法启动前台服务
             Log.w(TAG, "触发对话生成失败 id=$conversationIdRaw（将走通知 + 下次注入兜底）", it)
         }.getOrDefault(false)
-    }
-
-        // ── 短暂滞留，让生成真正启动起来 ──
-        //
-        // 为什么需要：Worker 一旦返回，WorkManager 就不再「替我们撑住」这个进程了。
-        // 而生成要经过几道初始化（取助手配置、准备消息、启动前台服务）才会进入受保护状态。
-        // 若 Worker 立刻返回，系统可能在生成站稳之前就回收进程 —— 表现是「有时能触发、有时不能」。
-        //
-        // 3 秒是折中：足够让 ChatService 把前台服务拉起来（之后由服务保活，不再依赖 Worker），
-        // 又不会明显拖延 WorkManager。这段阻塞发生在 WorkManager 的后台线程上，不影响 UI。
-        runCatching { kotlinx.coroutines.runBlocking { kotlinx.coroutines.delay(TRIGGER_GRACE_MS) } }
-
-        // 永远返回 success：
-        // retry 会让 WorkManager 重跑，导致同一个提醒被重复发出；
-        // 而 failure 会丢记录。这里没有「值得重试」的失败模式 ——
-        // 存储问题与权限问题重试也不会变好。
-        return Result.success()
     }
 }

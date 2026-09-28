@@ -318,7 +318,7 @@ private fun ApprovalFooter(onApprove: () -> Unit, onDeny: () -> Unit) {
  *
  * 模板里的配色关系：
  *   .notification-modal { background: #409eff }            ← 整体蓝底
- *   .notification-body  { /* 无 background *\/ }             ← 内容区**透明**，显示的是容器的蓝
+ *   .notification-body  —— 无 background 属性            ← 内容区**透明**，显示的是容器的蓝
  *   .notification-header { background: 随类型变化 }
  *       type-normal → #409eff（蓝，配白字）
  *       type-warning → #e6a23c（橙，配黑字）
