@@ -1981,4 +1981,14 @@
   <string name="system_notification_desc_no_permission">Notifications are blocked. Tap the switch to grant permission, otherwise the assistant cannot notify you.</string>
   <string name="system_permission_notif_name">Notifications</string>
   <string name="system_permission_notif_usage">Lets the assistant tell you about finished or important things without you having to watch the chat.</string>
+
+  <!-- 后台运行设置指引（华为等厂商的后台限制会导致生成被中断） -->
+  <string name="setting_page_background_guide">Background running</string>
+  <string name="setting_page_background_guide_desc">Some systems cut off generation in the background — see what to enable</string>
+  <string name="background_guide_title">Keep running in the background</string>
+  <string name="background_guide_intro">On some systems (notably Huawei / HONOR) the system may suspend this app while it is generating, so the reply stops midway with no error shown. Allowing it to keep running in the background avoids that.</string>
+  <string name="background_guide_items">In the system settings for this app, enable: 1) Auto-launch; 2) Secondary launch / launch from other apps; 3) Run in background. Also set battery usage to "unrestricted" if that option exists.</string>
+  <string name="background_guide_note">The names and locations differ between models, and there is no standard API to check or request them — that is why this cannot be done automatically.</string>
+  <string name="background_guide_open_settings">Open app settings</string>
+  <string name="background_guide_close">Close</string>
 </resources>

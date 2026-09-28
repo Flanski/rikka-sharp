@@ -1981,4 +1981,17 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="system_notification_desc_no_permission">通知已被禁止。打开开关以授予权限，否则助手无法通知你。</string>
   <string name="system_permission_notif_name">通知</string>
   <string name="system_permission_notif_usage">允许助手在长任务完成或有要紧事时告知你，而不必一直盯着对话。</string>
+
+  <!-- 后台运行设置指引（华为等厂商的后台限制会导致生成被中断） -->
+  <string name="setting_page_background_guide">后台运行设置</string>
+  <string name="setting_page_background_guide_desc">部分系统会切断后台生成——查看需要开启哪些开关</string>
+  <string name="background_guide_title">保持后台运行</string>
+  <string name="background_guide_intro">部分系统（尤其是华为 / 荣耀）会在生成过程中挂起本应用，表现为回复写到一半突然停住、且没有任何报错。允许它保持后台运行可以避免这种情况。</string>
+  <string name="background_guide_items">在本应用的系统设置中开启：①自启动；②关联启动（允许被其他应用启动）；③后台活动。若存在「电池优化」选项，请设为「不受限制」。</string>
+  <string name="background_guide_note">这些开关在不同机型上的名称与位置都不一样，也没有标准 API 供应用查询或申请——所以无法自动完成，只能自己设置一次。</string>
+  <string name="background_guide_open_settings">打开应用设置</string>
+  <string name="background_guide_close">关闭</string>
+
+  <string name="setting_page_ssh">SSH 客户端</string>
+  <string name="setting_page_ssh_desc">管理远程主机，让助手通过 SSH 操作它们</string>
 </resources>

@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.ui.pages.setting
 
 import android.content.ActivityNotFoundException
+import me.rerere.hugeicons.stroke.Cpu
+import android.net.Uri
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
@@ -98,6 +100,7 @@ import org.koin.compose.koinInject
 
 @Composable
 fun SettingPage(vm: SettingVM = koinViewModel()) {
+    var showBackgroundGuide by remember { mutableStateOf(false) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val navController = LocalNavController.current
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -230,6 +233,12 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
                         leadingContent = { Icon(HugeIcons.MessageMultiple01, null) },
                         supportingContent = { Text(stringResource(R.string.setting_page_group_chat_desc)) },
                         headlineContent = { Text(stringResource(R.string.setting_page_group_chat)) },
+                    )
+                    item(
+                        onClick = { showBackgroundGuide = true },
+                        leadingContent = { Icon(HugeIcons.Cpu, null) },
+                        supportingContent = { Text(stringResource(R.string.setting_page_background_guide_desc)) },
+                        headlineContent = { Text(stringResource(R.string.setting_page_background_guide)) },
                     )
                 }
             }
@@ -412,6 +421,18 @@ fun SettingPage(vm: SettingVM = koinViewModel()) {
         }
     }
 
+
+
+    // ── 后台运行设置指引 ──
+    //
+    // 应用被系统判定为「后台受限」时，生成会被**中断** —— 表现为输出中途停住、
+    // 或切回应用才发现没写完。这在华为/鸿蒙上尤其常见（后台管理比原生 Android 激进）。
+    // 这些开关没有统一 API 可查询或申请，只能引导用户自己去系统设置里开，
+    // 因此这里只做「说明 + 跳转应用详情页」，不假装能自动完成。
+    if (showBackgroundGuide) {
+        BackgroundGuideDialog(onDismiss = { showBackgroundGuide = false })
+    }
+
 }
 
 @Composable
@@ -493,4 +514,57 @@ private fun QQGroupBottomSheet(onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+/**
+ * 「后台运行设置」指引弹窗。
+ *
+ * ── 为什么这件事必须由用户手动做 ──
+ * 各厂商（尤其华为 / 荣耀）的后台限制是**私有的**：
+ *  · 没有标准 API 能查询或申请「自启动 / 关联启动 / 后台活动」
+ *  · 这些开关在不同机型上的名称与位置都不一样
+ * 所以这里只说明「要找什么、为什么值得开」，并给一个跳到应用详情页的入口，
+ * 让用户顺着往下找 —— 而不是假装能一键完成。
+ *
+ * ── 为什么值得开 ──
+ * 不设置时，手机休眠或应用被清理后，**正在进行的生成会被打断**；
+ * 而且这类中断不报错，用户只会看到输出无缘无故停住。
+ */
+@Composable
+private fun BackgroundGuideDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(HugeIcons.Cpu, null) },
+        title = { Text(stringResource(R.string.background_guide_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(R.string.background_guide_intro))
+                Text(stringResource(R.string.background_guide_items))
+                Text(
+                    text = stringResource(R.string.background_guide_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                // 打开本应用的系统设置页 —— 用户从这里继续找厂商特有的开关
+                val intent = Intent(
+                    android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", context.packageName, null),
+                )
+                runCatching { context.startActivity(intent) }
+                onDismiss()
+            }) {
+                Text(stringResource(R.string.background_guide_open_settings))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.background_guide_close))
+            }
+        },
+    )
 }

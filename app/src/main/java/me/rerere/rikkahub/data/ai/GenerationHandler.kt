@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -421,9 +423,9 @@ class GenerationHandler(
                     val deferreds = toolsToProcess.map { tool ->
                         async {
                             tool to runCatching {
-                                kotlinx.coroutines.withTimeout(assistant.toolExecTimeout * 1000L) {
-                                    executeToolCall(tool, toolsInternal, json)
-                                }
+                                executeToolWithWatchdog(
+                                    tool, toolsInternal, json, assistant.toolExecTimeout * 1000L
+                                )
                             }
                         }
                     }
@@ -436,9 +438,9 @@ class GenerationHandler(
                 // 顺序执行（原版行为）
                 toolsToProcess.forEach { tool ->
                     val result = runCatching {
-                        kotlinx.coroutines.withTimeout(assistant.toolExecTimeout * 1000L) {
-                            executeToolCall(tool, toolsInternal, json)
-                        }
+                        executeToolWithWatchdog(
+                            tool, toolsInternal, json, assistant.toolExecTimeout * 1000L
+                        )
                     }
                     addToolResult(executedTools, tool, result, json)
                 }
@@ -776,6 +778,69 @@ class GenerationHandler(
 /**
  * 执行单个工具调用（提取逻辑以避免并行/串行分支重复）
  */
+/**
+ * 执行一次工具调用，并用**活动看门狗**代替固定总时长超时。
+ *
+ * ── 与原先 `withTimeout` 的区别 ──
+ * · 原先：整段执行超过 `timeoutMs` 就中断 —— 于是「慢但在干活」的工具会被**误杀**，
+ *   而把时间调大又会让真正卡住的工具**白等**，怎么做都不对。
+ * · 现在：只有**连续 `timeoutMs` 内没有任何活动**才中断。
+ *   工具通过 `coroutineContext[ToolProgress]?.report(...)` 上报活动即可续期。
+ *
+ * ── 向后兼容 ──
+ * 未接入 `ToolProgress` 的工具从不续期，因此行为与原先**完全一致**（仍按总时长超时）。
+ * 也就是说这项改动不会让任何现有工具变得更容易被误杀。
+ *
+ * ── 为什么不是简单地"去掉超时" ──
+ * 去掉超时后，一个卡死的工具会让整轮生成永久停住，而用户看不到任何理由。
+ * 看门狗保留了兜底，且中断时**给出明确原因**（"连续 N 秒无活动"），
+ * 比原来那个只有超时、没有解释的失败要好定位。
+ */
+private suspend fun executeToolWithWatchdog(
+    tool: me.rerere.ai.ui.UIMessagePart.Tool,
+    toolsInternal: List<me.rerere.ai.core.Tool>,
+    json: kotlinx.serialization.json.Json,
+    idleTimeoutMs: Long,
+): me.rerere.ai.ui.UIMessagePart.Tool = kotlinx.coroutines.coroutineScope {
+    val lastActivity = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
+    val progress = me.rerere.ai.core.ToolProgress { _ ->
+        lastActivity.set(System.currentTimeMillis())
+    }
+
+    val job = async(progress) { executeToolCall(tool, toolsInternal, json) }
+
+    val watchdog = launch {
+        while (true) {
+            delay(WATCHDOG_TICK_MS)
+            val idle = System.currentTimeMillis() - lastActivity.get()
+            if (idle >= idleTimeoutMs) {
+                job.cancel(
+                    kotlinx.coroutines.CancellationException(
+                        "工具 ${tool.toolName} 连续 ${idleTimeoutMs / 1000} 秒没有任何活动，已中断" +
+                            "（如果它本来就需要这么久，说明该工具尚未接入进度上报）"
+                    )
+                )
+                return@launch
+            }
+        }
+    }
+
+    try {
+        job.await()
+    } finally {
+        // 工具正常结束后必须停掉看门狗，否则它会在 coroutineScope 里一直循环，把作用域拖住
+        watchdog.cancel()
+    }
+}
+
+/**
+ * 看门狗的检查间隔。
+ *
+ * 5 秒是个折中：比它更小只是徒增唤醒次数（对省电不友好），
+ * 更大则会让中断的响应变钝（用户多等一截才知道卡住了）。
+ */
+private const val WATCHDOG_TICK_MS = 5_000L
+
 private suspend fun executeToolCall(
     tool: UIMessagePart.Tool,
     toolsInternal: List<Tool>,
