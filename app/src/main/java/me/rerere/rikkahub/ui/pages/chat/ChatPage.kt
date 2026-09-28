@@ -110,6 +110,8 @@ import me.rerere.rikkahub.ui.components.ai.applyMacroVarSlash
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
 import me.rerere.rikkahub.ui.components.toolapproval.ToolApprovalDialog
+import me.rerere.rikkahub.ui.components.askuser.AskUserParser
+import me.rerere.rikkahub.ui.components.askuser.AskUserDialog
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
@@ -342,6 +344,14 @@ fun ChatPage(id: Uuid, text: String?, files: List<Uri>, nodeId: Uuid? = null) {
     }
 }
 
+/**
+ * `ask_user` 的工具名。
+ *
+ * 抽成常量是因为它在 **UI 与工具层各被引用一次**，而字符串写错编译器不会报错 ——
+ * 只会表现为「弹窗不出现」这种难查的现象。
+ */
+private const val ASK_USER_TOOL_NAME = "ask_user"
+
 @Composable
 private fun ChatPageContent(
     inputState: ChatInputState,
@@ -397,14 +407,48 @@ private fun ChatPageContent(
         .firstOrNull { it.approvalState is ToolApprovalState.Pending }
 
     pendingApprovalTool?.let { tool ->
-        ToolApprovalDialog(
-            toolName = tool.toolName,
-            intent = tool.approvalField("intent"),
-            purpose = tool.approvalField("purpose"),
-            argumentsPreview = tool.approvalArgumentsPreview(),
-            onApprove = { vm.handleToolApproval(tool.toolCallId, true, "") },
-            onDeny = { vm.handleToolApproval(tool.toolCallId, false, "") },
-        )
+        // ★分流：`ask_user` 与普通工具虽然都走「Pending → 用户回应 → 恢复」这条链路，
+        //   但**弹窗内容完全不同** ——
+        //   · 普通工具：展示「要做什么 / 为什么」，让用户批准或拒绝一个动作；
+        //   · ask_user：展示一组**待填写的表单**，用户要回答，而不是批准。
+        //   之前没分流，于是 ask_user 被塞进授权弹窗，显示的是它的工具名和空白的 intent/purpose。
+        if (tool.toolName == ASK_USER_TOOL_NAME) {
+            val parsed = remember(tool.toolCallId) { AskUserParser.parse(tool.inputAsJson()) }
+            if (parsed.questions.isEmpty()) {
+                // 模型没给出可回答的问题（questions 为空或全部缺 question 正文）。
+                // 直接以「拒绝」结束 —— 否则会弹出一个空表单，用户点提交也不知道提交了什么，
+                // 生成则一直停在 Pending 上。
+                LaunchedEffect(tool.toolCallId) {
+                    vm.handleToolApproval(
+                        tool.toolCallId,
+                        false,
+                        "ask_user 没有提供可回答的问题",
+                    )
+                }
+            } else {
+                AskUserDialog(
+                    questions = parsed.questions,
+                    sizeFraction = parsed.sizeFraction,
+                    onCancel = {
+                        vm.handleToolApproval(tool.toolCallId, false, "用户取消了提问")
+                    },
+                    onSubmit = { answer ->
+                        // 走 handleToolAnswer：它会把状态置为 Answered，
+                        // GenerationHandler 随后把这段 JSON 作为**工具输出**交回给模型。
+                        vm.handleToolAnswer(tool.toolCallId, answer)
+                    },
+                )
+            }
+        } else {
+            ToolApprovalDialog(
+                toolName = tool.toolName,
+                intent = tool.approvalField("intent"),
+                purpose = tool.approvalField("purpose"),
+                argumentsPreview = tool.approvalArgumentsPreview(),
+                onApprove = { vm.handleToolApproval(tool.toolCallId, true, "") },
+                onDeny = { vm.handleToolApproval(tool.toolCallId, false, "") },
+            )
+        }
     }
 
     Surface(

@@ -2048,4 +2048,21 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="app_notification_title_normal">提示</string>
   <string name="app_notification_title_warning">注意</string>
   <string name="app_notification_title_error">出错了</string>
+
+  <!-- ask_user 提问弹窗 -->
+  <string name="ask_user_dialog_title">需要你的输入</string>
+  <string name="ask_user_submit">提交</string>
+  <string name="ask_user_cancel">取消</string>
+  <string name="ask_user_badge_single">单选</string>
+  <string name="ask_user_badge_multi">多选</string>
+  <string name="ask_user_badge_required">必填</string>
+  <string name="ask_user_badge_tap">点选</string>
+  <string name="ask_user_badge_yesno">是/否</string>
+  <string name="ask_user_badge_password">密码</string>
+  <string name="ask_user_badge_multiline">多行</string>
+  <string name="ask_user_badge_fill">填写</string>
+  <string name="ask_user_select_placeholder">请选择</string>
+  <string name="ask_user_yes">是</string>
+  <string name="ask_user_no">否</string>
+  <string name="ask_user_missing_required">还有 %1$d 个必填项未回答</string>
 </resources>

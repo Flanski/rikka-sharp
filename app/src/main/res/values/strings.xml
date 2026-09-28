@@ -2045,4 +2045,21 @@
   <string name="app_notification_title_normal">Notice</string>
   <string name="app_notification_title_warning">Attention</string>
   <string name="app_notification_title_error">Something went wrong</string>
+
+  <!-- ask_user 提问弹窗 -->
+  <string name="ask_user_dialog_title">Input needed</string>
+  <string name="ask_user_submit">Submit</string>
+  <string name="ask_user_cancel">Cancel</string>
+  <string name="ask_user_badge_single">single choice</string>
+  <string name="ask_user_badge_multi">multiple choice</string>
+  <string name="ask_user_badge_required">required</string>
+  <string name="ask_user_badge_tap">tap one</string>
+  <string name="ask_user_badge_yesno">yes / no</string>
+  <string name="ask_user_badge_password">password</string>
+  <string name="ask_user_badge_multiline">multi-line</string>
+  <string name="ask_user_badge_fill">fill in</string>
+  <string name="ask_user_select_placeholder">Choose…</string>
+  <string name="ask_user_yes">Yes</string>
+  <string name="ask_user_no">No</string>
+  <string name="ask_user_missing_required">%1$d required question(s) still unanswered</string>
 </resources>
