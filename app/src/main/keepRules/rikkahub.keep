@@ -135,3 +135,29 @@
 -keep class * extends androidx.work.ListenableWorker {
     <init>(android.content.Context, androidx.work.WorkerParameters);
 }
+
+# ── Configuration.Provider（★实测会被 R8 删掉，必须显式保留）──────────────────
+# WorkManager 在「按需初始化」时用的是**运行期 instanceof 检查**（库内部行为）：
+#     if (appContext instanceof Configuration.Provider) { 用它的配置初始化 }
+#     else { throw IllegalStateException("... does not implement Configuration.Provider") }
+# 这个 instanceof 不在我们代码的静态调用图里，R8 看不到，
+# 于是认为 Configuration.Provider **无人使用** → 把 RikkaHubApp 的接口实现删掉。
+#
+# 后果非常隐蔽：**编译期毫无提示**，构建也能成功；
+# 但运行期 appContext 不再被识别为 Provider → 每次 WorkManager.getInstance() 都抛异常。
+#
+# 实测证据（在未加这条 keep 的构建产物里逐项确认）：
+#   · `Landroidx/work/Configuration;`            → 存在（WorkManager 本身在包里）
+#   · `Landroidx/work/Configuration$Provider;`   → **0 个**（接口引用被移除）
+#   · `workManagerConfiguration` / `getWorkManagerConfiguration` → **0 个**（方法被移除）
+#
+# 注意这里用「所有实现者」而不是只写 RikkaHubApp：
+#  · R8 只保留**接口实现这一事实**和构造/该方法，不会因此保留整个类的所有成员；
+#  · 将来若有别的类实现该接口，也不会再踩同一个坑。
+# 方法签名必须写全 —— 只保留类名而方法被改名/删除，运行期同样失败。
+-keep class * implements androidx.work.Configuration$Provider {
+    <init>();
+}
+-keepclassmembers class * implements androidx.work.Configuration$Provider {
+    public androidx.work.Configuration getWorkManagerConfiguration();
+}
