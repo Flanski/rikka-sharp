@@ -2031,4 +2031,18 @@
   <!-- 传感器子页面：总开关 -->
   <string name="sensor_page_master_switch">Device sensors</string>
   <string name="sensor_page_master_switch_desc">Allow the assistant to read sensors at all. With this off, the tool is not even offered to the model</string>
+
+  <!-- 应用内通知（用通知模板样式在界面上弹出，不走系统通知栏） -->
+  <string name="app_notification_copy">Copy</string>
+  <string name="app_notification_ok">OK</string>
+  <string name="app_notification_close">Close</string>
+  <string name="app_notification_copied">Copied</string>
+  <string name="app_notification_subtitle_normal">Notice</string>
+  <string name="app_notification_subtitle_warning">Attention</string>
+  <string name="app_notification_subtitle_error">Error</string>
+
+  <!-- 应用内通知的默认标题（调用方未提供标题时使用） -->
+  <string name="app_notification_title_normal">Notice</string>
+  <string name="app_notification_title_warning">Attention</string>
+  <string name="app_notification_title_error">Something went wrong</string>
 </resources>

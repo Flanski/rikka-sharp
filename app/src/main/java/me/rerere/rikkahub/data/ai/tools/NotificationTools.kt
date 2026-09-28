@@ -22,6 +22,8 @@ import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.AI_NOTIFICATION_CHANNEL_ID
 import me.rerere.rikkahub.AI_NOTIFICATION_URGENT_CHANNEL_ID
 import me.rerere.rikkahub.R
+import me.rerere.rikkahub.data.notification.AppNotification
+import me.rerere.rikkahub.data.notification.AppNotificationCenter
 import me.rerere.rikkahub.utils.NotificationUtil
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -109,6 +111,15 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
         `urgent=true` additionally rings/vibrates and uses a separate high-importance channel;
         reserve it for things the user should look at soon. Everything else leaves `urgent` false.
 
+        TWO CHANNELS — choose with `channel`:
+          · "system" (default) — a real notification in the shade. Survives the app being backgrounded,
+            but requires the notification permission and can be blocked by the user.
+          · "inapp" — a card rendered inside the app with the same visual template. Needs no permission,
+            but the user only sees it while actually looking at the app.
+          · "both" — for things that matter: post to the shade AND show in-app.
+        Use "inapp" for small confirmations when you know the user is right here; use "system"
+        (or "both") when they might have switched away.
+
         Returns the notification id and tag (pass the tag to `cancel_notification` later),
         or an explanation of why nothing was shown (e.g. notification permission not granted).
     """.trimIndent(),
@@ -160,6 +171,15 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     put("type", "string")
                     put("description", "Open this URL when the user taps the notification.")
                 })
+                put("channel", buildJsonObject {
+                    put("type", "string")
+                    put("description",
+                        "Where to show it: \"system\" (notification shade, works even when the app " +
+                            "is in the background — default), \"inapp\" (a card inside the app using the " +
+                            "same visual template; only visible while the user is looking at the app, " +
+                            "no permission needed), or \"both\"."
+                    )
+                })
             },
             required = listOf("title", "message"),
         )
@@ -180,6 +200,10 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
             val timeoutSec = obj["timeout_seconds"]?.jsonPrimitive?.longOrNull?.toInt()
             val tag = obj["tag"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             val url = obj["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+            // 目标渠道。默认 system：这是「通知」这个词最通常的含义，
+            // 而且它能在用户切到别的应用时仍然送达。
+            val targetChannel = obj["channel"]?.jsonPrimitive?.contentOrNull?.lowercase()
+                ?.takeIf { it in setOf("system", "inapp", "both") } ?: "system"
 
             buildJsonObject {
                 if (title.isEmpty() || message.isEmpty()) {
@@ -187,15 +211,23 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     put("error", JsonPrimitive("title and message are required and must not be blank"))
                     return@buildJsonObject
                 }
-                if (!NotificationUtil.hasNotificationPermission(context)) {
-                    // 工具内不能弹权限对话框（没有 Activity），因此把情况说清楚让模型转告用户
-                    put("ok", JsonPrimitive(false))
-                    put("error", JsonPrimitive("notification_permission_not_granted"))
-                    put("hint", JsonPrimitive(
-                        "The app lacks the notification permission, so nothing was shown. " +
-                            "Ask the user to grant notifications for this app (Android 13+)."
-                    ))
-                    return@buildJsonObject
+                // ★权限检查只针对**系统通知**渠道。
+                // 应用内通知（inapp）不经过 NotificationManager，不需要任何权限 ——
+                // 对它做权限检查会让「只想在应用里提示一句」的场景无故失败。
+                val needsSystem = targetChannel == "system" || targetChannel == "both"
+                if (needsSystem && !NotificationUtil.hasNotificationPermission(context)) {
+                    if (targetChannel == "system") {
+                        // 工具内不能弹权限对话框（没有 Activity），因此把情况说清楚让模型转告用户
+                        put("ok", JsonPrimitive(false))
+                        put("error", JsonPrimitive("notification_permission_not_granted"))
+                        put("hint", JsonPrimitive(
+                            "The app lacks the notification permission, so nothing was shown. " +
+                                "Ask the user to grant notifications for this app (Android 13+). " +
+                                "Alternatively use channel=\"inapp\" which needs no permission."
+                        ))
+                        return@buildJsonObject
+                    }
+                    // channel=both 时退化为只发应用内 —— 能送出一部分好过整个失败
                 }
 
                 val remaining = checkRateLimit()
@@ -211,7 +243,10 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
 
                 val notificationId = notificationIdFor(tag)
                 val idForIntent = notificationId
-                val channel = if (urgent) AI_NOTIFICATION_URGENT_CHANNEL_ID else AI_NOTIFICATION_CHANNEL_ID
+                // ★这个变量名曾经就叫 `channel` —— 与新加的渠道参数重名，
+                //   Kotlin 会报 "conflicting declarations"。改成明确的名字。
+                val systemChannelId =
+                    if (urgent) AI_NOTIFICATION_URGENT_CHANNEL_ID else AI_NOTIFICATION_CHANNEL_ID
 
                 // 点击行为：有 url 就打开它，否则打开应用
                 val contentIntent = runCatching {
@@ -231,35 +266,73 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     }
                 }.getOrNull()
 
-                val delivered = NotificationUtil.notify(context, channel, notificationId) {
-                    this.title = title
-                    this.content = trim(message)
-                    this.autoCancel = autoCancel
-                    this.ongoing = ongoing
-                    this.onlyAlertOnce = true
-                    this.enableVibration = urgent
-                    this.priority = if (urgent) {
-                        android.app.Notification.PRIORITY_HIGH
-                    } else {
-                        android.app.Notification.PRIORITY_DEFAULT
+                // ── 系统通知 ──
+                var systemDelivered = false
+                if (needsSystem && NotificationUtil.hasNotificationPermission(context)) {
+                    systemDelivered = NotificationUtil.notify(context, systemChannelId, notificationId) {
+                        this.title = title
+                        this.content = trim(message)
+                        this.autoCancel = autoCancel
+                        this.ongoing = ongoing
+                        this.onlyAlertOnce = true
+                        this.enableVibration = urgent
+                        this.priority = if (urgent) {
+                            android.app.Notification.PRIORITY_HIGH
+                        } else {
+                            android.app.Notification.PRIORITY_DEFAULT
+                        }
+                        this.contentIntent = contentIntent
+                        this.smallIcon = R.drawable.small_icon
+                        this.useBigTextStyle = style == "bigtext"
+                        this.style = style
+                        this.inboxLines = lines
+                        this.progress = progress?.coerceIn(0, 100)
+                        this.groupKey = tag?.let { "ai_$it" }
+                        this.timeoutAfterMs = timeoutSec?.let { it * 1000L }
                     }
-                    this.contentIntent = contentIntent
-                    this.smallIcon = R.drawable.small_icon
-                    this.useBigTextStyle = style == "bigtext"
-                    this.style = style
-                    this.inboxLines = lines
-                    this.progress = progress?.coerceIn(0, 100)
-                    this.groupKey = tag?.let { "ai_$it" }
-                    this.timeoutAfterMs = timeoutSec?.let { it * 1000L }
                 }
 
-                put("ok", JsonPrimitive(delivered))
+                // ── 应用内通知 ──
+                //
+                // 与系统通知共用同一份内容；只是渲染位置不同。
+                // `inboxLines`（列表样式）在应用内通知里没有对应呈现 —— 那里显示的是纯文本，
+                // 所以把多行拼成正文，避免内容丢失。
+                var inAppShown = false
+                if (targetChannel == "inapp" || targetChannel == "both") {
+                    val inAppBody = if (lines.isNotEmpty()) {
+                        lines.joinToString("\n")
+                    } else {
+                        trim(message)
+                    }
+                    val type = when {
+                        // 让视觉与语义对应：urgent 用警告色，报错类内容用错误色
+                        urgent -> AppNotification.Type.WARNING
+                        else -> AppNotification.Type.NORMAL
+                    }
+                    AppNotificationCenter.send(
+                        AppNotification(
+                            type = type,
+                            title = title,
+                            body = inAppBody,
+                            // 应用内通知的「复制」是用户明确要的功能（报错信息要能复制出去）；
+                            // 这里把标题与正文一起复制，便于贴到别处时仍有上下文。
+                            copyText = "$title\n$inAppBody",
+                            autoDismissMs = (timeoutSec?.let { it * 1000L }) ?: 8_000L,
+                        )
+                    )
+                    inAppShown = true
+                }
+
+                val ok = systemDelivered || inAppShown
+                put("ok", JsonPrimitive(ok))
+                if (needsSystem) put("system_shown", JsonPrimitive(systemDelivered))
+                if (targetChannel != "system") put("inapp_shown", JsonPrimitive(inAppShown))
                 put("notification_id", JsonPrimitive(notificationId))
                 tag?.let { put("tag", JsonPrimitive(it)) }
-                put("channel", JsonPrimitive(if (urgent) "urgent" else "normal"))
+                put("channel", JsonPrimitive(targetChannel))
                 put("remaining_this_minute", JsonPrimitive(remaining - 1))
-                if (!delivered) {
-                    put("note", JsonPrimitive("The system rejected the notification."))
+                if (!ok) {
+                    put("note", JsonPrimitive("Nothing was shown (permission denied or the system rejected it)."))
                 }
             }
         }

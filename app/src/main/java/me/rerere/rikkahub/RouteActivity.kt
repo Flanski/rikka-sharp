@@ -62,12 +62,14 @@ import me.rerere.rikkahub.data.db.MigrationState
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.event.AppEventBus
 import me.rerere.rikkahub.ui.activity.SafeModeActivity
+import me.rerere.rikkahub.ui.components.notification.AppNotificationHost
 import me.rerere.rikkahub.ui.components.ui.TTSController
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.context.LocalSharedTransitionScope
 import me.rerere.rikkahub.ui.context.LocalTTSState
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.context.Navigator
 import me.rerere.rikkahub.ui.hooks.readBooleanPreference
@@ -247,7 +249,9 @@ class RouteActivity : ComponentActivity() {
 
     @Composable
     fun AppRoutes() {
-        val toastState = rememberToasterState()
+        // 用 AppToaster（内部转发到 AppNotificationCenter，由通知模板渲染）
+        // 取代 sonner 的 ToasterState —— 见 ToasterContext.kt 的说明。
+        val toaster = remember { AppToaster() }
         val settings by settingsStore.settingsFlow.collectAsStateWithLifecycle()
         val tts = rememberCustomTtsState()
         val asr = rememberCustomAsrState()
@@ -290,17 +294,18 @@ class RouteActivity : ComponentActivity() {
                 LocalNavController provides Navigator(backStack),
                 LocalSharedTransitionScope provides this,
                 LocalSettings provides settings,
-                LocalToaster provides toastState,
+                LocalToaster provides toaster,
                 LocalTTSState provides tts,
                 LocalASRState provides asr,
             ) {
-                Toaster(
-                    state = toastState,
-                    darkTheme = LocalDarkMode.current,
-                    richColors = true,
-                    alignment = Alignment.TopCenter,
-                    showCloseButton = true,
-                )
+                // sonner 的 Toaster 组件已移除：所有轻提示现在都走
+                // AppNotificationCenter → AppNotificationHost（通知模板渲染）。
+                // 保留一个注释是为了说明这里**曾经**有什么，避免后人以为漏了。
+
+                // 应用内通知层。
+                // 放在 Toaster 之后、NavDisplay 之前 —— 这样它盖在页面内容上，
+                // 但不拦截触摸（内部 Box 不消费事件），用户仍可正常操作。
+                AppNotificationHost()
                 TTSController()
                 Box(
                     modifier = Modifier
