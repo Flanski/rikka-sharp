@@ -75,10 +75,32 @@ bcprov = "1.78.1"
 # class-file 52(Java 8)，Android 兼容。zstd-jni/dec/xz/asm 均为 optional，不会被传递引入。
 commons-compress = "1.28.0"
 # JGit：真正的 git 实现（含历史/提交/推送），纯 Java。
-# 选 7.8.0：class-file 61(Java 17)，项目用 Java 21 编译，AGP 9.x 的 D8 支持。
-# 需要 R8 keep —— JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
-# 静态分析看不到（与 JSch 把类名放进配置字符串是同类问题，见 keepRules 注释）。
-jgit = "7.8.0.202609011348-r"
+#
+# ★必须用 5.x（Java 8 基线）—— 这是**实测结论**，不是偏好：
+#
+# 现象：Android 10 (API 29) 上任何 git 操作都抛
+#     java.lang.NoSuchMethodError: No virtual method readNBytes(I)[B
+#     in class Ljava/io/FileInputStream;
+#   readNBytes/readAllBytes 是 Java 9 引入、**Android 13(API 33) 才有**的 API，
+#   而 JGit 的 `IO` 核心工具类在 6.x/7.x 里就用了它 → 几乎所有操作都会崩
+#   （连 clone 都进不去传输阶段）。
+#
+# 实测三个版本（解析 jar 常量池，统计「Java 9+ 且 Android 10 缺失」的方法调用）：
+#     5.13.5  → 0 处          ← 唯一安全
+#     6.10.1  → 10 处（readNBytes×4, List.of×4, String.strip×3, …）
+#     7.8.0   → 19 处（readNBytes×7, List.of×14, Stream.toList×8, isBlank, …）
+#   另核实 5.13.5 的 class 版本为 52(Java 8)，符合"Java 8 编译器不允许用 Java 9 API"。
+#   5.x 分支**仍在维护**（5.13.5 发布于 2025-08），不是废弃版本。
+#
+# ★教训：引入第三方库要验**两件不同的事**——
+#     ① class 版本能被 D8 处理（编译期）
+#     ② 它调用的**运行时 API** 在目标 Android 版本上存在（运行期）
+#   我当初只验了 ①，漏了 ②，于是 7.8.0 在低版本 Android 上必然崩。
+#
+# R8：仍需整体 keep（JGit 用 ServiceLoader 加载 Transport/Protocol/SshSessionFactory 等实现，
+# 静态分析看不到 —— 与 JSch 把类名放进配置字符串同类）。dontwarn 沿用现有配置，
+# 已覆盖 5.13.5 的全部 Java SE 引用（javax.management / java.lang.management / org.ietf.jgss / org.slf4j）。
+jgit = "5.13.5.202508271544-r"
 # usb-serial-for-android：USB 转串口（MIT，JitPack）。
 # 覆盖 **CDC-ACM**（RP2040 / ESP32-S2/S3 的原生 USB 串口即此类，属免驱方案）、
 # 以及 CH34x / CP21xx / FTDI / PL2303 等常见桥接芯片。
