@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import com.dokar.sonner.ToastType
-import com.dokar.sonner.ToasterState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +50,7 @@ import me.rerere.rikkahub.data.model.SelectiveLogic
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.model.Avatar
 import me.rerere.rikkahub.ui.components.ui.AutoAIIcon
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.utils.ImageUtils
 import me.rerere.rikkahub.utils.jsonPrimitiveOrNull
@@ -124,7 +124,7 @@ private fun SillyTavernImporter(
 private fun importFile(
     context: Context, uri: Uri,
     onImport: (TavernImportResult) -> Unit,
-    filesManager: FilesManager, toaster: ToasterState,
+    filesManager: FilesManager, toaster: AppToaster,
     scope: kotlinx.coroutines.CoroutineScope,
     setLoading: (Boolean) -> Unit
 ) {
@@ -143,7 +143,7 @@ private fun importFile(
 
 private suspend fun importFromUri(
     context: Context, uri: Uri, filesManager: FilesManager,
-    onImport: (TavernImportResult) -> Unit, toaster: ToasterState
+    onImport: (TavernImportResult) -> Unit, toaster: AppToaster
 ) {
     val mime = withContext(Dispatchers.IO) { filesManager.getFileMimeType(uri) }
     val (jsonString, backgroundStr, avatarUri) = withContext(Dispatchers.IO) {

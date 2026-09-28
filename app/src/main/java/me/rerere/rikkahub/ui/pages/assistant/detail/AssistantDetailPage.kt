@@ -94,6 +94,7 @@ import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.UIAvatar
 import me.rerere.rikkahub.ui.context.LocalNavController
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.hooks.heroAnimation
 import me.rerere.rikkahub.ui.pages.assistant.detail.TavernCharacterCard
@@ -628,7 +629,7 @@ private fun ExportCardDialog(
 private fun doPngExportInternal(
     context: Context,
     scope: CoroutineScope,
-    toaster: com.dokar.sonner.ToasterState,
+    toaster: AppToaster,
     assistant: Assistant,
     imageUri: Uri,
 ) {

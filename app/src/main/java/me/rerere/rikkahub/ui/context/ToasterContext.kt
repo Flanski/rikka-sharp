@@ -2,6 +2,7 @@ package me.rerere.rikkahub.ui.context
 
 import androidx.compose.runtime.staticCompositionLocalOf
 import com.dokar.sonner.ToastType
+import kotlin.time.Duration
 import me.rerere.rikkahub.data.notification.AppNotification
 import me.rerere.rikkahub.data.notification.AppNotificationCenter
 
@@ -25,10 +26,20 @@ import me.rerere.rikkahub.data.notification.AppNotificationCenter
  *
  * ── 有意保留的差异 ──
  * 只实现了 `message` / `type` 两个参数（真实用到的全部）。
- * sonner 原签名还有 `id` / `icon` / `action` / `duration` —— 如果将来需要，
- * 在这里补上并转发到通知中心即可；**不预先实现**是为了不写没人用、也没验证过的代码。
- * 好处是：万一有人用了未支持的参数，会**编译期报错**，而不是静默行为不一致。
+ * sonner 原签名还有 `id` / `icon` / `action` —— 这三个项目里**没有一处用到**，
+ * 因此**不预先实现**（不写没人用、也没验证过的代码）。
+ * 好处是：万一将来有人用了它们，会**编译期报错**，而不是静默行为不一致。
+ *
+ * `duration` 则已支持（实测有 1 处在用）。
  */
+/**
+ * 普通提示的默认显示时长（毫秒）。
+ *
+ * 比 sonner 原来的 4000ms 稍长：应用内通知用的是**通知卡片**（比原来的小吐司更大、信息更多），
+ * 阅读需要多一点时间。报错**不受这个值影响** —— 它默认不自动消失（见 [show]）。
+ */
+private const val DEFAULT_TOAST_MS = 5_000L
+
 class AppToaster {
 
     /**
@@ -42,31 +53,72 @@ class AppToaster {
     fun show(
         message: Any,
         type: ToastType = ToastType.Normal,
+        /**
+         * 显示时长。
+         *
+         * **声明为可空是有意的** —— 用来区分两种情况：
+         *  · 调用方没传（null）→ 按 [type] 决定：报错不自动消失，其余用默认时长；
+         *  · 调用方显式传了 → 一律尊重调用方意图。
+         *
+         * 若给它一个非空默认值（例如 sonner 的 4000ms），就没法区分
+         * 「调用方想要 4 秒」和「调用方没管」——「报错不自动消失」这条规则
+         * 会被默认值悄悄覆盖掉。
+         */
+        duration: Duration? = null,
     ) {
         val body = message.toString()
-        when (type) {
-            ToastType.Error -> {
-                // ★报错：不自动消失 + 给复制按钮。
-                //   这正是用户明确要求的一处 —— 报错信息常常需要贴到别处去搜，
-                //   自己走掉会让人来不及读；而没有复制按钮则要手抄。
-                // 不传 title —— 由 UI 按 type 取本地化标题（见 AppNotification.title 的说明）
-                AppNotificationCenter.error(body = body, copyText = body)
-            }
+        val autoDismissMs = duration?.inWholeMilliseconds
 
-            ToastType.Warning -> AppNotificationCenter.warning(body = body)
+        // 不传 title —— 由 UI 按 type 取本地化标题（见 AppNotification.title 的说明）
+        val notification = when (type) {
+            ToastType.Error ->
+                // ★报错：默认**不自动消失**（autoDismissMs 传 null）+ 带复制按钮。
+                //   这正是用户明确要求的一处 —— 报错信息常需贴到别处搜，
+                //   自己走掉会让人来不及读；没有复制按钮则要手抄。
+                AppNotification(
+                    type = AppNotification.Type.ERROR,
+                    body = body,
+                    copyText = body,
+                    autoDismissMs = autoDismissMs,
+                )
+
+            ToastType.Warning -> AppNotification(
+                type = AppNotification.Type.WARNING,
+                body = body,
+                // ★必须在这里给默认值：如果直接写 `autoDismissMs = autoDismissMs`，
+                //   当调用方没传 duration 时它就是 null，会**覆盖掉** AppNotification 自带的
+                //   8000ms 默认值 —— 结果是普通提示也会永久停在屏幕上，
+                //   与「堆着不走会挡住界面」的设计意图相反。（这是我自己写出来又发现的问题。）
+                autoDismissMs = autoDismissMs ?: DEFAULT_TOAST_MS,
+            )
 
             // Success / Info / Normal —— 模板只有 normal / warning / error 三类，
-            // 因此这三种都归到 normal（蓝）。刻意**不**另造一个绿色变体：
+            // 因此这三种都归到 normal（蓝）。刻意**不**另造绿色变体：
             // 那会偏离模板的配色体系，而保持模板一致是这次改造的前提。
-            ToastType.Success, ToastType.Info, ToastType.Normal -> AppNotificationCenter.info(body = body)
+            ToastType.Success, ToastType.Info, ToastType.Normal -> AppNotification(
+                type = AppNotification.Type.NORMAL,
+                body = body,
+                // 同上：必须给默认值，否则会被 null 覆盖成「永不消失」
+                autoDismissMs = autoDismissMs ?: DEFAULT_TOAST_MS,
+            )
         }
+        AppNotificationCenter.send(notification)
     }
 }
 
 /**
  * 当前作用域的轻提示入口。
  *
- * 类型从 `ToasterState`（sonner）换成了 [AppToaster]，但 `show()` 的调用形式不变，
- * 所以 32 个文件里的 150+ 处 `toaster.show(...)` 无需改动。
+ * 类型从 `ToasterState`（sonner）换成了 [AppToaster]，`show()` 的调用形式保持一致，
+ * 因此绝大多数 `toaster.show(...)` 调用点无需改动。
+ *
+ * ★但**并非全部** —— 实测漏了三类，编译时才暴露（12 条错误）：
+ *  ① 有 8 处把 `toaster` 作为**函数参数**往下传，那些签名写的是 `ToasterState`
+ *     （`ChatInput` / `AssistantDetailPage` / `AssistantImporter` / `SkillDetailPage` /
+ *       `SettingProviderPage`），必须一起改；
+ *  ② `Export.kt` 自己调了 sonner 的 `rememberToasterState()`；
+ *  ③ 有 1 处传了 `duration = 1.seconds`。
+ * **教训：统计调用点时只看了 `xxx.show(...)` 的参数，没看「类型被当作参数传递」的地方
+ *   —— 判断"改动影响面"必须按**类型**去找引用，而不是按调用形式。**
  */
 val LocalToaster = staticCompositionLocalOf<AppToaster> { error("Not provided") }

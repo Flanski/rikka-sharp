@@ -74,6 +74,7 @@ import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Download01
 import me.rerere.rikkahub.ui.components.nav.BackButton
 import me.rerere.rikkahub.ui.components.ui.RikkaConfirmDialog
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.CustomColors
 import me.rerere.rikkahub.utils.plus
@@ -519,7 +520,7 @@ private fun updateNext(
     skills: List<SkillsVM.GitHubSkillInfo>,
     skillsVM: SkillsVM,
     detailVM: SkillDetailVM,
-    toaster: com.dokar.sonner.ToasterState,
+    toaster: AppToaster,
     repoUrl: String = "",
 ) {
     if (index >= skills.size) {

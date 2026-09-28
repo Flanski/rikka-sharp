@@ -125,6 +125,7 @@ import me.rerere.rikkahub.ui.components.ui.permission.PermissionRecordAudio
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
 import me.rerere.rikkahub.ui.context.LocalASRState
 import me.rerere.rikkahub.ui.context.LocalSettings
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.hooks.ChatInputState
 import me.rerere.rikkahub.utils.SoundEffectPlayer
@@ -525,7 +526,7 @@ private fun TextInputRow(
     state: ChatInputState,
     completionProviders: List<ChatCompletionProvider>,
     onSendMessage: () -> Unit,
-    toaster: com.dokar.sonner.ToasterState,
+    toaster: AppToaster,
     onUpdateAssistant: (Assistant) -> Unit,
     onSlashDuplicate: (() -> Unit)?,
     onSlashInsert: ((MessageRole, String, String?, Int?) -> Unit)?,
@@ -1181,7 +1182,7 @@ private fun handleBuiltinSlash(
     cmd: SlashCommand,
     args: String,
     state: ChatInputState,
-    toaster: com.dokar.sonner.ToasterState,
+    toaster: AppToaster,
     settings: Settings,
     assistant: Assistant,
     onUpdateAssistant: (Assistant) -> Unit,

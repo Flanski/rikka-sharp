@@ -94,7 +94,7 @@ import me.rerere.rikkahub.ui.components.ui.ChainOfThought
 import me.rerere.rikkahub.ui.components.ui.ChainOfThoughtScope
 import me.rerere.rikkahub.ui.context.LocalNavController
 import me.rerere.rikkahub.ui.context.LocalSettings
-import com.dokar.sonner.rememberToasterState
+import me.rerere.rikkahub.ui.context.AppToaster
 import me.rerere.rikkahub.ui.context.LocalToaster
 import me.rerere.rikkahub.ui.theme.RikkahubTheme
 import me.rerere.rikkahub.utils.exportImage
@@ -454,7 +454,8 @@ private fun ExportedChatImage(
 ) {
     val navBackStack = remember { mutableStateListOf<NavKey>() }
     val navigator = Navigator(navBackStack)
-    val toasterState = rememberToasterState()
+    // 与主界面一致：用转发到 AppNotificationCenter 的 AppToaster
+    val toasterState = remember { AppToaster() }
     RikkahubTheme {
         CompositionLocalProvider(
             LocalNavController provides navigator,
