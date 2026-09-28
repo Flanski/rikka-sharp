@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.provider.Telephony
 import android.util.Log
 import androidx.core.content.ContextCompat
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -129,7 +130,9 @@ private fun wifiSnapshot(context: Context, includeScan: Boolean): kotlinx.serial
                 //   Android 13+ 扫描需要 NEARBY_WIFI_DEVICES；更早的版本用位置权限。
                 //   报错里写错权限名会让用户去设置里找一个不存在的授权项。
                 put("missing_permissions", buildJsonArray {
-                    wifiScanPermissions().forEach { add(it) }
+                    // ★add(String) 是扩展函数（需 import kotlinx.serialization.json.add），
+                    //   成员函数只有 add(JsonElement)。显式包 JsonPrimitive 更明确、也不依赖 import。
+                    wifiScanPermissions().forEach { add(JsonPrimitive(it)) }
                 })
                 put("hint", JsonPrimitive(
                     "扫描需要上述权限之一；此外多数设备还要求**系统定位开关处于开启状态**，" +
@@ -302,7 +305,7 @@ private fun bluetoothSnapshot(context: Context): kotlinx.serialization.json.Json
                 val ex = probe.exceptionOrNull()
                 put("permission_granted", JsonPrimitive(false))
                 put("missing_permissions", buildJsonArray {
-                    bluetoothRequiredPermissions().forEach { add(it) }
+                    bluetoothRequiredPermissions().forEach { add(JsonPrimitive(it)) }
                 })
                 put("error", JsonPrimitive("${ex?.javaClass?.simpleName}: ${ex?.message}"))
                 put("hint", JsonPrimitive(bluetoothFixHint(context)))

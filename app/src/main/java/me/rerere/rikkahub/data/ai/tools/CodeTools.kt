@@ -6,8 +6,8 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.whl.quickjs.wrapper.QuickJSContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -280,7 +280,7 @@ private fun parseJsError(message: String?): SyntaxError {
  * Chaquopy 要求 Python 在主线程启动一次；之后可在后台线程使用。
  * 编译错误会带 "line N" 信息，从中提取行号。
  */
-private fun checkPython(context: Context, code: String): List<SyntaxError> {
+private suspend fun checkPython(context: Context, code: String): List<SyntaxError> {
     ensurePythonStarted(context)
     return try {
         val py = Python.getInstance()
@@ -298,12 +298,11 @@ private fun checkPython(context: Context, code: String): List<SyntaxError> {
     }
 }
 
-private fun ensurePythonStarted(context: Context) {
+private suspend fun ensurePythonStarted(context: Context) {
     if (Python.isStarted()) return
-    runBlocking {
-        withContext(Dispatchers.Main) {
-            Python.start(AndroidPlatform(context.applicationContext))
-        }
+    // Chaquopy 要求在主线程启动；execute 本身是 suspend，直接切换调度器即可
+    withContext(Dispatchers.Main) {
+        Python.start(AndroidPlatform(context.applicationContext))
     }
 }
 

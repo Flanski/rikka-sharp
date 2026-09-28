@@ -13129,6 +13129,17 @@ index 48cefa0..dfe9b13 100644
              },
              workspaceDescription = "Working directory: ${context.filesDir?.absolutePath ?: "."}",
              extraInstructions = buildString {
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationPrompts.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationPrompts.kt
+index 81bbcc7..ccb2204 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationPrompts.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/GenerationPrompts.kt
+@@ -1,5 +1,6 @@
+ package me.rerere.rikkahub.data.ai
+ 
++import kotlinx.serialization.json.add
+ import kotlinx.serialization.json.buildJsonArray
+ import kotlinx.serialization.json.buildJsonObject
+ import kotlinx.serialization.json.put
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/python/PythonBridge.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/python/PythonBridge.kt
 index 8abf47c..0c75ff0 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/python/PythonBridge.kt
@@ -13397,10 +13408,10 @@ index 0000000..29c0e04
 +)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt
 new file mode 100644
-index 0000000..680a585
+index 0000000..1d484f4
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/CodeTools.kt
-@@ -0,0 +1,554 @@
+@@ -0,0 +1,555 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
@@ -13410,6 +13421,7 @@ index 0000000..680a585
 +import com.whl.quickjs.wrapper.QuickJSContext
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.add
 +import kotlinx.serialization.json.JsonArray
 +import kotlinx.serialization.json.JsonPrimitive
 +import kotlinx.serialization.json.buildJsonArray
@@ -13955,6 +13967,17 @@ index 0000000..680a585
 +
 +    return issues.sortedWith(compareBy({ it.line }, { it.rule }))
 +}
+diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ConversationTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ConversationTools.kt
+index 8c9c2be..2cad98b 100644
+--- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ConversationTools.kt
++++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/ConversationTools.kt
+@@ -1,5 +1,6 @@
+ package me.rerere.rikkahub.data.ai.tools
+ 
++import kotlinx.serialization.json.add
+ import kotlinx.serialization.json.buildJsonArray
+ import kotlinx.serialization.json.buildJsonObject
+ import kotlinx.serialization.json.contentOrNull
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/DownloadTaskRegistry.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/DownloadTaskRegistry.kt
 new file mode 100644
 index 0000000..a48eb35
@@ -14086,16 +14109,17 @@ index 0000000..a48eb35
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/DownloadTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/DownloadTools.kt
 new file mode 100644
-index 0000000..3c49fcb
+index 0000000..3f4346c
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/DownloadTools.kt
-@@ -0,0 +1,501 @@
+@@ -0,0 +1,502 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
 +import android.util.Log
 +import kotlinx.coroutines.CancellationException
 +import kotlinx.coroutines.launch
++import kotlinx.serialization.json.add
 +import kotlinx.serialization.json.JsonPrimitive
 +import kotlinx.serialization.json.buildJsonArray
 +import kotlinx.serialization.json.buildJsonObject
@@ -15223,11 +15247,18 @@ index 0000000..91ab693
 +)
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt
 new file mode 100644
-index 0000000..d1c42f1
+index 0000000..926da69
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/LocalToolApprovals.kt
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,95 @@
 +package me.rerere.rikkahub.data.ai.tools
++
++// ★注意：put(...) 是 JsonObjectBuilder 的**成员函数**，必须用短名调用 ——
++//   写 kotlinx.serialization.json.put(...) 会报 Unresolved reference
++//   （成员函数不属于包级命名空间，无法用全限定名调用）。
++import kotlinx.serialization.json.JsonPrimitive
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
 +
 +/**
 + * 本地工具（`LocalToolOption`）的**授权默认值**。
@@ -15307,18 +15338,10 @@ index 0000000..d1c42f1
 +    listOf(
 +        me.rerere.ai.ui.UIMessagePart.Text(
 +            kotlinx.serialization.json.buildJsonObject {
-+                kotlinx.serialization.json.put("ok", kotlinx.serialization.json.JsonPrimitive(false))
-+                kotlinx.serialization.json.put("tool", kotlinx.serialization.json.JsonPrimitive(toolName))
-+                kotlinx.serialization.json.put(
-+                    "error",
-+                    kotlinx.serialization.json.JsonPrimitive("${t.javaClass.simpleName}: ${t.message}")
-+                )
-+                kotlinx.serialization.json.put(
-+                    "hint",
-+                    kotlinx.serialization.json.JsonPrimitive(
-+                        "工具内部出现未预期的错误（不是权限提示）。该信息可用于反馈问题。"
-+                    )
-+                )
++                put("ok", JsonPrimitive(false))
++                put("tool", JsonPrimitive(toolName))
++                put("error", JsonPrimitive("${t.javaClass.simpleName}: ${t.message}"))
++                put("hint", JsonPrimitive("工具内部出现未预期的错误（不是权限提示）。该信息可用于反馈问题。"))
 +            }.toString()
 +        )
 +    )
@@ -15489,10 +15512,10 @@ index dc0ab1a..04c2173 100644
  }
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
 new file mode 100644
-index 0000000..59b2d3c
+index 0000000..d3029de
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/MidiTools.kt
-@@ -0,0 +1,599 @@
+@@ -0,0 +1,600 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.content.Context
@@ -15511,6 +15534,7 @@ index 0000000..59b2d3c
 +import kotlinx.coroutines.delay
 +import kotlinx.coroutines.withContext
 +import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.serialization.json.add
 +import kotlinx.serialization.json.JsonPrimitive
 +import kotlinx.serialization.json.buildJsonArray
 +import kotlinx.serialization.json.buildJsonObject
@@ -16093,10 +16117,18 @@ index 0000000..59b2d3c
 +    else -> "CC$cc"
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt
-index d888690..471fcec 100644
+index d888690..b735bbd 100644
 --- a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/PythonTools.kt
-@@ -35,7 +35,6 @@ fun createPythonTool(context: Context, timeoutSec: Int = 30): Tool = Tool(
+@@ -5,6 +5,7 @@ import com.chaquo.python.Python
+ import com.chaquo.python.android.AndroidPlatform
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.withContext
++import kotlinx.serialization.json.add
+ import kotlinx.serialization.json.JsonPrimitive
+ import kotlinx.serialization.json.buildJsonArray
+ import kotlinx.serialization.json.buildJsonObject
+@@ -35,7 +36,6 @@ fun createPythonTool(context: Context, timeoutSec: Int = 30): Tool = Tool(
          "- Simple math (use calculator)\n" +
          "- Shell commands (use execute_command)\n" +
          "- File operations (use file tools)\n\n" +
@@ -16106,10 +16138,10 @@ index d888690..471fcec 100644
          "Code runs in an isolated Python environment on the device.",
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt
 new file mode 100644
-index 0000000..e731166
+index 0000000..05bec5f
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SerialTools.kt
-@@ -0,0 +1,532 @@
+@@ -0,0 +1,533 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.app.PendingIntent
@@ -16128,6 +16160,7 @@ index 0000000..e731166
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.withContext
 +import kotlinx.coroutines.withTimeoutOrNull
++import kotlinx.serialization.json.add
 +import kotlinx.serialization.json.JsonPrimitive
 +import kotlinx.serialization.json.buildJsonArray
 +import kotlinx.serialization.json.buildJsonObject
@@ -17071,10 +17104,10 @@ index 0000000..1d0534b
 +private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 diff --git a/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt
 new file mode 100644
-index 0000000..cc1aefb
+index 0000000..d80ef96
 --- /dev/null
 +++ b/app/src/main/java/me/rerere/rikkahub/data/ai/tools/SystemTools.kt
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,476 @@
 +package me.rerere.rikkahub.data.ai.tools
 +
 +import android.Manifest
@@ -17090,6 +17123,7 @@ index 0000000..cc1aefb
 +import android.provider.Telephony
 +import android.util.Log
 +import androidx.core.content.ContextCompat
++import kotlinx.serialization.json.add
 +import kotlinx.serialization.json.JsonPrimitive
 +import kotlinx.serialization.json.buildJsonArray
 +import kotlinx.serialization.json.buildJsonObject
@@ -17206,7 +17240,9 @@ index 0000000..cc1aefb
 +                //   Android 13+ 扫描需要 NEARBY_WIFI_DEVICES；更早的版本用位置权限。
 +                //   报错里写错权限名会让用户去设置里找一个不存在的授权项。
 +                put("missing_permissions", buildJsonArray {
-+                    wifiScanPermissions().forEach { add(it) }
++                    // ★add(String) 是扩展函数（需 import kotlinx.serialization.json.add），
++                    //   成员函数只有 add(JsonElement)。显式包 JsonPrimitive 更明确、也不依赖 import。
++                    wifiScanPermissions().forEach { add(JsonPrimitive(it)) }
 +                })
 +                put("hint", JsonPrimitive(
 +                    "扫描需要上述权限之一；此外多数设备还要求**系统定位开关处于开启状态**，" +
@@ -17379,7 +17415,7 @@ index 0000000..cc1aefb
 +                val ex = probe.exceptionOrNull()
 +                put("permission_granted", JsonPrimitive(false))
 +                put("missing_permissions", buildJsonArray {
-+                    bluetoothRequiredPermissions().forEach { add(it) }
++                    bluetoothRequiredPermissions().forEach { add(JsonPrimitive(it)) }
 +                })
 +                put("error", JsonPrimitive("${ex?.javaClass?.simpleName}: ${ex?.message}"))
 +                put("hint", JsonPrimitive(bluetoothFixHint(context)))

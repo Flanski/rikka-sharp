@@ -1,5 +1,12 @@
 package me.rerere.rikkahub.data.ai.tools
 
+// ★注意：put(...) 是 JsonObjectBuilder 的**成员函数**，必须用短名调用 ——
+//   写 kotlinx.serialization.json.put(...) 会报 Unresolved reference
+//   （成员函数不属于包级命名空间，无法用全限定名调用）。
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+
 /**
  * 本地工具（`LocalToolOption`）的**授权默认值**。
  *
@@ -78,18 +85,10 @@ internal fun guarded(
     listOf(
         me.rerere.ai.ui.UIMessagePart.Text(
             kotlinx.serialization.json.buildJsonObject {
-                kotlinx.serialization.json.put("ok", kotlinx.serialization.json.JsonPrimitive(false))
-                kotlinx.serialization.json.put("tool", kotlinx.serialization.json.JsonPrimitive(toolName))
-                kotlinx.serialization.json.put(
-                    "error",
-                    kotlinx.serialization.json.JsonPrimitive("${t.javaClass.simpleName}: ${t.message}")
-                )
-                kotlinx.serialization.json.put(
-                    "hint",
-                    kotlinx.serialization.json.JsonPrimitive(
-                        "工具内部出现未预期的错误（不是权限提示）。该信息可用于反馈问题。"
-                    )
-                )
+                put("ok", JsonPrimitive(false))
+                put("tool", JsonPrimitive(toolName))
+                put("error", JsonPrimitive("${t.javaClass.simpleName}: ${t.message}"))
+                put("hint", JsonPrimitive("工具内部出现未预期的错误（不是权限提示）。该信息可用于反馈问题。"))
             }.toString()
         )
     )
