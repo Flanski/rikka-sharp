@@ -424,7 +424,8 @@ class GenerationHandler(
                         async {
                             tool to runCatching {
                                 executeToolWithWatchdog(
-                                    tool, toolsInternal, json, assistant.toolExecTimeout * 1000L
+                                    tool, toolsInternal, json, assistant.toolExecTimeout * 1000L,
+                                    processingStatus
                                 )
                             }
                         }
@@ -439,7 +440,8 @@ class GenerationHandler(
                 toolsToProcess.forEach { tool ->
                     val result = runCatching {
                         executeToolWithWatchdog(
-                            tool, toolsInternal, json, assistant.toolExecTimeout * 1000L
+                            tool, toolsInternal, json, assistant.toolExecTimeout * 1000L,
+                            processingStatus
                         )
                     }
                     addToolResult(executedTools, tool, result, json)
@@ -801,10 +803,23 @@ private suspend fun executeToolWithWatchdog(
     toolsInternal: List<me.rerere.ai.core.Tool>,
     json: kotlinx.serialization.json.Json,
     idleTimeoutMs: Long,
+    processingStatus: MutableStateFlow<String?>,
 ): me.rerere.ai.ui.UIMessagePart.Tool = kotlinx.coroutines.coroutineScope {
     val lastActivity = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
-    val progress = me.rerere.ai.core.ToolProgress { _ ->
+    val progress = me.rerere.ai.core.ToolProgress { message ->
+        // 任何一次上报都算「还在干活」→ 给看门狗续期
         lastActivity.set(System.currentTimeMillis())
+        // 有可读说明时同步到 UI。
+        //
+        // 这里复用了项目**已有**的 processingStatus 通道（工具开始执行时会被设为
+        // describeTool(...) 的通用文案，结束时清空），因此无需新增 UI 管道 ——
+        // 工具报的进度会直接覆盖那条通用文案，用户看到的就是具体进度。
+        //
+        // 传 null 表示「还在跑但没有可展示的说明」，此时**不动** processingStatus：
+        // 清空它反而会让界面像是停下来了。
+        if (!message.isNullOrBlank()) {
+            processingStatus.value = message
+        }
     }
 
     val job = async(progress) { executeToolCall(tool, toolsInternal, json) }

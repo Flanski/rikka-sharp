@@ -3,6 +3,9 @@ package me.rerere.rikkahub.data.ai.tools
 import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
+import me.rerere.ai.core.ToolProgress
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.JsonPrimitive
@@ -140,6 +143,8 @@ private fun httpDownloadTool(context: Context): Tool = Tool(
         )
     },
     execute = { args ->
+        // 取工具协程上的活动上报通道（取不到时为 null，功能照常）
+        val progress = kotlin.coroutines.coroutineContext[ToolProgress]
         val obj = args.jsonObject
         val url = obj["url"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: error("url is required")
@@ -168,7 +173,7 @@ private fun httpDownloadTool(context: Context): Tool = Tool(
                 }.toString()
             ))
         } else {
-            job.join()
+            awaitDownloadProgress(task, job, progress)
             listOf(UIMessagePart.Text(task.toJson().toString()))
         }
     },
@@ -336,6 +341,7 @@ private fun repoDownloadTool(context: Context): Tool = Tool(
         )
     },
     execute = { args ->
+        val progress = kotlin.coroutines.coroutineContext[ToolProgress]
         val obj = args.jsonObject
         val repo = obj["repo"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
             ?: error("repo is required")
@@ -387,11 +393,54 @@ private fun repoDownloadTool(context: Context): Tool = Tool(
                 }.toString()
             ))
         } else {
-            job.join()
+            awaitDownloadProgress(task, job, progress)
             listOf(UIMessagePart.Text(taskResultJson(task).toString()))
         }
     },
 )
+
+/**
+ * 等后台下载/解压完成，期间**定期给看门狗续期**并把进度报给 UI。
+ *
+ * ── 为什么不能只写 `job.join()` ──
+ * 下载与解压跑在 [DownloadTaskRegistry.scope] 里（进程级作用域，独立于工具协程），
+ * 因此它们**无法**访问工具协程上的 ToolProgress —— 也就是说：
+ * 工具在「等一个自己不知道在不在干活的任务」。
+ *
+ * 而工具超时现在是「**连续无活动** N 秒」（见 GenerationHandler.executeToolWithWatchdog），
+ * 所以不续期的话，一个**正常但耗时**的大文件下载会被判成卡死并中断。
+ * 这个函数正是为了避免那种误杀：由等待方定期上报，既续了期，也顺带把进度显示给用户。
+ *
+ * （sync 模式才需要；async 模式工具已经立即返回，不涉及等待。）
+ */
+private suspend fun awaitDownloadProgress(task: DownloadTask, job: Job, progress: ToolProgress?) {
+    while (job.isActive) {
+        delay(PROGRESS_TICK_MS)
+        if (!job.isActive) break
+        progress?.report(describeDownloadProgress(task))
+    }
+    // 收尾：等它彻底结束（异常已在 runHttpDownload 内部被转成 task.state）
+    job.join()
+}
+
+/** 续期间隔。3 秒足够让「无活动超时」不会被触发，同时避免过于频繁地刷 UI */
+private const val PROGRESS_TICK_MS = 3_000L
+
+private fun describeDownloadProgress(task: DownloadTask): String {
+    val mb = task.bytes / 1048576.0
+    val pct = if (task.total > 0) {
+        "，%d%%".format((task.bytes * 100 / task.total).coerceIn(0, 100))
+    } else {
+        ""
+    }
+    // 阶段说明（如「解压中」）比字节数更能反映现状，优先展示
+    val phase = task.phase?.takeIf { it.isNotBlank() }
+    return if (phase != null) {
+        "%s（%.1f MB%s）".format(phase, mb, pct)
+    } else {
+        "已下载 %.1f MB%s".format(mb, pct)
+    }
+}
 
 private fun taskResultJson(task: DownloadTask) = buildJsonObject {
     put("id", task.id)
