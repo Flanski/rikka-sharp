@@ -166,9 +166,14 @@ object NotificationUtil {
             }
 
             // ── 进度 ──
-            config.progress?.let { p ->
-                setProgress(100, p.coerceIn(0, 100), false)
-            } ?: if (config.indeterminate) {
+            //
+            // 写成语句而不是 `?: if (...)` 表达式 —— 后者要求 `if` 有 else 分支
+            // （`?:` 的右操作数必须是一个值），编译会报
+            // "'if' must have both main and 'else' branches when used as an expression"。
+            val progressValue = config.progress
+            if (progressValue != null) {
+                setProgress(100, progressValue.coerceIn(0, 100), false)
+            } else if (config.indeterminate) {
                 setProgress(0, 0, true)
             }
 
