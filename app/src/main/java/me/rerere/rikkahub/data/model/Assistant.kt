@@ -56,6 +56,7 @@ data class Assistant(
         // 关掉后 AI 就只能等用户回到对话里才说。
         // 它自带频率上限，且用**独立通知渠道**，用户可在系统设置里单独关闭而不影响其它提醒。
         LocalToolOption.Notification,
+        LocalToolOption.Schedule,
     ),
     // 已启用的设备传感器（key 见 SensorCatalog；空集 = 全部未启用）
     val enabledSensors: Set<String> = emptySet(),

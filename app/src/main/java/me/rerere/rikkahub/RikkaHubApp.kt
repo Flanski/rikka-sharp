@@ -1,5 +1,6 @@
 package me.rerere.rikkahub
 
+import androidx.work.Configuration
 import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -30,6 +31,7 @@ import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.service.WebServerService
 import me.rerere.rikkahub.utils.ReasoningTraceFile
+import me.rerere.rikkahub.data.schedule.ScheduledTaskScheduler
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
 import org.koin.android.ext.android.get
@@ -72,7 +74,42 @@ const val AI_NOTIFICATION_CHANNEL_ID = "ai_notification"
 /** 同上，但 importance=HIGH：用于 AI 标注为「重要」的通知（会响铃/震动） */
 const val AI_NOTIFICATION_URGENT_CHANNEL_ID = "ai_notification_urgent"
 
-class RikkaHubApp : Application() {
+/**
+ * ★实现了 [Configuration.Provider] —— 这是**必需**的，不是可选优化。
+ *
+ * 原因：`AndroidManifest.xml` 里把 WorkManager 的自动初始化移除了
+ * （`androidx.work.WorkManagerInitializer` 带 `tools:node="remove"`），
+ * 而项目里此前**没有任何地方**初始化 WorkManager。
+ *
+ * 这本身不会立刻出问题 —— 只要没人调用 `WorkManager.getInstance()`。
+ * 但一旦调用，WorkManager 会走「按需初始化」分支：
+ *     if (appContext instanceof Configuration.Provider) { 用它的配置初始化 }
+ *     else { throw IllegalStateException("... your Application does not implement
+ *            Configuration.Provider") }
+ * （见 WorkManagerImpl.getInstance(Context) 的实现）
+ * 即：**要么实现这个接口，要么就不能用 WorkManager。**
+ *
+ * 定时任务功能依赖 WorkManager，所以把这一环补上。
+ */
+class RikkaHubApp : Application(), Configuration.Provider {
+
+    /**
+     * WorkManager 的配置。
+     *
+     * 刻意**不设置 WorkerFactory**：
+     *  · 我们的 Worker（[me.rerere.rikkahub.service.ScheduledTaskWorker]）自己读文件存储、
+     *    自己发通知，不需要依赖注入，用默认 factory 即可；
+     *  · 而 Koin 的 `workManagerFactory()` 虽然已在 [onCreate] 里注册，
+     *    但在这里取用它要经过 Koin 的全局上下文 API —— 那是一条**未经验证**的路径，
+     *    一旦 API 用法不对就会是运行期崩溃。
+     *    （这个项目已经因为「引入时没验证运行期行为」踩过坑，不再重复。）
+     *
+     * 将来若有 Worker 需要注入依赖，在这里加上 `setWorkerFactory(...)` 即可，
+     * 但那时应当先确认取到的 factory 确实可用，而不是想当然。
+     */
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
+
     override fun onCreate() {
         super.onCreate()
         try {
@@ -103,6 +140,17 @@ class RikkaHubApp : Application() {
         // 位置：Android/data/<包名>/files/reasoning_trace.log（无需权限，外部工具可读）
         // 日志含推理文本，仅用于排查；修复后把 ReasoningTrace.sink 置空即可完全关闭（关闭时零开销）。
         runCatching { ReasoningTraceFile.start(this) }
+
+        // 恢复定时任务的排期。
+        //
+        // 为什么需要：WorkManager 自己会持久化队列并在重启后恢复，但有两种情况会不一致 ——
+        //  ① 应用升级后（WorkManager 的数据库可能有历史遗留条目）；
+        //  ② 存储文件里的任务与 WorkManager 队列不同步（例如队列被系统清掉）。
+        // 重新排一遍是**幂等**的（同名 unique work 用 REPLACE 策略），因此可以放心调用。
+        //
+        // 放在这里而不是延迟执行：只读一个小 JSON 文件 + 若干次入队，耗时在毫秒级。
+        runCatching { ScheduledTaskScheduler.rescheduleAll(this) }
+            .onFailure { Log.w(TAG, "恢复定时任务排期失败", it) }
 
         // Init QuickJS native library
         QuickJSLoader.init()

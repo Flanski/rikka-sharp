@@ -119,3 +119,19 @@
 # 本地 Compose 自定义组件依赖
 -keep class androidx.compose.animation.** { *; }
 -keep class androidx.compose.runtime.** { *; }
+
+# ── WorkManager ──────────────────────────────────────────────────────────────
+# WorkManager **通过类名反射**实例化 Worker（读它自己数据库里记录的类名），
+# R8 静态分析看不到这条引用 → 会把 Worker 类删除或改名 →
+# 运行期抛 ClassNotFoundException（而且是在后台、没有界面的时候发生，很难定位）。
+#
+# 这与本项目此前踩过的两次是同一类问题：
+#   · JSch 把算法类名放在配置字符串里 → R8 裁剪 → ClassNotFoundException；
+#   · sherpa-onnx 的 JNI 按**字段名**读 Kotlin 配置 → R8 改字段名 → SIGSEGV。
+# 凡是「按名字查找」的机制，都要显式 keep。
+#
+# 保留构造函数签名是因为 WorkManager 用 `(Context, WorkerParameters)` 反射构造，
+# 只保留类名而构造签名被改，同样会失败。
+-keep class * extends androidx.work.ListenableWorker {
+    <init>(android.content.Context, androidx.work.WorkerParameters);
+}

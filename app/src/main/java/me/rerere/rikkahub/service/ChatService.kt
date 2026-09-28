@@ -89,6 +89,9 @@ import me.rerere.rikkahub.data.ai.tools.local.createSensorTool
 import me.rerere.rikkahub.data.ai.tools.createTaskTools
 import me.rerere.rikkahub.data.ai.tools.createConversationTools
 import me.rerere.rikkahub.data.files.SkillManager
+import me.rerere.rikkahub.data.schedule.ScheduledTaskStore
+import me.rerere.rikkahub.data.ai.transformers.InputMessageTransformer
+import me.rerere.rikkahub.data.ai.transformers.ContextInjectorTransformer
 import me.rerere.rikkahub.data.ai.transformers.Base64ImageToLocalFileTransformer
 import me.rerere.rikkahub.data.ai.transformers.DocumentAsPromptTransformer
 import me.rerere.rikkahub.data.ai.transformers.OcrTransformer
@@ -184,6 +187,28 @@ private val inputTransformers by lazy {
         SkillAutoTriggerTransformer,
     )
 }
+
+/**
+ * 把「已触发但还没送达」的定时提醒包成一个 transformer。
+ *
+ * ── 为什么是「取走并删除」而不是「读了保留」──
+ * 注入的目的是让 AI **记得**某件事，而同一件事被反复注入会让它反复提起
+ * （每次生成都看到「[Scheduled] 该交房租了」），反而变成噪音。
+ * 因此在构造请求参数时取走 —— 这一步说明请求确实要发出去了。
+ *
+ * 代价：若请求发出后失败（网络错误等），这条提醒就丢了。
+ * 可以接受，因为**通知已经先发过了**，用户侧不会完全没有感知。
+ */
+private fun pendingScheduledReminders(context: android.content.Context): InputMessageTransformer? {
+    val pending = runCatching { ScheduledTaskStore.takePendingForAi(context) }
+        .onFailure { Log.w(TAG, "读取定时提醒失败", it) }
+        .getOrNull()
+        .orEmpty()
+    if (pending.isEmpty()) return null
+    Log.i(TAG, "注入 ${pending.size} 条定时提醒")
+    return ContextInjectorTransformer(cronMessages = pending.map { it.prompt })
+}
+
 
 private val outputTransformers by lazy {
     listOf(
@@ -1130,6 +1155,8 @@ class ChatService(
                     addAll(inputTransformers)
                     add(templateTransformer)
                     add(workspaceReminderTransformer)
+                    // 定时任务：把已触发但还没送达的提醒注入给 AI
+                    pendingScheduledReminders(this)?.let { add(it) }
                 },
                 outputTransformers = outputTransformers,
                 tools = buildList {
@@ -1603,6 +1630,7 @@ class ChatService(
             inputTransformers = buildList {
                 addAll(inputTransformers)
                 add(templateTransformer)
+                pendingScheduledReminders(this)?.let { add(it) }
             },
             outputTransformers = outputTransformers,
             // 官方 /gen length=：临时覆盖响应长度（TempResponseLength 语义），用完即弃

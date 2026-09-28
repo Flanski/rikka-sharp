@@ -211,6 +211,16 @@ sealed class LocalToolOption {
     @Serializable
     @SerialName("notification")
     data object Notification : LocalToolOption()
+
+    /**
+     * 定时任务（提醒）。
+     *
+     * 到期时**保证发一条通知**；[prompt] 会在下一次生成时注入给 AI。
+     * 不保证「到点自动执行动作」—— 手机后台限制使这一点不可靠（尤其华为/鸿蒙）。
+     */
+    @Serializable
+    @SerialName("schedule")
+    data object Schedule : LocalToolOption()
 }
 
 class LocalTools(
@@ -582,6 +592,9 @@ class LocalTools(
         }
         if (options.contains(LocalToolOption.Notification)) {
             tools.addAll(createNotificationTools(context))
+        }
+        if (options.contains(LocalToolOption.Schedule)) {
+            tools.addAll(createScheduleTools(context))
         }
         return tools
     }

@@ -152,6 +152,8 @@ class PythonBridge(
                 "tool_worker_tools" -> toggleTool(a, LocalToolOption.WorkerTools, bool())
                 "tool_notification", "tool_notifications" ->
                     toggleTool(a, LocalToolOption.Notification, bool())
+                "tool_schedule", "tool_reminder", "tool_reminders" ->
+                    toggleTool(a, LocalToolOption.Schedule, bool())
 
                 else -> return@runBlocking "Error: 未知设置 $key"
             }

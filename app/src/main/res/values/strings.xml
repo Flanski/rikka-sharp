@@ -1991,4 +1991,8 @@
   <string name="background_guide_note">The names and locations differ between models, and there is no standard API to check or request them — that is why this cannot be done automatically.</string>
   <string name="background_guide_open_settings">Open app settings</string>
   <string name="background_guide_close">Close</string>
+
+  <!-- 系统工具：定时任务 -->
+  <string name="system_schedule">Scheduled reminders</string>
+  <string name="system_schedule_desc">Let the assistant schedule a reminder: you get a notification at that time, and it remembers the task when it next runs</string>
 </resources>

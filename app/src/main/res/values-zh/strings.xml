@@ -1994,4 +1994,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
 
   <string name="setting_page_ssh">SSH 客户端</string>
   <string name="setting_page_ssh_desc">管理远程主机，让助手通过 SSH 操作它们</string>
+
+  <!-- 系统工具：定时任务 -->
+  <string name="system_schedule">定时提醒</string>
+  <string name="system_schedule_desc">允许助手安排提醒：到点给你发通知，并在下次运行时记得这件事</string>
 </resources>

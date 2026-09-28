@@ -258,6 +258,16 @@ fun AssistantSystemToolsPage(id: String) {
                         )
                     },
                 )
+                item(
+                    headlineContent = { Text(tSchedule) },
+                    supportingContent = { Text(dSchedule) },
+                    trailingContent = {
+                        Switch(
+                            checked = assistant.localTools.contains(LocalToolOption.Schedule),
+                            onCheckedChange = { toggle(LocalToolOption.Schedule, it) },
+                        )
+                    },
+                )
             }
             Text(
                 text = stringResource(R.string.system_readonly_note),
