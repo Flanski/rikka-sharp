@@ -1961,4 +1961,15 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="system_permission_bt_usage">允许助手列出已配对的蓝牙设备及其状态。它无法替你连接或断开设备。</string>
   <string name="system_permission_wifi_name">WiFi 信息</string>
   <string name="system_permission_wifi_usage">允许助手读取当前 WiFi 网络并扫描附近的网络。Android 13+ 上这会用到「附近的 WiFi 设备」权限。</string>
+
+  <!-- 工具授权弹窗（AI 请求执行工具时的一屏确认） -->
+  <string name="tool_approval_title">AI 请求执行工具</string>
+  <string name="tool_approval_subtitle">请先确认它要做什么</string>
+  <string name="tool_approval_action">要做什么</string>
+  <string name="tool_approval_reason">为什么</string>
+  <string name="tool_approval_tool">工具</string>
+  <string name="tool_approval_arguments">参数</string>
+  <string name="tool_approval_not_provided">（未提供）</string>
+  <string name="tool_approval_allow">允许</string>
+  <string name="tool_approval_deny">拒绝</string>
 </resources>

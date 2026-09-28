@@ -1267,6 +1267,143 @@ index b2990b5..e787b05 100644
 -If this fork is useful to you, please leave a ⭐ Star — it keeps the project alive ✨
 \ No newline at end of file
 +Distributed under AGPL-3.0.
+diff --git a/ai/src/main/java/me/rerere/ai/core/ReasoningTrace.kt b/ai/src/main/java/me/rerere/ai/core/ReasoningTrace.kt
+new file mode 100644
+index 0000000..5cb9b52
+--- /dev/null
++++ b/ai/src/main/java/me/rerere/ai/core/ReasoningTrace.kt
+@@ -0,0 +1,48 @@
++package me.rerere.ai.core
++
++/**
++ * Reasoning 回传的诊断日志开关。
++ *
++ * ── 为什么需要 ──
++ * 线上偶发这个 400：
++ *
++ *     The `reasoning_text` in the thinking mode must be passed back to the API.
++ *
++ * 它的含义很明确：**思考模式下必须把 `reasoning_text` 回传**。
++ * 而我们的 Responses 路径里，某个环节可能只发出了 `encrypted_content` 却没有 `reasoning_text`：
++ *
++ *     val content = reasoningParts
++ *         .filter { it.reasoningType == ReasoningType.REASONING_TEXT }
++ *         .filter { it.reasoning.isNotEmpty() }
++ *     if (content.isNotEmpty()) { put("content", [...reasoning_text...]) }   // ← 空了就不发
++ *     reasoningMetadata?.encryptedContent?.let { put("encrypted_content", it) }  // ← 但这个照发
++ *
++ * 可问题是：**这条推理链上有多个可能分叉**（part 类型不对、文本为空、metadata 缺失、
++ * 或者消息根本没进入上传列表），静态推演无法确定是哪一条，而且它是**概率性**发生的。
++ * 因此正确的做法是：**把每次请求实际发出的 reasoning 内容落盘**，等复现时按日志定位。
++ *
++ * ── 设计 ──
++ * 这里只放一个可注入的 sink，`ai` 模块**不依赖 Android / 不做文件 IO**，
++ * 由 app 层（[me.rerere.rikkahub.utils.ReasoningTraceFile]）负责写入。
++ * 这样 ai 模块保持干净，且日志是否启用完全由上层决定。
++ *
++ * 未注入 sink 时 [isEnabled] 为 false，所有调用点都会先判断它，
++ * 因此**关闭时几乎没有开销**。
++ */
++object ReasoningTrace {
++
++    /** 日志落点；由 app 层在启动时注入。null = 不记录 */
++    @Volatile
++    var sink: ((String) -> Unit)? = null
++
++    val isEnabled: Boolean get() = sink != null
++
++    fun log(line: String) {
++        sink?.invoke(line)
++    }
++
++    /** 只在该行需要拼接较多内容时使用，避免无谓的字符串构造 */
++    inline fun logLazy(build: () -> String) {
++        if (isEnabled) sink?.invoke(build())
++    }
++}
+diff --git a/ai/src/main/java/me/rerere/ai/core/Tool.kt b/ai/src/main/java/me/rerere/ai/core/Tool.kt
+index 595d37c..f24b935 100644
+--- a/ai/src/main/java/me/rerere/ai/core/Tool.kt
++++ b/ai/src/main/java/me/rerere/ai/core/Tool.kt
+@@ -4,6 +4,8 @@ import kotlinx.serialization.SerialName
+ import kotlinx.serialization.Serializable
+ import kotlinx.serialization.json.JsonElement
+ import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.buildJsonObject
++import kotlinx.serialization.json.put
+ import me.rerere.ai.provider.Model
+ import me.rerere.ai.ui.UIMessage
+ import me.rerere.ai.ui.UIMessagePart
+@@ -16,7 +18,36 @@ data class Tool(
+     val systemPrompt: (model: Model, messages: List<UIMessage>) -> String = { _, _ -> "" },
+     val needsApproval: (JsonElement) -> Boolean = { false },
+     val execute: suspend (JsonElement) -> List<UIMessagePart>
+-)
++) {
++    /**
++     * 实际发给模型 API 的参数 schema —— 在工具自身 schema 之上，**强制追加**两个字段：
++     *
++     *  · `intent`  —— 这次调用**要做什么操作**（一句话）
++     *  · `purpose` —— **为什么要做**（一句话）
++     *
++     * ── 为什么集中在这里追加 ──
++     * ① 只需改这一个函数 + 4 个 provider 的调用点，**57 个现有工具无需逐个修改**，
++     *    将来新增工具也不会漏；
++     * ② 两项都写进 `required`，由 **schema 层面强制**模型填写，
++     *    而不是在提示词里「请求」它填 —— 后者的遵守率不稳定；
++     * ③ 这两项会显示在**授权弹窗的详细内容区**，让用户在批准前
++     *    一眼看清「AI 打算做什么、为什么」，而不是只看到一个工具名。
++     *
++     * 工具自身的 `execute` 照常会收到这两个键。各工具都用 `obj["自己的键"]` 取值，
++     * 多余的键无害（已核查全部工具，没有遍历参数键的写法）。
++     */
++    fun apiParameters(): InputSchema? = when (val schema = parameters()) {
++        is InputSchema.Obj -> InputSchema.Obj(
++            properties = JsonObject(schema.properties + ACTION_DESCRIPTION_PROPERTIES),
++            required = (schema.required.orEmpty() + TOOL_ACTION_DESCRIPTION_KEYS).distinct(),
++        )
++        // 原本没有参数的工具也要能填写这两项，否则会退回「无 schema」，模型无从填写
++        null -> InputSchema.Obj(
++            properties = JsonObject(ACTION_DESCRIPTION_PROPERTIES),
++            required = TOOL_ACTION_DESCRIPTION_KEYS,
++        )
++    }
++}
+ 
+ @Serializable
+ sealed class InputSchema {
+@@ -27,3 +58,31 @@ sealed class InputSchema {
+         val required: List<String>? = null,
+     ) : InputSchema()
+ }
++
++/**
++ * 「行为说明」两个必填参数的键名。
++ *
++ * 授权弹窗会读取这两个键，把内容展示给用户；因此这里的名字
++ * 与 UI 读写的键名必须一致，集中定义避免两边写错。
++ */
++val TOOL_ACTION_DESCRIPTION_KEYS: List<String> = listOf("intent", "purpose")
++
++private val ACTION_DESCRIPTION_PROPERTIES: Map<String, JsonElement> = mapOf(
++    "intent" to buildJsonObject {
++        put("type", "string")
++        put(
++            "description",
++            "REQUIRED(必填)。用一句简短的话说明**这次要执行什么操作**，使用用户的语言，" +
++                "具体且如实。例如「列出 Download 目录下的文件」。这项会展示给用户确认，" +
++                "不要写空泛的话，也不要省略。"
++        )
++    },
++    "purpose" to buildJsonObject {
++        put("type", "string")
++        put(
++            "description",
++            "REQUIRED(必填)。用一句简短的话说明**为什么需要这个操作**——它服务于什么目的。" +
++                "例如「确认安装包是否已下载完成，以决定是否需要重试」。会与 intent 一同展示给用户。"
++        )
++    },
++)
 diff --git a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt b/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
 index c36df35..e278ffa 100644
 --- a/ai/src/main/java/me/rerere/ai/provider/ProviderSetting.kt
@@ -1303,6 +1440,132 @@ index c36df35..e278ffa 100644
 +        is ProviderSetting.Claude -> true
 +        is ProviderSetting.OpenAI -> useResponseApi
 +    }
+diff --git a/ai/src/main/java/me/rerere/ai/provider/providers/claude/ClaudeProvider.kt b/ai/src/main/java/me/rerere/ai/provider/providers/claude/ClaudeProvider.kt
+index 40fffee..7a03314 100644
+--- a/ai/src/main/java/me/rerere/ai/provider/providers/claude/ClaudeProvider.kt
++++ b/ai/src/main/java/me/rerere/ai/provider/providers/claude/ClaudeProvider.kt
+@@ -505,7 +505,7 @@ class ClaudeProvider(private val client: OkHttpClient, context: Context? = null)
+                         add(buildJsonObject {
+                             put("name", tool.name)
+                             put("description", tool.description)
+-                            put("input_schema", json.encodeToJsonElement(tool.parameters()))
++                            put("input_schema", json.encodeToJsonElement(tool.apiParameters()))
+                         })
+                     }
+                 }
+diff --git a/ai/src/main/java/me/rerere/ai/provider/providers/google/GoogleProvider.kt b/ai/src/main/java/me/rerere/ai/provider/providers/google/GoogleProvider.kt
+index 6b44615..55fe14b 100644
+--- a/ai/src/main/java/me/rerere/ai/provider/providers/google/GoogleProvider.kt
++++ b/ai/src/main/java/me/rerere/ai/provider/providers/google/GoogleProvider.kt
+@@ -397,7 +397,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
+                                 put("description", JsonPrimitive(tool.description))
+                                 put(
+                                     key = "parameters",
+-                                    element = json.encodeToJsonElement(tool.parameters())
++                                    element = json.encodeToJsonElement(tool.apiParameters())
+                                         .removeElements(
+                                             listOf(
+                                                 "const",
+diff --git a/ai/src/main/java/me/rerere/ai/provider/providers/openai/ChatCompletionsAPI.kt b/ai/src/main/java/me/rerere/ai/provider/providers/openai/ChatCompletionsAPI.kt
+index ca47836..eb09083 100644
+--- a/ai/src/main/java/me/rerere/ai/provider/providers/openai/ChatCompletionsAPI.kt
++++ b/ai/src/main/java/me/rerere/ai/provider/providers/openai/ChatCompletionsAPI.kt
+@@ -414,7 +414,7 @@ class ChatCompletionsAPI(
+                                 put(
+                                     "parameters",
+                                     json.encodeToJsonElement(
+-                                        tool.parameters()
++                                        tool.apiParameters()
+                                     )
+                                 )
+                             })
+diff --git a/ai/src/main/java/me/rerere/ai/provider/providers/openai/ResponseAPI.kt b/ai/src/main/java/me/rerere/ai/provider/providers/openai/ResponseAPI.kt
+index e468402..e8a1540 100644
+--- a/ai/src/main/java/me/rerere/ai/provider/providers/openai/ResponseAPI.kt
++++ b/ai/src/main/java/me/rerere/ai/provider/providers/openai/ResponseAPI.kt
+@@ -13,6 +13,8 @@ import kotlinx.serialization.json.JsonObject
+ import kotlinx.serialization.json.JsonPrimitive
+ import kotlinx.serialization.json.add
+ import kotlinx.serialization.json.buildJsonArray
++import me.rerere.ai.core.ReasoningTrace
++import kotlinx.serialization.json.JsonArray
+ import kotlinx.serialization.json.buildJsonObject
+ import kotlinx.serialization.json.contentOrNull
+ import kotlinx.serialization.json.encodeToJsonElement
+@@ -228,7 +230,26 @@ class ResponseAPI(
+             }
+ 
+             // messages
+-            put("input", buildMessages(messages))
++            val inputArray = buildMessages(messages)
++            // ★请求级总览：这一步能回答「这次请求到底发出去了几条 reasoning、有没有残缺的」。
++            //
++            // 其中 `missingText` 是最关键的指标 —— 它数的是
++            // 「带了 encrypted_content、却**没有** reasoning_text 明文」的 item。
++            // DeepSeek 的报错（reasoning_text must be passed back）指向的正是这种残缺 item；
++            // 一旦报错复现，只要在日志里看到 missingText>0，就直接锁定了成因。
++            ReasoningTrace.logLazy {
++                val reasoningItems = inputArray.filterIsInstance<JsonObject>()
++                    .filter { it["type"]?.jsonPrimitiveOrNull?.contentOrNull == "reasoning" }
++                val missingText = reasoningItems.count {
++                    it.containsKey("encrypted_content") &&
++                        ((it["content"] as? JsonArray)?.isEmpty() != false)
++                }
++                val noId = reasoningItems.count { !it.containsKey("id") }
++                "REQ input items=${inputArray.size} reasoning=${reasoningItems.size}" +
++                    " missingText=$missingText noId=$noId" +
++                    " model=${params.model.modelId} tools=${params.tools.size}"
++            }
++            put("input", inputArray)
+ 
+             // reasoning
+             if (params.model.abilities.contains(ModelAbility.REASONING)) {
+@@ -264,7 +285,7 @@ class ResponseAPI(
+                                 put(
+                                     "parameters",
+                                     json.encodeToJsonElement(
+-                                        tool.parameters()
++                                        tool.apiParameters()
+                                     )
+                                 )
+                             })
+@@ -342,7 +363,9 @@ class ResponseAPI(
+                                         it.metadataAs<OpenAIReasoningMetadata>()?.reasoningId == reasoningId
+                                     }
+                                 }
+-                                add(buildJsonObject {
++                                // 先构造、再记录、最后 add ——
++                                // 这样日志里能看到**实际发出的那个对象**，而不是"应该发出什么"。
++                                val emittedReasoning = buildJsonObject {
+                                     put("type", "reasoning")
+                                     reasoningId?.let { put("id", it) }
+                                     put("summary", buildJsonArray {
+@@ -372,7 +395,24 @@ class ResponseAPI(
+                                     reasoningMetadata?.encryptedContent?.let {
+                                         put("encrypted_content", it)
+                                     }
+-                                })
++                                }
++                                ReasoningTrace.logLazy {
++                                    val perPart = reasoningParts.joinToString(" ; ") { p ->
++                                        val m = p.metadataAs<OpenAIReasoningMetadata>()
++                                        "type=${p.reasoningType},len=${p.reasoning.length}," +
++                                            "id=${m?.reasoningId ?: "-"},enc=${if (m?.encryptedContent != null) "Y" else "N"}"
++                                    }
++                                    val textCount = (emittedReasoning["content"] as? JsonArray)?.size ?: 0
++                                    buildString {
++                                        append("REQ reasoning itemId=").append(reasoningId ?: "(null)")
++                                        append(" parts=").append(reasoningParts.size)
++                                        append(" → textParts=").append(textCount)
++                                        append(" hasEncrypted=").append(emittedReasoning.containsKey("encrypted_content"))
++                                        append("\n    parts: ").append(perPart)
++                                        append("\n    emitted: ").append(emittedReasoning.toString().take(3000))
++                                    }
++                                }
++                                add(emittedReasoning)
+                             }
+ 
+                             is UIMessagePart.Image -> {
 diff --git a/ai/src/test/java/me/rerere/ai/provider/ProviderSettingBuiltInSearchTest.kt b/ai/src/test/java/me/rerere/ai/provider/ProviderSettingBuiltInSearchTest.kt
 new file mode 100644
 index 0000000..93056ec
@@ -12909,13 +13172,27 @@ index 1054dcd..0000000
 -⑦ Greer: 每张牌都是故事的一个角色/事件,
 -  功能含义优先于象征含义
 diff --git a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
-index e688510..d6c97de 100644
+index e688510..8db31e8 100644
 --- a/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/RikkaHubApp.kt
-@@ -44,6 +44,22 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
+@@ -29,6 +29,7 @@ import me.rerere.rikkahub.di.viewModelModule
+ import me.rerere.rikkahub.data.files.FilesManager
+ import me.rerere.rikkahub.data.datastore.SettingsStore
+ import me.rerere.rikkahub.service.WebServerService
++import me.rerere.rikkahub.utils.ReasoningTraceFile
+ import me.rerere.rikkahub.utils.CrashHandler
+ import me.rerere.rikkahub.utils.DatabaseUtil
+ import org.koin.android.ext.android.get
+@@ -44,59 +45,68 @@ const val CHAT_LIVE_UPDATE_NOTIFICATION_CHANNEL_ID = "chat_live_update"
  const val CHAT_GENERATION_FOREGROUND_CHANNEL_ID = "chat_generation_foreground"
  const val WEB_SERVER_NOTIFICATION_CHANNEL_ID = "web_server"
  
+-class RikkaHubApp : Application() {
+-    private fun trace(msg: String) {
+-        try {
+-            java.io.File("/sdcard/rikkahub_trace.txt").appendText("${System.currentTimeMillis()} $msg\n")
+-        } catch (_: Exception) {}
+-    }
 +/**
 + * 工具授权请求的通知渠道。
 + *
@@ -12923,7 +13200,7 @@ index e688510..d6c97de 100644
 + * 若通知不醒目（静默/沉底），用户可能长时间以为卡住了。
 + */
 +const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
-+
+ 
 +/**
 + * 「模型正在执行工具」的活动通知渠道。
 + *
@@ -12932,10 +13209,68 @@ index e688510..d6c97de 100644
 + */
 +const val TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID = "tool_activity"
 +
- class RikkaHubApp : Application() {
-     private fun trace(msg: String) {
++class RikkaHubApp : Application() {
+     override fun onCreate() {
+         super.onCreate()
+-        trace("onCreate start")
          try {
-@@ -201,6 +217,27 @@ class RikkaHubApp : Application() {
+             startKoin {
+-                trace("koin config")
+                 androidLogger()
+                 androidContext(this@RikkaHubApp)
+                 workManagerFactory()
+                 modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
+             }
+-            trace("koin done")
+         } catch (e: Exception) {
+-            trace("koin FAILED: ${e.message}")
++            Log.e(TAG, "Koin 初始化失败", e)
+             throw e
+         }
+         this.createNotificationChannel()
+-        trace("notification done")
+ 
+         // set cursor window size to 32MB
+         DatabaseUtil.setCursorWindowSize(32 * 1024 * 1024)
+-        trace("cursor done")
+ 
+         // install crash handler
+         CrashHandler.install(this)
+-        trace("crashhandler done")
++
++        // 开启 Reasoning 回传诊断日志。
++        //
++        // 背景：线上偶发 400「The `reasoning_text` in the thinking mode must be passed back
++        // to the API.」，是**概率性**的，需要长时间运行才能抓到一次，因此默认开启并把
++        // 每次请求实际发出的 reasoning 内容落盘（含最关键的一项：有没有「带 encrypted 但缺明文」的 item）。
++        //
++        // 位置：Android/data/<包名>/files/reasoning_trace.log（无需权限，外部工具可读）
++        // 日志含推理文本，仅用于排查；修复后把 ReasoningTrace.sink 置空即可完全关闭（关闭时零开销）。
++        runCatching { ReasoningTraceFile.start(this) }
+ 
+         // Init QuickJS native library
+         QuickJSLoader.init()
+-        trace("quickjs done")
+ 
+         // delete temp files
+         deleteTempFiles()
+-        trace("tempfiles done")
+ 
+         // sync upload files to DB
+         syncManagedFiles()
+-        trace("sync done")
+ 
+         // Start WebServer if enabled in settings
+         startWebServerIfEnabled()
+-        trace("webserver done")
+ 
+         // Increment launch count
+         incrementLaunchCount()
+-        trace("onCreate complete")
+ 
+         // Composer.setDiagnosticStackTraceMode(ComposeStackTraceMode.Auto)
+     }
+@@ -201,6 +211,27 @@ class RikkaHubApp : Application() {
              .build()
          notificationManager.createNotificationChannel(webServerChannel)
  
@@ -20541,6 +20876,280 @@ index e2f1a20..61380f0 100644
                      },
                      modifier = Modifier
                          .weight(1f)
+diff --git a/app/src/main/java/me/rerere/rikkahub/ui/components/toolapproval/ToolApprovalDialog.kt b/app/src/main/java/me/rerere/rikkahub/ui/components/toolapproval/ToolApprovalDialog.kt
+new file mode 100644
+index 0000000..05a4801
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/ui/components/toolapproval/ToolApprovalDialog.kt
+@@ -0,0 +1,268 @@
++package me.rerere.rikkahub.ui.components.toolapproval
++
++import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.tween
++import androidx.compose.foundation.background
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.Icon
++import androidx.compose.material3.MaterialTheme
++import androidx.compose.material3.Text
++import androidx.compose.material3.TextButton
++import androidx.compose.runtime.Composable
++import androidx.compose.runtime.LaunchedEffect
++import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateOf
++import androidx.compose.runtime.remember
++import androidx.compose.runtime.setValue
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.draw.clip
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.graphicsLayer
++import androidx.compose.ui.res.stringResource
++import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.text.font.FontWeight
++import androidx.compose.ui.text.style.TextOverflow
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import androidx.compose.ui.window.Dialog
++import androidx.compose.ui.window.DialogProperties
++import me.rerere.hugeicons.HugeIcons
++import me.rerere.hugeicons.stroke.Alert01
++import me.rerere.rikkahub.R
++
++/**
++ * 工具授权弹窗。
++ *
++ * ── 为什么不用原来的「消息内联按钮」──
++ * 原实现是在聊天消息里挂两个小图标按钮，**用户很容易没注意到**（消息在滚动区里、
++ * 且需要主动查看那条消息）。而授权是「AI 要动你的设备」这件事的确认环节，
++ * 属于**必须被看见**的交互。改为一屏遮罩 + 三分之一屏的居中弹窗，配合展开动画。
++ *
++ * ── 视觉来源 ──
++ * 复刻 /workspace/通知弹窗特效Demo.html：
++ *  · 遮罩        rgba(0,0,0,0.5)，随弹窗同步淡入淡出
++ *  · 弹窗高度    屏幕的 1/3，垂直居中，以中心为轴做 scaleY 展开
++ *  · 动画        250ms，cubic-bezier(0.4, 0, 0.2, 1) —— 即 Compose 的 [FastOutSlowInEasing]
++ *  · 头部        图标 + 标题；背景色随类型变化（本弹窗固定为「需注意」的橙色警示风格）
++ *  · 内容区      flex:1 + 可滚动 + 白字
++ *  · 底部        按钮右对齐（次要按钮在左、主要按钮在右，与原模板的 .btn-retry 语义一致）
++ *
++ * ── 这里刻意**不可**轻易关闭 ──
++ * 点击遮罩 / 返回键都不关闭：授权必须有明确结论（允许或拒绝），
++ * 否则会出现「未决的 Pending 状态」把生成卡住。想要中断可以点「拒绝」。
++ */
++@Composable
++fun ToolApprovalDialog(
++    toolName: String,
++    intent: String,
++    purpose: String,
++    argumentsPreview: String,
++    onApprove: () -> Unit,
++    onDeny: () -> Unit,
++) {
++    // 展开动画：scaleY 0 → 1（以中心为轴）
++    val scaleY = remember { Animatable(0f) }
++    LaunchedEffect(Unit) {
++        scaleY.animateTo(
++            targetValue = 1f,
++            animationSpec = tween(
++                durationMillis = 250,
++                easing = FastOutSlowInEasing, // = cubic-bezier(0.4, 0, 0.2, 1)
++            ),
++        )
++    }
++
++    Dialog(
++        onDismissRequest = {
++            // 故意忽略：授权必须给出明确结论，避免留下未决状态把生成卡住
++        },
++        properties = DialogProperties(
++            usePlatformDefaultWidth = false,   // 由我们自己控制宽度（移动端贴边、宽屏 480dp 居中）
++            dismissOnBackPress = false,
++            dismissOnClickOutside = false,
++        ),
++    ) {
++        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
++            val screenHeight = maxHeight
++            val isWide = maxWidth >= 768.dp
++            val widthModifier = if (isWide) Modifier.fillMaxWidth(0.8f) else Modifier.fillMaxWidth()
++
++            // 遮罩
++            Box(
++                modifier = Modifier
++                    .fillMaxSize()
++                    .background(Color.Black.copy(alpha = 0.5f * scaleY.value))
++            )
++
++            Box(
++                modifier = Modifier.fillMaxSize(),
++                contentAlignment = Alignment.Center,
++            ) {
++                Column(
++                    modifier = widthModifier
++                        .height(screenHeight * 0.3333f)   // 屏幕 1/3，与模板一致
++                        .graphicsLayer { this.scaleY = scaleY.value }
++                        .clip(MaterialTheme.shapes.medium)
++                        .background(ApprovalColors.container),
++                ) {
++                    ApprovalHeader()
++                    ApprovalBody(
++                        toolName = toolName,
++                        intent = intent,
++                        purpose = purpose,
++                        argumentsPreview = argumentsPreview,
++                        modifier = Modifier.weight(1f),
++                    )
++                    ApprovalFooter(onApprove = onApprove, onDeny = onDeny)
++                }
++            }
++        }
++    }
++}
++
++/** 头部：图标 + 标题 + 副标题（工具名）。背景色用警示橙，与「需要你确认」的语义对应 */
++@Composable
++private fun ApprovalHeader() {
++    Row(
++        modifier = Modifier
++            .fillMaxWidth()
++            .background(ApprovalColors.header)
++            .padding(horizontal = 16.dp, vertical = 14.dp),
++        verticalAlignment = Alignment.CenterVertically,
++        horizontalArrangement = Arrangement.spacedBy(10.dp),
++    ) {
++        Icon(
++            imageVector = HugeIcons.Alert01,
++            contentDescription = null,
++            tint = ApprovalColors.onHeader,
++            modifier = Modifier.size(20.dp),
++        )
++        Column(modifier = Modifier.weight(1f)) {
++            Text(
++                text = stringResource(R.string.tool_approval_title),
++                color = ApprovalColors.onHeader,
++                fontSize = 16.sp,
++                fontWeight = FontWeight.Bold,
++            )
++            Text(
++                text = stringResource(R.string.tool_approval_subtitle),
++                color = ApprovalColors.onHeader.copy(alpha = 0.85f),
++                fontSize = 12.sp,
++            )
++        }
++    }
++}
++
++/** 内容区：intent / purpose / 参数 */
++@Composable
++private fun ApprovalBody(
++    toolName: String,
++    intent: String,
++    purpose: String,
++    argumentsPreview: String,
++    modifier: Modifier = Modifier,
++) {
++    Column(
++        modifier = modifier
++            .fillMaxWidth()
++            .verticalScroll(rememberScrollState())
++            .padding(16.dp),
++        verticalArrangement = Arrangement.spacedBy(12.dp),
++    ) {
++        LabelledBlock(
++            label = stringResource(R.string.tool_approval_action),
++            value = intent.ifBlank { stringResource(R.string.tool_approval_not_provided) },
++        )
++        LabelledBlock(
++            label = stringResource(R.string.tool_approval_reason),
++            value = purpose.ifBlank { stringResource(R.string.tool_approval_not_provided) },
++        )
++        LabelledBlock(
++            label = stringResource(R.string.tool_approval_tool),
++            value = toolName,
++            monospace = true,
++        )
++        if (argumentsPreview.isNotBlank()) {
++            LabelledBlock(
++                label = stringResource(R.string.tool_approval_arguments),
++                value = argumentsPreview,
++                monospace = true,
++            )
++        }
++    }
++}
++
++@Composable
++private fun LabelledBlock(label: String, value: String, monospace: Boolean = false) {
++    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
++        Text(
++            text = label,
++            color = ApprovalColors.onContainer.copy(alpha = 0.75f),
++            fontSize = 12.sp,
++            fontWeight = FontWeight.Medium,
++        )
++        Text(
++            text = value,
++            color = ApprovalColors.onContainer,
++            fontSize = 14.sp,
++            lineHeight = 22.sp,
++            fontFamily = if (monospace) FontFamily.Monospace else null,
++            overflow = TextOverflow.Clip,
++        )
++    }
++}
++
++/** 底部：右对齐。次要（拒绝）在左，主要（允许）在右 —— 与模板的 .btn-retry/.btn-confirm 顺序一致 */
++@Composable
++private fun ApprovalFooter(onApprove: () -> Unit, onDeny: () -> Unit) {
++    Row(
++        modifier = Modifier
++            .fillMaxWidth()
++            .background(ApprovalColors.container)
++            .padding(horizontal = 16.dp, vertical = 12.dp),
++        horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        TextButton(onClick = onDeny) {
++            Text(
++                text = stringResource(R.string.tool_approval_deny),
++                color = ApprovalColors.onContainer,
++                fontWeight = FontWeight.Medium,
++            )
++        }
++        TextButton(onClick = onApprove) {
++            Text(
++                text = stringResource(R.string.tool_approval_allow),
++                color = ApprovalColors.header,
++                fontWeight = FontWeight.Bold,
++            )
++        }
++    }
++}
++
++/**
++ * 弹窗配色。
++ *
++ * 与模板的差异：模板整体是蓝色底（`#409eff`），但**授权**的语义是「先停一下、请你确认」，
++ * 用蓝色会显得像普通通知而被忽略。这里改为「深底 + 橙色强调」，保留模板的结构与动画，
++ * 只调整语义色 —— 醒目是这次改造的目的。
++ */
++private object ApprovalColors {
++    val header = Color(0xFFE6A23C)        // 模板的 warning 色
++    val container = Color(0xFF2B2F36)     // 深色容器，保证白字可读
++    val onHeader = Color(0xFF1A1A1A)
++    val onContainer = Color(0xFFFFFFFF)
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/components/ui/TTSController.kt b/app/src/main/java/me/rerere/rikkahub/ui/components/ui/TTSController.kt
 index b771ab3..4b3000b 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/components/ui/TTSController.kt
@@ -21431,10 +22040,63 @@ index 0000000..b742a5d
 +    }
 +}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
-index 6fc0a4c..ae9160b 100644
+index 6fc0a4c..6f535ab 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
 +++ b/app/src/main/java/me/rerere/rikkahub/ui/pages/chat/ChatPage.kt
-@@ -416,7 +416,9 @@ private fun ChatPageContent(
+@@ -75,7 +75,12 @@ import dev.chrisbanes.haze.hazeSource
+ import dev.chrisbanes.haze.rememberHazeState
+ import kotlinx.coroutines.Job
+ import kotlinx.coroutines.launch
++import kotlinx.serialization.json.JsonObject
++import kotlinx.serialization.json.jsonPrimitive
++import kotlinx.serialization.json.contentOrNull
+ import me.rerere.ai.provider.BuiltInTools
++import me.rerere.ai.ui.ToolApprovalState
++import me.rerere.ai.core.TOOL_ACTION_DESCRIPTION_KEYS
+ import me.rerere.ai.provider.Model
+ import me.rerere.ai.ui.UIMessage
+ import me.rerere.ai.ui.UIMessagePart
+@@ -104,6 +109,7 @@ import me.rerere.rikkahub.ui.components.ai.SlashVarOp
+ import me.rerere.rikkahub.ui.components.ai.applyMacroVarSlash
+ import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
+ import me.rerere.rikkahub.ui.components.ai.useCropLauncher
++import me.rerere.rikkahub.ui.components.toolapproval.ToolApprovalDialog
+ import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
+ import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
+ import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
+@@ -376,6 +382,31 @@ private fun ChatPageContent(
+ 
+     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
+ 
++    // ── 工具授权弹窗 ──
++    //
++    // 原先授权是在聊天消息里挂两个小图标按钮，用户很容易没注意到（消息在滚动区、
++    // 还要主动去翻）。而「AI 要动你的设备」这件事必须被看见，所以改成
++    // 一屏遮罩 + 三分之一屏的居中弹窗，并显示 AI 自己填写的「要做什么 / 为什么」。
++    //
++    // 取**最新**的一个待授权工具：旧实现允许同时堆多个 Pending，
++    // 一个个弹也符合直觉（处理完一个，下一个自然成为"最新"）。
++    val pendingApprovalTool = conversation.currentMessages
++        .asReversed()
++        .flatMap { message -> message.parts }
++        .filterIsInstance<UIMessagePart.Tool>()
++        .firstOrNull { it.approvalState is ToolApprovalState.Pending }
++
++    pendingApprovalTool?.let { tool ->
++        ToolApprovalDialog(
++            toolName = tool.toolName,
++            intent = tool.approvalField("intent"),
++            purpose = tool.approvalField("purpose"),
++            argumentsPreview = tool.approvalArgumentsPreview(),
++            onApprove = { vm.handleToolApproval(tool.toolCallId, true, "") },
++            onDeny = { vm.handleToolApproval(tool.toolCallId, false, "") },
++        )
++    }
++
+     Surface(
+         color = MaterialTheme.colorScheme.background,
+         modifier = Modifier.fillMaxSize()
+@@ -416,7 +447,9 @@ private fun ChatPageContent(
                              setting.copy(
                                  assistants = setting.assistants.map { assistant ->
                                      if (assistant.id == current.id) {
@@ -21445,6 +22107,35 @@ index 6fc0a4c..ae9160b 100644
                                      } else {
                                          assistant
                                      }
+@@ -1141,3 +1174,28 @@ private fun GreetingPickerDialog(
+         }
+     }
+ }
++
++/**
++ * 读取 AI 为本次工具调用填写的「行为说明」字段（`intent` / `purpose`）。
++ *
++ * 这两个字段由 `Tool.apiParameters()` 强制加入 schema 的 `required`，
++ * 因此正常情况下必然存在；这里仍做容错（旧历史消息里没有它们）。
++ */
++private fun UIMessagePart.Tool.approvalField(key: String): String =
++    (inputAsJson() as? JsonObject)
++        ?.get(key)
++        ?.jsonPrimitive
++        ?.contentOrNull
++        .orEmpty()
++
++/**
++ * 生成参数预览，**排除** `intent` / `purpose`。
++ *
++ * 它们已经作为「要做什么 / 为什么」单独展示，再混在参数里重复一遍会让人困惑
++ * （而且参数区是等宽字体，重复的大段文字会挤掉真正需要检查的技术细节）。
++ */
++private fun UIMessagePart.Tool.approvalArgumentsPreview(): String {
++    val obj = inputAsJson() as? JsonObject ?: return ""
++    val filtered = obj.filterKeys { it !in TOOL_ACTION_DESCRIPTION_KEYS }
++    return if (filtered.isEmpty()) "" else JsonObject(filtered).toString()
++}
 diff --git a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt b/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt
 index d899540..abd5e4f 100644
 --- a/app/src/main/java/me/rerere/rikkahub/ui/pages/setting/SettingPage.kt
@@ -22755,6 +23446,129 @@ index ba9a6ee..d0e1d65 100644
              // Android 15+ Live Update 支持
              if (config.requestPromotedOngoing && Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
                  setRequestPromotedOngoing(true)
+diff --git a/app/src/main/java/me/rerere/rikkahub/utils/ReasoningTraceFile.kt b/app/src/main/java/me/rerere/rikkahub/utils/ReasoningTraceFile.kt
+new file mode 100644
+index 0000000..3980fac
+--- /dev/null
++++ b/app/src/main/java/me/rerere/rikkahub/utils/ReasoningTraceFile.kt
+@@ -0,0 +1,117 @@
++package me.rerere.rikkahub.utils
++
++import android.content.Context
++import android.util.Log
++import me.rerere.ai.core.ReasoningTrace
++import java.io.File
++import java.text.SimpleDateFormat
++import java.util.Date
++import java.util.Locale
++import java.util.concurrent.Executors
++import java.util.concurrent.atomic.AtomicLong
++
++/**
++ * 把 [ReasoningTrace] 的内容落盘，用于排查 Reasoning 回传相关的偶发 400。
++ *
++ * ── 为什么要落盘而不是只打 Logcat ──
++ * 该错误是**概率性**的，需要长时间跑才能复现一次。而 Logcat 会被系统滚动覆盖、
++ * 也需要连电脑才能看。落盘则可以事后翻，且用户自己就能把文件发出来。
++ *
++ * ── 位置 ──
++ * `Android/data/<包名>/files/reasoning_trace.log`
++ * （走 [Context.getExternalFilesDir]，**无需任何存储权限**，且 Termux 等外部工具可直接读取）
++ *
++ * ── 注意 ──
++ * 日志里**包含推理文本**（这是排查所必需的 —— 要看清明文到底有没有发出去）。
++ * 因此：
++ *  · 只在需要排查时才开启（[ReasoningTrace.sink] 为 null 时全程不产生任何开销）
++ *  · 文件有大小上限，超出后自动轮转，不会无限增长
++ *  · 不主动上传、不写入公开目录
++ */
++object ReasoningTraceFile {
++
++    private const val TAG = "ReasoningTraceFile"
++
++    /** 单个文件上限。超出后轮转为 .1，避免长期开启把存储写满 */
++    private const val MAX_BYTES = 2L * 1024 * 1024
++
++    private const val FILE_NAME = "reasoning_trace.log"
++
++    /** 写盘放到单线程队列，避免拖慢网络回调线程 */
++    private val writer = Executors.newSingleThreadExecutor { r ->
++        Thread(r, "reasoning-trace-writer").apply { isDaemon = true }
++    }
++
++    private val written = AtomicLong(0)
++
++    @Volatile
++    private var traceFile: File? = null
++
++    private val timeFormat = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US)
++
++    /**
++     * 开启日志。可重复调用（幂等）。
++     *
++     * @return 实际写入的文件；失败（如外部目录不可用）时返回 null，且不会开启日志
++     */
++    fun start(context: Context): File? {
++        val dir = context.getExternalFilesDir(null) ?: run {
++            Log.w(TAG, "外部文件目录不可用，日志未开启")
++            return null
++        }
++        val f = File(dir, FILE_NAME)
++        return runCatching {
++            if (!dir.exists()) dir.mkdirs()
++            f.parentFile?.mkdirs()
++            traceFile = f
++            written.set(f.length())
++            ReasoningTrace.sink = { line -> write(line) }
++            appendHeader(f)
++            f
++        }.getOrElse {
++            Log.w(TAG, "无法开启 reasoning 日志", it)
++            null
++        }
++    }
++
++    fun stop() {
++        ReasoningTrace.sink = null
++        traceFile = null
++    }
++
++    /** 当前日志文件（供设置页/诊断入口展示路径用） */
++    fun currentFile(): File? = traceFile
++
++    private fun appendHeader(f: File) {
++        val version = runCatching {
++            val pi = android.content.pm.PackageManager::class.java
++            null
++        }.getOrNull()
++        writer.execute {
++            runCatching {
++                f.appendText(
++                    "\n===== session start ${timeFormat.format(Date())} =====\n"
++                )
++            }
++        }
++    }
++
++    private fun write(line: String) {
++        val f = traceFile ?: return
++        writer.execute {
++            runCatching {
++                // 大小超限 → 轮转（把当前文件挪走，重新开始）
++                if (written.get() > MAX_BYTES) {
++                    val rolled = File(f.parentFile, "$FILE_NAME.1")
++                    runCatching { if (rolled.exists()) rolled.delete() }
++                    runCatching { f.renameTo(rolled) }
++                    written.set(0)
++                    f.appendText("===== rolled, continued ${timeFormat.format(Date())} =====\n")
++                }
++                val text = "${timeFormat.format(Date())} $line\n"
++                f.appendText(text)
++                written.addAndGet(text.toByteArray().size.toLong())
++            }.onFailure { Log.w(TAG, "写日志失败", it) }
++        }
++    }
++}
 diff --git a/app/src/main/keepRules/rikkahub.keep b/app/src/main/keepRules/rikkahub.keep
 index 5708616..6d5f295 100644
 --- a/app/src/main/keepRules/rikkahub.keep
@@ -40905,7 +41719,7 @@ index d9a9525..4215281 100644
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">設定名稱、頭像、模型與參數</string>
 diff --git a/app/src/main/res/values-zh/strings.xml b/app/src/main/res/values-zh/strings.xml
-index 8cb3cf1..40d3b68 100644
+index 8cb3cf1..8a5981a 100644
 --- a/app/src/main/res/values-zh/strings.xml
 +++ b/app/src/main/res/values-zh/strings.xml
 @@ -7,7 +7,7 @@
@@ -40917,7 +41731,7 @@ index 8cb3cf1..40d3b68 100644
    <string name="asr_button_content_description">语音识别</string>
    <string name="asr_button_stop">停止</string>
    <string name="assistant_detail_basic_desc">配置名称、头像、模型和参数</string>
-@@ -1817,4 +1817,148 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
+@@ -1817,4 +1817,159 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过
    <string name="setting_update_reminder_pause_description">选择暂停更新提醒的时长。它们会自动恢复。</string>
    <string name="setting_update_reminder_pause_days">%1$d 天</string>
    <string name="setting_update_reminder_resume_now">立即恢复</string>
@@ -41065,9 +41879,20 @@ index 8cb3cf1..40d3b68 100644
 +  <string name="system_permission_bt_usage">允许助手列出已配对的蓝牙设备及其状态。它无法替你连接或断开设备。</string>
 +  <string name="system_permission_wifi_name">WiFi 信息</string>
 +  <string name="system_permission_wifi_usage">允许助手读取当前 WiFi 网络并扫描附近的网络。Android 13+ 上这会用到「附近的 WiFi 设备」权限。</string>
++
++  <!-- 工具授权弹窗（AI 请求执行工具时的一屏确认） -->
++  <string name="tool_approval_title">AI 请求执行工具</string>
++  <string name="tool_approval_subtitle">请先确认它要做什么</string>
++  <string name="tool_approval_action">要做什么</string>
++  <string name="tool_approval_reason">为什么</string>
++  <string name="tool_approval_tool">工具</string>
++  <string name="tool_approval_arguments">参数</string>
++  <string name="tool_approval_not_provided">（未提供）</string>
++  <string name="tool_approval_allow">允许</string>
++  <string name="tool_approval_deny">拒绝</string>
  </resources>
 diff --git a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
-index 47ddab2..30af8cc 100644
+index 47ddab2..5b43bd7 100644
 --- a/app/src/main/res/values/strings.xml
 +++ b/app/src/main/res/values/strings.xml
 @@ -7,7 +7,9 @@
@@ -41081,7 +41906,7 @@ index 47ddab2..30af8cc 100644
    <string name="asr_button_content_description">Speech Recognition</string>
    <string name="asr_button_stop">Stop</string>
    <string name="assistant_detail_basic_desc">Configure name, avatar, model, and parameters</string>
-@@ -1815,4 +1817,148 @@
+@@ -1815,4 +1817,159 @@
    <string name="setting_update_reminder_pause_description">Choose how long to pause update reminders. They will resume automatically.</string>
    <string name="setting_update_reminder_pause_days">%1$d days</string>
    <string name="setting_update_reminder_resume_now">Resume now</string>
@@ -41229,6 +42054,17 @@ index 47ddab2..30af8cc 100644
 +  <string name="system_permission_bt_usage">Lets the assistant list paired Bluetooth devices and their state. It cannot connect or disconnect anything for you.</string>
 +  <string name="system_permission_wifi_name">WiFi information</string>
 +  <string name="system_permission_wifi_usage">Lets the assistant read the current WiFi network and scan nearby ones. On Android 13+ this uses the nearby-WiFi permission.</string>
++
++  <!-- 工具授权弹窗（AI 请求执行工具时的一屏确认） -->
++  <string name="tool_approval_title">AI wants to run a tool</string>
++  <string name="tool_approval_subtitle">Review what it will do before allowing</string>
++  <string name="tool_approval_action">What it will do</string>
++  <string name="tool_approval_reason">Why</string>
++  <string name="tool_approval_tool">Tool</string>
++  <string name="tool_approval_arguments">Arguments</string>
++  <string name="tool_approval_not_provided">(not provided)</string>
++  <string name="tool_approval_allow">Allow</string>
++  <string name="tool_approval_deny">Deny</string>
  </resources>
 diff --git a/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt b/app/src/test/java/me/rerere/rikkahub/service/ChatServiceTest.kt
 index afc1fd2..2ad96a8 100644

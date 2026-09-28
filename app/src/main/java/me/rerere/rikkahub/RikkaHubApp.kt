@@ -29,6 +29,7 @@ import me.rerere.rikkahub.di.viewModelModule
 import me.rerere.rikkahub.data.files.FilesManager
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.service.WebServerService
+import me.rerere.rikkahub.utils.ReasoningTraceFile
 import me.rerere.rikkahub.utils.CrashHandler
 import me.rerere.rikkahub.utils.DatabaseUtil
 import org.koin.android.ext.android.get
@@ -61,58 +62,51 @@ const val TOOL_APPROVAL_NOTIFICATION_CHANNEL_ID = "tool_approval"
 const val TOOL_ACTIVITY_NOTIFICATION_CHANNEL_ID = "tool_activity"
 
 class RikkaHubApp : Application() {
-    private fun trace(msg: String) {
-        try {
-            java.io.File("/sdcard/rikkahub_trace.txt").appendText("${System.currentTimeMillis()} $msg\n")
-        } catch (_: Exception) {}
-    }
-
     override fun onCreate() {
         super.onCreate()
-        trace("onCreate start")
         try {
             startKoin {
-                trace("koin config")
                 androidLogger()
                 androidContext(this@RikkaHubApp)
                 workManagerFactory()
                 modules(appModule, viewModelModule, dataSourceModule, repositoryModule)
             }
-            trace("koin done")
         } catch (e: Exception) {
-            trace("koin FAILED: ${e.message}")
+            Log.e(TAG, "Koin 初始化失败", e)
             throw e
         }
         this.createNotificationChannel()
-        trace("notification done")
 
         // set cursor window size to 32MB
         DatabaseUtil.setCursorWindowSize(32 * 1024 * 1024)
-        trace("cursor done")
 
         // install crash handler
         CrashHandler.install(this)
-        trace("crashhandler done")
+
+        // 开启 Reasoning 回传诊断日志。
+        //
+        // 背景：线上偶发 400「The `reasoning_text` in the thinking mode must be passed back
+        // to the API.」，是**概率性**的，需要长时间运行才能抓到一次，因此默认开启并把
+        // 每次请求实际发出的 reasoning 内容落盘（含最关键的一项：有没有「带 encrypted 但缺明文」的 item）。
+        //
+        // 位置：Android/data/<包名>/files/reasoning_trace.log（无需权限，外部工具可读）
+        // 日志含推理文本，仅用于排查；修复后把 ReasoningTrace.sink 置空即可完全关闭（关闭时零开销）。
+        runCatching { ReasoningTraceFile.start(this) }
 
         // Init QuickJS native library
         QuickJSLoader.init()
-        trace("quickjs done")
 
         // delete temp files
         deleteTempFiles()
-        trace("tempfiles done")
 
         // sync upload files to DB
         syncManagedFiles()
-        trace("sync done")
 
         // Start WebServer if enabled in settings
         startWebServerIfEnabled()
-        trace("webserver done")
 
         // Increment launch count
         incrementLaunchCount()
-        trace("onCreate complete")
 
         // Composer.setDiagnosticStackTraceMode(ComposeStackTraceMode.Auto)
     }

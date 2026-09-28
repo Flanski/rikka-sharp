@@ -397,7 +397,7 @@ class GoogleProvider(private val client: OkHttpClient, context: Context? = null)
                                 put("description", JsonPrimitive(tool.description))
                                 put(
                                     key = "parameters",
-                                    element = json.encodeToJsonElement(tool.parameters())
+                                    element = json.encodeToJsonElement(tool.apiParameters())
                                         .removeElements(
                                             listOf(
                                                 "const",

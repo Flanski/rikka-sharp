@@ -13,6 +13,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
+import me.rerere.ai.core.ReasoningTrace
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
@@ -228,7 +230,26 @@ class ResponseAPI(
             }
 
             // messages
-            put("input", buildMessages(messages))
+            val inputArray = buildMessages(messages)
+            // ★请求级总览：这一步能回答「这次请求到底发出去了几条 reasoning、有没有残缺的」。
+            //
+            // 其中 `missingText` 是最关键的指标 —— 它数的是
+            // 「带了 encrypted_content、却**没有** reasoning_text 明文」的 item。
+            // DeepSeek 的报错（reasoning_text must be passed back）指向的正是这种残缺 item；
+            // 一旦报错复现，只要在日志里看到 missingText>0，就直接锁定了成因。
+            ReasoningTrace.logLazy {
+                val reasoningItems = inputArray.filterIsInstance<JsonObject>()
+                    .filter { it["type"]?.jsonPrimitiveOrNull?.contentOrNull == "reasoning" }
+                val missingText = reasoningItems.count {
+                    it.containsKey("encrypted_content") &&
+                        ((it["content"] as? JsonArray)?.isEmpty() != false)
+                }
+                val noId = reasoningItems.count { !it.containsKey("id") }
+                "REQ input items=${inputArray.size} reasoning=${reasoningItems.size}" +
+                    " missingText=$missingText noId=$noId" +
+                    " model=${params.model.modelId} tools=${params.tools.size}"
+            }
+            put("input", inputArray)
 
             // reasoning
             if (params.model.abilities.contains(ModelAbility.REASONING)) {
@@ -264,7 +285,7 @@ class ResponseAPI(
                                 put(
                                     "parameters",
                                     json.encodeToJsonElement(
-                                        tool.parameters()
+                                        tool.apiParameters()
                                     )
                                 )
                             })
@@ -342,7 +363,9 @@ class ResponseAPI(
                                         it.metadataAs<OpenAIReasoningMetadata>()?.reasoningId == reasoningId
                                     }
                                 }
-                                add(buildJsonObject {
+                                // 先构造、再记录、最后 add ——
+                                // 这样日志里能看到**实际发出的那个对象**，而不是"应该发出什么"。
+                                val emittedReasoning = buildJsonObject {
                                     put("type", "reasoning")
                                     reasoningId?.let { put("id", it) }
                                     put("summary", buildJsonArray {
@@ -372,7 +395,24 @@ class ResponseAPI(
                                     reasoningMetadata?.encryptedContent?.let {
                                         put("encrypted_content", it)
                                     }
-                                })
+                                }
+                                ReasoningTrace.logLazy {
+                                    val perPart = reasoningParts.joinToString(" ; ") { p ->
+                                        val m = p.metadataAs<OpenAIReasoningMetadata>()
+                                        "type=${p.reasoningType},len=${p.reasoning.length}," +
+                                            "id=${m?.reasoningId ?: "-"},enc=${if (m?.encryptedContent != null) "Y" else "N"}"
+                                    }
+                                    val textCount = (emittedReasoning["content"] as? JsonArray)?.size ?: 0
+                                    buildString {
+                                        append("REQ reasoning itemId=").append(reasoningId ?: "(null)")
+                                        append(" parts=").append(reasoningParts.size)
+                                        append(" → textParts=").append(textCount)
+                                        append(" hasEncrypted=").append(emittedReasoning.containsKey("encrypted_content"))
+                                        append("\n    parts: ").append(perPart)
+                                        append("\n    emitted: ").append(emittedReasoning.toString().take(3000))
+                                    }
+                                }
+                                add(emittedReasoning)
                             }
 
                             is UIMessagePart.Image -> {

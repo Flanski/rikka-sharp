@@ -414,7 +414,7 @@ class ChatCompletionsAPI(
                                 put(
                                     "parameters",
                                     json.encodeToJsonElement(
-                                        tool.parameters()
+                                        tool.apiParameters()
                                     )
                                 )
                             })

@@ -1961,4 +1961,15 @@
   <string name="system_permission_bt_usage">Lets the assistant list paired Bluetooth devices and their state. It cannot connect or disconnect anything for you.</string>
   <string name="system_permission_wifi_name">WiFi information</string>
   <string name="system_permission_wifi_usage">Lets the assistant read the current WiFi network and scan nearby ones. On Android 13+ this uses the nearby-WiFi permission.</string>
+
+  <!-- 工具授权弹窗（AI 请求执行工具时的一屏确认） -->
+  <string name="tool_approval_title">AI wants to run a tool</string>
+  <string name="tool_approval_subtitle">Review what it will do before allowing</string>
+  <string name="tool_approval_action">What it will do</string>
+  <string name="tool_approval_reason">Why</string>
+  <string name="tool_approval_tool">Tool</string>
+  <string name="tool_approval_arguments">Arguments</string>
+  <string name="tool_approval_not_provided">(not provided)</string>
+  <string name="tool_approval_allow">Allow</string>
+  <string name="tool_approval_deny">Deny</string>
 </resources>

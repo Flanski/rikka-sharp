@@ -75,7 +75,12 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import me.rerere.ai.provider.BuiltInTools
+import me.rerere.ai.ui.ToolApprovalState
+import me.rerere.ai.core.TOOL_ACTION_DESCRIPTION_KEYS
 import me.rerere.ai.provider.Model
 import me.rerere.ai.ui.UIMessage
 import me.rerere.ai.ui.UIMessagePart
@@ -104,6 +109,7 @@ import me.rerere.rikkahub.ui.components.ai.SlashVarOp
 import me.rerere.rikkahub.ui.components.ai.applyMacroVarSlash
 import me.rerere.rikkahub.ui.components.ai.completion.WorkspaceCompletionProvider
 import me.rerere.rikkahub.ui.components.ai.useCropLauncher
+import me.rerere.rikkahub.ui.components.toolapproval.ToolApprovalDialog
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionCamera
 import me.rerere.rikkahub.ui.components.ui.permission.PermissionManager
 import me.rerere.rikkahub.ui.components.ui.permission.rememberPermissionState
@@ -375,6 +381,31 @@ private fun ChatPageContent(
     }
 
     TTSAutoPlay(vm = vm, setting = setting, conversation = conversation)
+
+    // ── 工具授权弹窗 ──
+    //
+    // 原先授权是在聊天消息里挂两个小图标按钮，用户很容易没注意到（消息在滚动区、
+    // 还要主动去翻）。而「AI 要动你的设备」这件事必须被看见，所以改成
+    // 一屏遮罩 + 三分之一屏的居中弹窗，并显示 AI 自己填写的「要做什么 / 为什么」。
+    //
+    // 取**最新**的一个待授权工具：旧实现允许同时堆多个 Pending，
+    // 一个个弹也符合直觉（处理完一个，下一个自然成为"最新"）。
+    val pendingApprovalTool = conversation.currentMessages
+        .asReversed()
+        .flatMap { message -> message.parts }
+        .filterIsInstance<UIMessagePart.Tool>()
+        .firstOrNull { it.approvalState is ToolApprovalState.Pending }
+
+    pendingApprovalTool?.let { tool ->
+        ToolApprovalDialog(
+            toolName = tool.toolName,
+            intent = tool.approvalField("intent"),
+            purpose = tool.approvalField("purpose"),
+            argumentsPreview = tool.approvalArgumentsPreview(),
+            onApprove = { vm.handleToolApproval(tool.toolCallId, true, "") },
+            onDeny = { vm.handleToolApproval(tool.toolCallId, false, "") },
+        )
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.background,
@@ -1142,4 +1173,29 @@ private fun GreetingPickerDialog(
             }
         }
     }
+}
+
+/**
+ * 读取 AI 为本次工具调用填写的「行为说明」字段（`intent` / `purpose`）。
+ *
+ * 这两个字段由 `Tool.apiParameters()` 强制加入 schema 的 `required`，
+ * 因此正常情况下必然存在；这里仍做容错（旧历史消息里没有它们）。
+ */
+private fun UIMessagePart.Tool.approvalField(key: String): String =
+    (inputAsJson() as? JsonObject)
+        ?.get(key)
+        ?.jsonPrimitive
+        ?.contentOrNull
+        .orEmpty()
+
+/**
+ * 生成参数预览，**排除** `intent` / `purpose`。
+ *
+ * 它们已经作为「要做什么 / 为什么」单独展示，再混在参数里重复一遍会让人困惑
+ * （而且参数区是等宽字体，重复的大段文字会挤掉真正需要检查的技术细节）。
+ */
+private fun UIMessagePart.Tool.approvalArgumentsPreview(): String {
+    val obj = inputAsJson() as? JsonObject ?: return ""
+    val filtered = obj.filterKeys { it !in TOOL_ACTION_DESCRIPTION_KEYS }
+    return if (filtered.isEmpty()) "" else JsonObject(filtered).toString()
 }
