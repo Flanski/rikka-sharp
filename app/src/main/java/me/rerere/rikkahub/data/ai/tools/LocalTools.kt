@@ -22,6 +22,7 @@ import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.event.AppEvent
 import me.rerere.rikkahub.data.ai.tools.local.buildCalendarCreateTool
+import me.rerere.rikkahub.data.ai.tools.local.buildCalendarDeleteTool
 import me.rerere.rikkahub.data.ai.tools.local.buildCalendarQueryTool
 import me.rerere.rikkahub.data.ai.tools.local.buildScreenTimeTool
 import me.rerere.rikkahub.data.ai.tools.local.buildAskUserTool
@@ -534,6 +535,15 @@ class LocalTools(
     val calendarCreateTool by lazy { buildCalendarCreateTool(context) }
 
     /**
+     * 删除日历事件。
+     *
+     * 与 query/create 共用 [LocalToolOption.Calendar] 这一个开关 ——
+     * 刻意**不新增枚举项**：那样要检查所有 `when (LocalToolOption)` 的穷尽性，
+     * 而「日历工具」对用户来说本来就是一个整体（要么用、要么不用）。
+     */
+    val calendarDeleteTool by lazy { buildCalendarDeleteTool(context) }
+
+    /**
      * @param conversationId 当前对话 id。只有需要「知道自己在哪个对话里」的工具会用到
      *   （目前是 `schedule_reminder` —— 它要记住到期后该触发哪个对话的生成）。
      *   为 null 时那些工具仍可用，只是退化为「只发通知、不触发 AI」。
@@ -564,6 +574,9 @@ class LocalTools(
         if (options.contains(LocalToolOption.Calendar)) {
             tools.add(calendarQueryTool)
             tools.add(calendarCreateTool)
+            // 删除工具也在这个开关下（见 calendarDeleteTool 的说明）。
+            // 它 needsApproval=true，所以每次删除仍需用户逐个确认。
+            tools.add(calendarDeleteTool)
         }
         if (options.contains(LocalToolOption.DownloadTools)) {
             tools.addAll(createDownloadTools(context))

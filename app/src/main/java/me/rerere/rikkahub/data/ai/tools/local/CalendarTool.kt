@@ -427,6 +427,127 @@ private fun getDefaultCalendarId(context: Context): Long? {
     return null
 }
 
+/**
+ * 删除日历事件。
+ *
+ * ── 为什么需要它 ──
+ * 此前只有 `calendar_query` 与 `calendar_create` —— **能创建但不能删除**。
+ * 另一侧测试时明确指出这个问题：「`calendar_create` 会往日历里写一条真实事件，
+ * 而且没有对应的删除工具，我不想留下垃圾数据」。
+ * 也就是说，AI 一旦创建了事件（哪怕是测试用的），用户只能自己去日历应用里手动删。
+ *
+ * ── 安全设计（删除是不可逆操作）──
+ *  ① **只接受精确的事件 id**，不做「按标题匹配删除」——
+ *     后者一旦标题有歧义（例如两个「会议」）就会误删，且无法撤销；
+ *  ② `needsApproval = { true }` —— 删除前必须经用户批准；
+ *  ③ 描述里明确要求「先 query 拿到 id 再删」，避免模型凭印象编造 id；
+ *  ④ 返回**实际删除的行数**（`deleted`）—— 0 表示那个 id 不存在或不归本应用可见，
+ *     让模型能据实回报，而不是笼统说"删了"。
+ *
+ * ── id 从哪来 ──
+ * `calendar_query` 返回的每条事件都带 `id`；
+ * `calendar_create` 成功时也直接返回 `event_id`。两者都可以喂给这里。
+ */
+internal fun buildCalendarDeleteTool(context: Context): Tool = Tool(
+    name = "calendar_delete",
+    description = """
+        Delete a calendar event by its exact id.
+
+        IMPORTANT — how to get the id:
+          · `calendar_query` returns an `id` for every event it lists;
+          · `calendar_create` returns `event_id` on success.
+        Do NOT guess an id. If you do not have one, call `calendar_query` first.
+
+        This only deletes by exact id — there is no delete-by-title, because a title match
+        could hit several events and deletion cannot be undone. The user is asked to approve
+        each deletion.
+
+        Returns the number of rows actually deleted (`deleted`). A value of 0 means no event
+        with that id was found (or it is not visible to this app).
+    """.trimIndent().replace("\n", " "),
+    // 删除不可逆 —— 必须由用户确认
+    needsApproval = { true },
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("event_id", buildJsonObject {
+                    // ★用 string 而不是 integer：SQLite rowid 是 64 位，而 JSON 数字
+                    //   在部分运行环境（尤其是 JS 侧）只有 53 位精度 ——
+                    //   与本项目此前踩过的「大整数 ID 下发丢精度」是同一类问题。
+                    //   这里同时接受 string 与 number，两种都能解析。
+                    put("type", "string")
+                    put(
+                        "description",
+                        "The event id from calendar_query (`id`) or calendar_create (`event_id`). " +
+                            "A number is also accepted and will be converted."
+                    )
+                })
+            },
+            required = listOf("event_id")
+        )
+    },
+    execute = { args ->
+        if (!hasCalendarWritePermission(context)) {
+            val payload = buildJsonObject {
+                put("error", "NO_PERMISSION")
+                put(
+                    "message",
+                    "Calendar write permission is not granted. Please ask the user to enable " +
+                        "the calendar permission in the assistant's local tools settings."
+                )
+            }
+            return@Tool listOf(UIMessagePart.Text(payload.toString()))
+        }
+
+        val raw = args.jsonObject["event_id"]
+            ?.jsonPrimitive
+            ?.contentOrNull
+        val eventId = raw?.trim()?.toLongOrNull()
+        if (eventId == null) {
+            val payload = buildJsonObject {
+                put("error", "INVALID_EVENT_ID")
+                put(
+                    "message",
+                    "`event_id` is required and must be a number. " +
+                        "Use calendar_query to list events and get their `id` first."
+                )
+            }
+            return@Tool listOf(UIMessagePart.Text(payload.toString()))
+        }
+
+        // 用 `_id` 字面量而不是 `CalendarContract.Events._ID`：
+        // 后者是继承自 BaseColumns 的常量，在 Kotlin 里引用继承的 Java 静态常量
+        // 虽然通常可行，但这里选零风险的写法 —— `_id` 是 Android 各版本一致的
+        // CalendarContract 表主键名，不存在版本差异。
+        val deleted = try {
+            context.contentResolver.delete(
+                CalendarContract.Events.CONTENT_URI,
+                "_id = ?",
+                arrayOf(eventId.toString()),
+            )
+        } catch (e: Exception) {
+            val payload = buildJsonObject {
+                put("error", "DELETE_FAILED")
+                put("message", e.message ?: "Failed to delete the event.")
+            }
+            return@Tool listOf(UIMessagePart.Text(payload.toString()))
+        }
+
+        val payload = buildJsonObject {
+            put("success", deleted > 0)
+            put("deleted", deleted)
+            put("event_id", eventId)
+            if (deleted == 0) {
+                put(
+                    "message",
+                    "No event was deleted — that id does not exist, or it is not visible to this app."
+                )
+            }
+        }
+        listOf(UIMessagePart.Text(payload.toString()))
+    }
+)
+
 private fun parseCalendarTime(raw: String, zone: ZoneId): ZonedDateTime {
     val text = raw.trim()
     text.toLongOrNull()?.let { return Instant.ofEpochMilli(it).atZone(zone) }
