@@ -225,11 +225,18 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                     if (needsSystem) NotificationUtil.deliveryStatus(context, systemChannelIdForCheck)
                     else null
 
-                // 系统渠道明确不可送达时**直接如实失败** ——
-                // 不"尽力而为地发一下然后报成功"，那等于骗调用方。
-                if (delivery != null && !delivery.likelyDeliverable && targetChannel == "system") {
+                // ★只有**权限**不足时才提前失败。
+                //
+                // 为什么总开关 / 渠道被关**不**拦在这里：
+                // `areNotificationsEnabled()` 在个别 ROM 上不准（可能返回 false 而实际能收到）。
+                // 若据此拦截，就会出现「本来能收到、却因为应用误判而不发」—— 那是**真的把功能弄坏**。
+                // 所以：**仍然尝试发送**，但在结果里如实标注可送达性（见下）。
+                //
+                // 权限不同：没有 POST_NOTIFICATIONS 时 `notify()` 必然不显示，
+                // 拦在这里只是省一次无效调用，且能给出明确的解决指引。
+                if (needsSystem && delivery != null && !delivery.permissionGranted && targetChannel == "system") {
                     put("ok", JsonPrimitive(false))
-                    put("error", JsonPrimitive(delivery.problem() ?: "notification_not_deliverable"))
+                    put("error", JsonPrimitive("missing_permission"))
                     put("hint", JsonPrimitive(hintFor(delivery)))
                     put("delivery", deliveryJson(delivery))
                     return@buildJsonObject
@@ -272,9 +279,11 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
 
                 // ── 系统通知 ──
                 var systemDelivered = false
-                // delivery 已在前面查过；channel=both 且系统不可送达时这里自动跳过，
-                // 退化为只发应用内（能送出一部分好过整个失败）。
-                if (needsSystem && (delivery?.likelyDeliverable == true)) {
+                // ★只要权限允许就尝试发送 ——
+                // 不因「总开关/渠道看起来被关」而跳过（那个判断在部分 ROM 上不准，
+                // 而跳过会导致本可送达的通知被丢掉）。
+                // 真正的可送达性由下面的结果字段如实报告。
+                if (needsSystem && (delivery?.permissionGranted == true)) {
                     systemDelivered = NotificationUtil.notify(context, systemChannelId, notificationId) {
                         this.title = title
                         this.content = trim(message)
@@ -340,8 +349,12 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                 // 现在按「是否真的有可能被看到」判断：
                 //  · 系统通知：API 成功 **且** 可送达性检查没报问题；
                 //  · 应用内通知：已入队（由 AppNotificationHost 渲染到界面上）。
-                val systemVisible = systemDelivered && (delivery == null || delivery.likelyDeliverable)
-                val ok = systemVisible || inAppShown
+                // ★`ok` = 「已投递出去」（API 调用成功且权限允许）。
+                //   而「用户是否真能看到」由 `system_delivery.likely_deliverable` 单独表达 ——
+                //   两者必须分开：前者是我们能确定的（我们调用了 API），
+                //   后者是系统行为（可能因总开关/渠道/ROM 差异而不同），我们只能"大概率"判断。
+                //   混在一起就会走极端：要么谎报成功，要么因误判而真的不发。
+                val ok = systemDelivered || inAppShown
 
                 put("ok", JsonPrimitive(ok))
                 if (needsSystem) {
@@ -355,16 +368,18 @@ private fun sendNotificationTool(context: Context): Tool = Tool(
                 put("remaining_this_minute", JsonPrimitive(remaining - 1))
 
                 if (!ok) {
-                    // 如实说明为什么没送达，并给出可执行的建议 ——
+                    // 一条都没投出去 —— 如实说明原因并给可执行的建议。
                     // 模型需要能把这些转告用户，否则用户只知道"没反应"。
-                    val reason = delivery?.problem() ?: "nothing_delivered"
-                    put("error", JsonPrimitive(reason))
+                    put("error", JsonPrimitive(delivery?.problem() ?: "nothing_delivered"))
                     put("hint", JsonPrimitive(hintFor(delivery)))
-                } else if (delivery != null && !delivery.likelyDeliverable && inAppShown) {
-                    // 系统通知发不出去、但应用内成功了 → 明确说明只送达了一部分
+                } else if (systemDelivered && delivery != null && !delivery.likelyDeliverable) {
+                    // ★投递成功、但系统层面可能不会显示它（总开关/渠道被关，或 ROM 判断不准）。
+                    //   如实说出来，让模型能提醒用户去检查设置 ——
+                    //   但**不**因此拦下这次发送（见上面开头的说明）。
                     put("warning", JsonPrimitive(
-                        "Only the in-app notification was shown; the system notification could not be " +
-                            "delivered (${delivery.problem()})."
+                        "The notification was posted, but the system reports it may not be displayed " +
+                            "(${delivery.problem()}). Ask the user to check the app's notification " +
+                            "settings if they do not see it."
                     ))
                 }
             }

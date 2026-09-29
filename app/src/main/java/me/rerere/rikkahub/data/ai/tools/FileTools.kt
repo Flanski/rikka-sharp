@@ -60,6 +60,8 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                 appendLine("- offset/limit: Line range for paginated read (read)")
                 appendLine("- dir: Directory to list (list, default: ${defaultDir})")
                 appendLine("- mode/pattern/root: Search parameters (search)")
+                appendLine("  Note: list and search also accept `path` as an alias for dir/root, " +
+                    "so you may pass whichever you find natural.")
                 appendLine("- file_pattern/use_regex/context: Advanced search options")
                 appendLine()
                 appendLine("Absolute paths work as-is. Relative paths resolve to ${defaultDir}.")
@@ -200,7 +202,17 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                         listOf(UIMessagePart.Text("OK: wrote ${content.length} bytes to ${path.absolutePath}"))
                     }
                     "list" -> {
-                        val dirPath = obj["dir"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() } ?: defaultDir
+                        // ★同时接受 `path` 与 `dir`。
+                        //
+                        // 原来只读 `obj["dir"]`：用户按其它 action 的习惯传 `path` 时，
+                        // 参数被**静默忽略**，于是列出来的永远是默认目录（Download）——
+                        // 现象是"传了参数却像没传"，非常难自查。
+                        //
+                        // 工具描述里 `dir` 是文档化的参数，所以它优先；
+                        // `path` 作为兼容别名（同一个工具里其它 action 用的就是 `path`）。
+                        val dirPath = obj["dir"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                            ?: obj["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                            ?: defaultDir
                         val dir = resolveFile(dirPath)
                         if (!dir.exists()) error("Directory not found: $dirPath")
                         if (!dir.isDirectory) error("Not a directory: $dirPath")
@@ -344,10 +356,21 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                     "search" -> {
                         val mode = obj["mode"]?.jsonPrimitive?.contentOrNull ?: "name"
                         val pattern = obj["pattern"]?.jsonPrimitive?.contentOrNull ?: error("pattern required")
-                        val root = obj["root"]?.jsonPrimitive?.contentOrNull ?: defaultDir
+                        // 同样接受 `path` 作为别名 —— schema 里 `path` 与 `root` 并存，
+                        // 模型完全可能按其它 action 的习惯传 `path`，
+                        // 若只认 `root` 就会**静默退回默认目录**（表现为"传了参数像没传"）。
+                        val rootRaw = obj["root"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                            ?: obj["path"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                            ?: defaultDir
                         val maxResults = (obj["max_results"]?.jsonPrimitive?.intOrNull ?: 20).coerceIn(1, 100)
-                        val rootDir = File(root)
-                        if (!rootDir.exists()) error("Directory not found: $root")
+                        // ★走 resolveFile —— 与其它 action 用同一套路径解析。
+                        //
+                        // 原来是 `File(root)` 直接构造：传相对路径时它相对的是**进程工作目录**
+                        // （Android 上是 "/"），与用户以为的"相对 Download 根"不是一回事 ——
+                        // 同一个参数在不同 action 下含义不一致，很难自查。
+                        // resolveFile 会把相对路径解析到默认目录下（并做越界防护）。
+                        val rootDir = resolveFile(rootRaw)
+                        if (!rootDir.exists()) error("Directory not found: $rootRaw")
                         if (!rootDir.isDirectory) error("Not a directory: $root")
 
                         if (mode == "name") {
@@ -430,19 +453,56 @@ private fun formatSize(bytes: Long): String = when {
     else -> "${bytes / (1024 * 1024)} MB"
 }
 
+/**
+ * 把 glob（`*` / `?`）转成正则。
+ *
+ * ── ★原先的实现完全失效（通配符从来没生效过）──
+ * 原来是这么写的：
+ * ```kotlin
+ * val pattern = Regex.escape(this)
+ *     .replace("\\*", ".*")     // ← 这一步永远匹配不到
+ *     .replace("\\?", ".")
+ * ```
+ * 问题在 `Regex.escape`：JVM 上它等价于 Java 的 `Pattern.quote`，
+ * 返回的是用 `\Q` ... `\E` 包裹的整段字面量，**不会把 `*` 变成 `\*`**。
+ *
+ * 已用 Java 实测确认：
+ * ```
+ * Pattern.quote("*.txt")  →  [\Q*.txt\E]
+ * 再做 .replace("\\*", ".*")  →  [\Q*.txt\E]      ← 完全没变
+ * 用结果正则匹配 "hello.txt"  →  false                ← 通配符失效
+ * ```
+ * 后果：用户搜 `*.txt` 得到 0 条结果，看起来像"这个目录下没有文件"，
+ * 而实际上是通配符被当成了字面文件名。
+ *
+ * ── 正确做法 ──
+ * 逐字符转换：`*` → `.*`，`?` → `.`，其余按**正则字面量**逐个转义。
+ * 不能再用 `Regex.escape` —— 它的 `\Q...\E` 语义与"逐字符转义"不同。
+ */
 private fun String.toGlobRegex(): Regex {
-    val pattern = Regex.escape(this)
-        .replace("\\*", ".*")
-        .replace("\\?", ".")
-    return Regex("^${pattern}$", RegexOption.IGNORE_CASE)
+    val sb = StringBuilder("^")
+    for (ch in this) {
+        when (ch) {
+            '*' -> sb.append(".*")
+            '?' -> sb.append(".")
+            // 正则元字符：逐字面转义，避免用户输入被解释成正则语法
+            '.', '\\', '+', '(', ')', '[', ']', '{', '}', '^', '$', '|', '-' ->
+                sb.append('\\').append(ch)
+            else -> sb.append(ch)
+        }
+    }
+    sb.append('$')
+    return Regex(sb.toString(), RegexOption.IGNORE_CASE)
 }
 
-private fun String.toGlobRegexForFile(): Regex {
-    val pattern = Regex.escape(this)
-        .replace("\\*", ".*")
-        .replace("\\?", ".")
-    return Regex("^${pattern}$", RegexOption.IGNORE_CASE)
-}
+/**
+ * 内容搜索里的文件名过滤。
+ *
+ * ★原来这个方法与 [toGlobRegex] 是**两份完全相同的实现**（复制粘贴），
+ * 因此**带着同一个通配符失效的 bug**。现在直接委托，只保留一份逻辑 ——
+ * 以后再改也不会只改一处、漏掉另一处。
+ */
+private fun String.toGlobRegexForFile(): Regex = this.toGlobRegex()
 
 /**
  * 写权限不足时的**可执行**说明。

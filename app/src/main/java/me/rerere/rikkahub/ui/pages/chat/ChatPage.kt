@@ -400,17 +400,27 @@ private fun ChatPageContent(
     //
     // 取**最新**的一个待授权工具：旧实现允许同时堆多个 Pending，
     // 一个个弹也符合直觉（处理完一个，下一个自然成为"最新"）。
-    // 把所有待确认的工具都取出来（**不只第一个**）。
+    // 取出**全部**待确认的工具（不只第一个）。
     //
     // 为什么需要全部：生成要等**全部** Pending 处理完才继续
     // （见 ChatService.handleToolApproval 结尾的 hasPendingTools 判断），
     // 所以用户必须知道「还有几个」、并且能一次批准完 ——
     // 否则逐个点时会觉得"点了没反应"。
-    val pendingApprovalTools = conversation.currentMessages
-        .asReversed()
-        .flatMap { message -> message.parts }
-        .filterIsInstance<UIMessagePart.Tool>()
-        .filter { it.approvalState is ToolApprovalState.Pending }
+    //
+    // ★只扫**最后一条**消息，不遍历整个会话：
+    //   · Pending 工具只可能出现在最后一条消息里 ——
+    //     `ChatService.finishInterruptedPendingTools` 也只查 `messageNodes.last()`；
+    //   · 原实现用 `firstOrNull`（短路，找到就停），若改成遍历全部 messages 的 parts
+    //     会退化成 O(整个会话)，长对话下每次重组都要走一遍。
+    //   这里同时用 remember 缓存，避免同一份 messages 反复扫描。
+    val pendingApprovalTools = remember(conversation.currentMessages.lastOrNull()?.id,
+        conversation.currentMessages.lastOrNull()?.parts) {
+        conversation.currentMessages.lastOrNull()
+            ?.parts
+            ?.filterIsInstance<UIMessagePart.Tool>()
+            ?.filter { it.approvalState is ToolApprovalState.Pending }
+            .orEmpty()
+    }
 
     val pendingApprovalTool = pendingApprovalTools.firstOrNull()
 
