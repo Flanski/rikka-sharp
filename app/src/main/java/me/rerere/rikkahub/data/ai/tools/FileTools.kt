@@ -371,7 +371,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                         // resolveFile 会把相对路径解析到默认目录下（并做越界防护）。
                         val rootDir = resolveFile(rootRaw)
                         if (!rootDir.exists()) error("Directory not found: $rootRaw")
-                        if (!rootDir.isDirectory) error("Not a directory: $root")
+                        if (!rootDir.isDirectory) error("Not a directory: $rootRaw")
 
                         if (mode == "name") {
                             val typeFilter = obj["type_filter"]?.jsonPrimitive?.contentOrNull ?: "all"
@@ -388,7 +388,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                                 }
                             }
                             if (results.isEmpty()) {
-                                listOf(UIMessagePart.Text("No files matching '$pattern' found under $root"))
+                                listOf(UIMessagePart.Text("No files matching '$pattern' found under $rootRaw"))
                             } else {
                                 listOf(UIMessagePart.Text("Found ${results.size} result(s) for '$pattern':\n${results.joinToString("\n")}"))
                             }
@@ -434,7 +434,7 @@ fun createFileTools(workspaceDir: String = "/storage/emulated/0/Download"): List
                                     }
                             } catch (_: Exception) { }
                             if (results.isEmpty()) {
-                                listOf(UIMessagePart.Text("No matches found for '$pattern' under $root${if (fileGlob.isNotBlank()) " in files matching '$fileGlob'" else ""}"))
+                                listOf(UIMessagePart.Text("No matches found for '$pattern' under $rootRaw${if (fileGlob.isNotBlank()) " in files matching '$fileGlob'" else ""}"))
                             } else {
                                 listOf(UIMessagePart.Text("Found ${results.size} match(es) for '$pattern'${if (fileGlob.isNotBlank()) " in $fileGlob files" else ""}:\n${sb.toString().take(15000)}"))
                             }
