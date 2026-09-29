@@ -1,155 +1,131 @@
 package me.rerere.rikkahub.ui.components.notification
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.MutableTransitionState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Alert01
-import me.rerere.hugeicons.stroke.Cancel01
-import me.rerere.hugeicons.stroke.CheckmarkCircle02
-import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.InformationCircle
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.notification.AppNotification
 import me.rerere.rikkahub.data.notification.AppNotificationCenter
 
 /**
- * 应用内通知的宿主 —— 挂在根布局上，订阅 [AppNotificationCenter] 并渲染。
+ * 应用内通知的宿主 —— 订阅 [AppNotificationCenter] 并渲染。
  *
- * ── 与授权弹窗（`ToolApprovalDialog`）的关系 ──
- * 两者**共用同一套视觉模板**（来自 `/workspace/通知弹窗特效Demo.html`）：
- * 同款配色（normal 蓝 / warning 橙黑字 / error 红）、同款 header 结构（图标 + 标题 + 副标题）、
- * 同款圆角与按钮样式、同款 `cubic-bezier(0.4,0,0.2,1)` 缓动（= [FastOutSlowInEasing]）。
+ * ── ★严格照模板：`/workspace/通知弹窗特效Demo.html` ──
  *
- * ★但**刻意不加遮罩**，也不强制用户先处理它：
- *  · 授权弹窗必须阻塞 —— 它要求一个明确结论，不处理就会把生成卡住；
- *  · 应用内通知只是「告诉你一件事」，加遮罩会挡住界面、阻碍正常操作，反而更烦。
- * 所以这里改为**顶部堆叠、不拦截触摸**，用与模板一致的展开动画出现。
+ * 模板的结构（HTML/CSS 原文）：
+ * ```html
+ * <div class="notification-overlay" onclick="closeNotification()"></div>
+ * <div class="notification-modal type-normal">
+ *   <div class="notification-header">图标 + 标题</div>
+ *   <div class="notification-body">内容（可滚动）</div>
+ *   <div class="notification-footer"><button class="notification-btn">确定</button></div>
+ * </div>
+ * ```
+ * CSS 要点（移动端）：
+ *   · 遮罩：position fixed、inset 0、背景 rgba(0,0,0,0.5)
+ *   · 弹窗：left 0 / right 0（**全宽吸附屏幕两侧**）、height 33.333vh、背景 #409eff
+ *   · 弹窗**没有圆角** —— border-radius 只在 PC 端 @media 里出现（见下）
+ *   · PC 端（@media min-width 768px）：width 480px、border-radius 8px、居中
  *
- * ── 为什么不复用 sonner 的 Toaster ──
- * 那是第三方的吐司组件，样式改不动（用户要求改成通知模板的样式）。
- * 而是让 `LocalToaster` 提供一个行为兼容的 `AppToaster`，
- * 把所有 `toaster.show(...)` 转发到 [AppNotificationCenter] —— 因此那 **150+ 处调用点一行都不用改**，
- * 样式则统一由这里用通知模板渲染。
+ * ★★我第一版**自己另写了一套**（没复用已经照模板写好的组件），结果三处全违背模板：
+ *   ① `padding(horizontal = 12.dp)` → **左右有间隙**（模板是 left:0 / right:0，**全宽吸附屏幕两侧**）；
+ *   ② `RoundedCornerShape(8.dp)` → **圆角**（模板移动端是直角；圆角只在 PC 端 `@media` 里）；
+ *   ③ **没有遮罩**（模板有 `.notification-overlay`，0.5 透明黑）。
+ *
+ *   现在改为**直接用 [NotificationTemplateDialog]** —— 它就是照模板写的：
+ *   遮罩 / 全宽 / 无圆角 / 1/3 屏高 / 垂直居中 / header 一行 /
+ *   可滚动 body / footer 右对齐，全部与模板一致。**不再自创样式。**
+ *
+ * ── 一次只显示一个 ──
+ * 模板里只有一个 `#notificationModal` 元素，点「确定」或点遮罩即关闭 ——
+ * 所以这里也只渲染**队列里的第一条**，关闭后自然露出下一条。
+ * （第一版是堆叠显示多条，那也不是模板的行为。）
+ *
+ * ── 为什么不需要 zIndex ──
+ * [NotificationTemplateDialog] 内部用 `Dialog`，那是**独立的窗口层**，
+ * 天然绘制在页面内容之上 —— 不需要同层兄弟间的 zIndex 参与。
  */
 @Composable
-fun AppNotificationHost(modifier: Modifier = Modifier) {
+fun AppNotificationHost() {
     val notifications by AppNotificationCenter.notifications.collectAsStateWithLifecycle()
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        // 宽屏限宽居中，窄屏留出左右边距 —— 与模板的 PC 端适配同一思路
-        val isWide = maxWidth >= 768.dp
-        val cardModifier = if (isWide) {
-            Modifier.widthIn(max = 480.dp)
-        } else {
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp)
-        }
+    // 只取第一条：模板一次只显示一个弹窗。
+    // 列表按「新的在前」维护，所以第一条就是最新的那条。
+    val current = notifications.firstOrNull() ?: return
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                // ★不拦截触摸：通知区域之外的点击照常传给下层界面。
-                // Box 本身不消费事件，所以只要内部不铺满全屏就不影响操作。
-                .padding(top = 56.dp),
-            contentAlignment = Alignment.TopCenter,
-        ) {
-            Column(
-                modifier = cardModifier,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                notifications.forEach { n ->
-                    // key 用 id：同一位置的内容变化时不会错误复用动画状态
-                    key(n.id) {
-                        // ★用 MutableTransitionState 而不是 `visible = true`：
-                        //   直接传 true 表示"一开始就可见"，**不会播放进场动画** ——
-                        //   通知会突兀地闪现。用 targetState = true 才能让 enter 动画真正跑起来。
-                        //   （这与授权弹窗里那种"出现即播放"的做法一致。）
-                        val visibleState = remember {
-                            MutableTransitionState(false).apply { targetState = true }
-                        }
-                        AnimatedVisibility(
-                            visibleState = visibleState,
-                            enter = expandVertically(
-                                expandFrom = Alignment.Top,
-                                animationSpec = tween(250, easing = FastOutSlowInEasing),
-                            ) + fadeIn(tween(250)),
-                            exit = shrinkVertically(
-                                shrinkTowards = Alignment.Top,
-                                animationSpec = tween(200, easing = FastOutSlowInEasing),
-                            ) + fadeOut(tween(200)),
-                        ) {
-                            AppNotificationCard(
-                                notification = n,
-                                onDismiss = { AppNotificationCenter.dismiss(n.id) },
-                            )
-                        }
-                    }
-                }
+    val colors = NotificationTemplateColors.of(current.type)
+    val icon = when (current.type) {
+        AppNotification.Type.NORMAL -> HugeIcons.InformationCircle
+        AppNotification.Type.WARNING, AppNotification.Type.ERROR -> HugeIcons.Alert01
+    }
+    val defaultTitle = when (current.type) {
+        AppNotification.Type.NORMAL -> stringResource(R.string.app_notification_title_normal)
+        AppNotification.Type.WARNING -> stringResource(R.string.app_notification_title_warning)
+        AppNotification.Type.ERROR -> stringResource(R.string.app_notification_title_error)
+    }
+
+    val dismiss = { AppNotificationCenter.dismiss(current.id) }
+
+    NotificationTemplateDialog(
+        type = current.type,
+        title = current.title?.takeIf { it.isNotBlank() } ?: defaultTitle,
+        icon = icon,
+        // 模板固定 1/3 屏高
+        heightFraction = 1f / 3f,
+        // ★模板**点遮罩关闭**（`onclick="closeNotification()"`）→ 必须为 true。
+        //   （工具授权弹窗才用 false —— 它需要一个明确结论，不能让遮罩把 Pending 留在那。）
+        dismissOnClickOutside = true,
+        onDismissRequest = { dismiss() },
+        footer = {
+            // 模板 footer 里只有一个「确定」按钮（右对齐）。
+            // 复制按钮是用户额外要求的（报错信息要能复制出去），放在它左边。
+            current.copyText?.let { text ->
+                CopyButton(text = text)
             }
-        }
+            TemplateDialogButton(
+                text = stringResource(R.string.app_notification_ok),
+                onClick = { dismiss() },
+                primary = true,
+            )
+        },
+    ) {
+        // body：模板里是 `flex:1; padding:16px; overflow-y:auto; color:#fff`
+        // 可滚动与内边距由 NotificationTemplateDialog 的 TemplateScrollColumn 负责，
+        // 这里只放内容本身。
+        Text(
+            text = current.body,
+            color = colors.onContainer,
+            fontSize = 14.sp,
+            lineHeight = 22.sp,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
 /**
- * 单条应用内通知的卡片。
+ * 「复制」按钮（模板的次要按钮样式 `.btn-retry`：半透明白底白字）。
  *
- * 结构照搬模板：header（图标 + 标题 + 副标题）/ body（可滚动）/ footer（按钮右对齐）。
+ * 复制后的反馈用**按钮文字临时变化**，而不是再弹一条通知 ——
+ * 后者会把用户刚要复制的那条挤掉（通知一次只显示一条）。
  */
 @Composable
-private fun AppNotificationCard(
-    notification: AppNotification,
-    onDismiss: () -> Unit,
-) {
+private fun CopyButton(text: String) {
     val clipboard = LocalClipboardManager.current
-
-    // ★复制后的反馈**不能**再用 toaster.show(...)。
-    //   因为 `toaster` 现在也走 AppNotificationCenter ——
-    //   那样一点复制就会再叠一条「已复制」通知，把原来那条挤掉（MAX_VISIBLE=3），
-    //   用户反而找不到自己刚要复制的内容。
-    //   改成「按钮文字临时变成『已复制』」：零副作用、不打断、不改动通知栈。
     var justCopied by remember { mutableStateOf(false) }
     LaunchedEffect(justCopied) {
         if (justCopied) {
@@ -158,182 +134,14 @@ private fun AppNotificationCard(
         }
     }
 
-    val colors = remember(notification.type) { NotificationTemplateColors.of(notification.type) }
-    val icon = when (notification.type) {
-        AppNotification.Type.NORMAL -> HugeIcons.InformationCircle
-        AppNotification.Type.WARNING -> HugeIcons.Alert01
-        AppNotification.Type.ERROR -> HugeIcons.Alert01
-    }
-    val subtitle = when (notification.type) {
-        AppNotification.Type.NORMAL -> stringResource(R.string.app_notification_subtitle_normal)
-        AppNotification.Type.WARNING -> stringResource(R.string.app_notification_subtitle_warning)
-        AppNotification.Type.ERROR -> stringResource(R.string.app_notification_subtitle_error)
-    }
-    // 调用方未给标题时用类型对应的本地化标题。
-    // 这样「工具发来的通知」（自带标题）与「toast 转来的」（不带标题）都能正确显示，
-    // 且都不需要在代码里写死文案。
-    val defaultTitle = when (notification.type) {
-        AppNotification.Type.NORMAL -> stringResource(R.string.app_notification_title_normal)
-        AppNotification.Type.WARNING -> stringResource(R.string.app_notification_title_warning)
-        AppNotification.Type.ERROR -> stringResource(R.string.app_notification_title_error)
-    }
-    val title = notification.title?.takeIf { it.isNotBlank() } ?: defaultTitle
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(colors.container),
-    ) {
-        // ── header ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(colors.header)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Icon(icon, contentDescription = null, tint = colors.onHeader, modifier = Modifier.size(20.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    color = colors.onHeader,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = subtitle,
-                    color = colors.onHeader.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
-                )
-            }
-            // 关闭按钮放在 header 右侧：与模板的 .notification-close 语义一致
-            TextButton(onClick = onDismiss) {
-                Icon(
-                    HugeIcons.Cancel01,
-                    contentDescription = stringResource(R.string.app_notification_close),
-                    tint = colors.onHeader,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
-
-        // ── body ──
-        // 高度上限 + 可滚动：模板里 body 是 flex:1 可滚动的，这里用 maxHeight 达到同样效果
-        // （不设上限的话，一条超长报错会把整屏占满）
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 220.dp)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-        ) {
-            Text(
-                text = notification.body,
-                color = colors.onContainer,
-                fontSize = 14.sp,
-                lineHeight = 21.sp,
-            )
-        }
-
-        // ── footer ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End),
-        ) {
-            if (notification.copyText != null) {
-                // 复制按钮：用户明确要求（报错信息需要能复制出去）
-                TextButton(onClick = {
-                    clipboard.setText(AnnotatedString(notification.copyText!!))
-                    justCopied = true
-                }) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Icon(
-                            imageVector = if (justCopied) HugeIcons.CheckmarkCircle02 else HugeIcons.Copy01,
-                            contentDescription = null,
-                            tint = colors.buttonText,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Text(
-                            text = stringResource(
-                                if (justCopied) R.string.app_notification_copied else R.string.app_notification_copy
-                            ),
-                            color = colors.buttonText,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                }
-            }
-            TextButton(
-                onClick = onDismiss,
-                colors = ButtonDefaults.textButtonColors(containerColor = Color.White),
-            ) {
-                Text(
-                    text = stringResource(R.string.app_notification_ok),
-                    color = colors.buttonText,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        }
-    }
-}
-
-/**
- * 通知模板的配色 —— 与 `ToolApprovalDialog` 里的 `ApprovalColors` 同源，
- * 都取自 `/workspace/通知弹窗特效Demo.html`。
- *
- * 模板的配色关系：
- * ```css
- * .notification-modal            { background: #409eff }
- * .notification-body             —— 无 background（透明显蓝）
- * .type-normal  .notification-header { background: #409eff; color: #fff }
- * .type-warning .notification-header { background: #e6a23c; color: #000 }
- * .type-error   .notification-header { background: #f56c6c; color: #fff }
- * .notification-btn              { background: #fff; color: #409eff }
- * ```
- */
-internal object NotificationTemplateColors {
-    val normalContainer = Color(0xFF409EFF)
-    val normalHeader = Color(0xFF409EFF)
-    val normalOnHeader = Color(0xFFFFFFFF)
-
-    val warningContainer = Color(0xFF409EFF)
-    val warningHeader = Color(0xFFE6A23C)
-    val warningOnHeader = Color(0xFF000000)
-
-    val errorContainer = Color(0xFF409EFF)
-    val errorHeader = Color(0xFFF56C6C)
-    val errorOnHeader = Color(0xFFFFFFFF)
-
-    val onContainer = Color(0xFFFFFFFF)
-    val buttonText = Color(0xFF409EFF)
-
-    data class Palette(
-        val container: Color,
-        val header: Color,
-        val onHeader: Color,
-        val onContainer: Color,
-        val buttonText: Color,
+    TemplateDialogButton(
+        text = stringResource(
+            if (justCopied) R.string.app_notification_copied else R.string.app_notification_copy
+        ),
+        onClick = {
+            clipboard.setText(AnnotatedString(text))
+            justCopied = true
+        },
+        primary = false,
     )
-
-    fun of(type: AppNotification.Type): Palette = when (type) {
-        AppNotification.Type.NORMAL -> Palette(
-            container = normalContainer, header = normalHeader,
-            onHeader = normalOnHeader, onContainer = onContainer, buttonText = buttonText,
-        )
-        AppNotification.Type.WARNING -> Palette(
-            container = warningContainer, header = warningHeader,
-            onHeader = warningOnHeader, onContainer = onContainer, buttonText = buttonText,
-        )
-        AppNotification.Type.ERROR -> Palette(
-            container = errorContainer, header = errorHeader,
-            onHeader = errorOnHeader, onContainer = onContainer, buttonText = buttonText,
-        )
-    }
 }

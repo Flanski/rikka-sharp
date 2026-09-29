@@ -86,6 +86,16 @@ fun NotificationTemplateDialog(
     subtitle: String? = null,
     /** 右上角是否显示关闭按钮 */
     showCloseButton: Boolean = false,
+    /**
+     * 点遮罩是否关闭。
+     *
+     * 模板里的行为是**点遮罩关闭**（`.notification-overlay onclick="closeNotification()"`），
+     * 所以应用内通知用 true。
+     *
+     * 而**工具授权弹窗必须用 false** —— 授权需要一个明确结论（允许或拒绝），
+     * 点遮罩关掉会留下「未决的 Pending 状态」把生成卡住（那是刻意的设计）。
+     */
+    dismissOnClickOutside: Boolean = false,
     onDismissRequest: () -> Unit,
     footer: @Composable RowScope.() -> Unit,
     content: @Composable ColumnScope.() -> Unit,
@@ -109,8 +119,8 @@ fun NotificationTemplateDialog(
             // 不加这一项时窗口会避开状态栏/导航栏，那两条区域**不被遮罩覆盖** ——
             // 表现为「遮罩没盖全」（模板是 position:fixed; inset:0，全屏覆盖）。
             decorFitsSystemWindows = false,
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false,
+            dismissOnBackPress = dismissOnClickOutside,
+            dismissOnClickOutside = dismissOnClickOutside,
         ),
     ) {
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {

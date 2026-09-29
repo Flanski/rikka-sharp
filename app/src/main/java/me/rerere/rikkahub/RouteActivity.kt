@@ -304,18 +304,14 @@ class RouteActivity : ComponentActivity() {
 
                 // 应用内通知层。
                 //
-                // ★必须指定 zIndex —— 原来只写「放在 NavDisplay 之前」并注释说"这样它盖在页面内容上"，
-                //   **那是错的**，而且是我这轮把应用内通知整个搞失效的原因：
-                //   在同一个 Layout 里，**声明顺序靠前的先绘制、因此在下层**；
-                //   下面的 `Box { NavDisplay }` 带 `.background(...)`（不透明）且 fillMaxSize，
-                //   会把这一层**完整遮住** —— 于是所有应用内通知（含 toast 转换来的）都画在页面底下，
-                //   一条都看不见。
+                // 它内部用 `Dialog`（见 AppNotificationHost 的说明），
+                // 那是**独立的窗口层**，天然绘制在页面内容之上 ——
+                // 所以不需要放在特定位置、也不需要 zIndex。
                 //
-                //   （被移除的 sonner `Toaster` 能在同样位置显示，是因为它内部自己用了 Popup / 更高层级；
-                //    我们这个是普通 Composable，没有那层保护。）
-                //
-                // zIndex 让它参与同层兄弟的层级比较，绘制在页面内容之上。
-                AppNotificationHost(modifier = Modifier.zIndex(1f))
+                // （历史：第一版是普通 Composable，声明在 `Box { NavDisplay }` 之前，
+                //  而后者带不透明的 `.background(...)` 且 fillMaxSize，把它**完整遮住**了；
+                //  当时用 `Modifier.zIndex(1f)` 解决。改成 Dialog 后 zIndex 已无意义，故移除。）
+                AppNotificationHost()
                 TTSController()
                 Box(
                     modifier = Modifier

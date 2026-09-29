@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.ui.components.askuser
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -111,12 +112,12 @@ fun AskUserDialog(
         }
     }
     val multiAnswers = remember(questions) {
-        mutableStateMapOf<String, MutableSet<String>>().apply {
+        mutableStateMapOf<String, Set<String>>().apply {
             questions.forEach { q ->
                 val initial = q.defaultValue?.takeIf { it.isNotBlank() }
                     ?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }
-                    ?.toMutableSet()
-                    ?: mutableSetOf()
+                    ?.toSet()
+                    ?: emptySet()
                 put(q.id, initial)
             }
         }
@@ -183,7 +184,7 @@ private fun QuestionBlock(
     question: AskUserQuestion,
     colors: NotificationTemplateColors.Palette,
     singleAnswers: MutableMap<String, String>,
-    multiAnswers: MutableMap<String, MutableSet<String>>,
+    multiAnswers: MutableMap<String, Set<String>>,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -285,9 +286,9 @@ private fun RadioGroup(
 private fun CheckboxGroup(
     question: AskUserQuestion,
     colors: NotificationTemplateColors.Palette,
-    answers: MutableMap<String, MutableSet<String>>,
+    answers: MutableMap<String, Set<String>>,
 ) {
-    val picked = answers.getOrPut(question.id) { mutableSetOf() }
+    val picked = answers[question.id].orEmpty()
     Column {
         question.options.forEach { opt ->
             val checked = opt.value in picked
@@ -296,7 +297,19 @@ private fun CheckboxGroup(
                     .fillMaxWidth()
                     .toggleable(
                         value = checked,
-                        onValueChange = { on -> if (on) picked.add(opt.value) else picked.remove(opt.value) },
+                        onValueChange = { on ->
+                            // ★必须赋一个**新的 Set**。
+                            //
+                            // 原来的写法是 `picked.add(...)` / `picked.remove(...)` ——
+                            // 那是改**值的内部**，而 `mutableStateMapOf` 只在
+                            // 「键值对本身变化」（put/remove）时才通知 Compose 重组，
+                            // **感知不到集合内容的变化** → 勾选状态不会刷新。
+                            // 现象就是「点得到、有按下效果，但勾打不上」（用户截图证实）。
+                            //
+                            // 换成不可变 Set + 整体替换后，Map 能看到变化 → 正常重组。
+                            answers[question.id] =
+                                if (on) picked + opt.value else picked - opt.value
+                        },
                     )
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -322,24 +335,39 @@ private fun SelectGroup(
         ?: (question.placeholder ?: stringResource(R.string.ask_user_select_placeholder))
 
     Box {
-        // 用 OutlinedTextField(readOnly) 而不是 ExposedDropdownMenuBox：
-        // 后者 API 仍是实验性的，而这里只需要「点一下弹出列表」。
-        OutlinedTextField(
-            value = currentLabel,
-            onValueChange = {},
-            readOnly = true,
+        // ★不用 OutlinedTextField —— 这是实测踩出来的：
+        //   `readOnly = true` 的 TextField **仍然可以被长按选中文本**，
+        //   于是点它会弹出**系统的文本选择菜单**（复制 / 翻译 / 浏览器…），
+        //   而不是我们的下拉列表。用户看到的现象就是「点不出选项」。
+        //   （另一侧测试的截图里，那条菜单正压在「请选择」上面。）
+        //
+        //   改用普通 Row：文本不可选中，整块区域一起响应点击。
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // readOnly 字段没有文本选择需求，所以整块可点开是安全的
+                .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(4.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
                 .clickable(
-                    indication = null,
                     interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
                     onClick = { expanded = true },
-                ),
-            trailingIcon = {
-                Text(text = "▾", color = colors.onContainer, modifier = Modifier.padding(end = 12.dp))
-            },
-        )
+                )
+                .padding(horizontal = 12.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = currentLabel,
+                // 未选择时用半透明色，与「已选」区分开（原先靠 TextField 的 label 颜色）
+                color = if (answers[question.id] == null) {
+                    colors.onContainer.copy(alpha = 0.65f)
+                } else {
+                    colors.onContainer
+                },
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Text(text = "▾", color = colors.onContainer, fontSize = 14.sp)
+        }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             question.options.forEach { opt ->
                 DropdownMenuItem(
