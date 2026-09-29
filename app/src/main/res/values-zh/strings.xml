@@ -2065,4 +2065,8 @@ mDNS 地址：使用 .local 主机名，同一网络中的其他设备可通过�
   <string name="ask_user_yes">是</string>
   <string name="ask_user_no">否</string>
   <string name="ask_user_missing_required">还有 %1$d 个必填项未回答</string>
+
+  <!-- 工具授权：多个待确认时的提示 -->
+  <string name="tool_approval_pending_count">还有 %1$d 个待确认</string>
+  <string name="tool_approval_allow_all">全部允许</string>
 </resources>

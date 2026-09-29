@@ -47,6 +47,21 @@ fun ToolApprovalDialog(
     argumentsPreview: String,
     onApprove: () -> Unit,
     onDeny: () -> Unit,
+    /**
+     * 还有几个工具等待确认（含当前这个）。
+     *
+     * ── 为什么需要显示它 ──
+     * 一次有多个工具待批准时，生成会**等全部处理完**才继续
+     * （见 `ChatService.handleToolApproval` 结尾的 `hasPendingTools` 判断）。
+     * 于是用户逐个点「允许」时，**前面的点击不会有任何可见反应** ——
+     * 从界面上看很像"点了没用"甚至"只有最后一个生效"。
+     *
+     * 把剩余数量说出来，用户就知道「还要点几次」，不会误判成故障。
+     * ≥2 时同时给出「全部允许」，让用户一次做完。
+     */
+    pendingCount: Int = 1,
+    /** 一次批准全部待确认项；为 null 时不显示该按钮 */
+    onApproveAll: (() -> Unit)? = null,
 ) {
     val colors = NotificationTemplateColors.of(AppNotification.Type.WARNING)
     val notProvided = stringResource(R.string.tool_approval_not_provided)
@@ -62,11 +77,28 @@ fun ToolApprovalDialog(
         // ★不再传 subtitle —— 模板 header 只有一行，多一行就是「臃肿」
         onDismissRequest = { /* 刻意忽略：授权必须给出明确结论 */ },
         footer = {
+            // 多个待确认时把剩余数量标出来 —— 否则用户不知道还要点几次，
+            // 会以为是"点了没反应"。（生成要等全部处理完才继续，这是设计如此。）
+            if (pendingCount > 1) {
+                Text(
+                    text = stringResource(R.string.tool_approval_pending_count, pendingCount),
+                    color = colors.onContainer,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+            }
             TemplateDialogButton(
                 text = stringResource(R.string.tool_approval_deny),
                 onClick = onDeny,
                 primary = false,
             )
+            if (pendingCount > 1 && onApproveAll != null) {
+                TemplateDialogButton(
+                    text = stringResource(R.string.tool_approval_allow_all),
+                    onClick = onApproveAll,
+                    primary = false,
+                )
+            }
             TemplateDialogButton(
                 text = stringResource(R.string.tool_approval_allow),
                 onClick = onApprove,

@@ -798,6 +798,93 @@ class ChatService(
         session.setJob(job)
     }
 
+    /**
+     * 一次性处理**所有**待批准的工具。
+     *
+     * ── 为什么需要它 ──
+     * 一批里有 8-10 个工具都要批准时，`handleToolApproval` 的语义是
+     * 「**全部**处理完才继续生成」（它结尾会检查 `hasPendingTools`，还有就 return）。
+     * 于是用户逐个点「允许」时，**前 N-1 次都不会有任何可见反应** ——
+     * 单从界面上看，很像"点了没用"甚至"只有最后一个生效"。
+     *
+     * 这个方法是给用户的快捷方式：一次批准剩下的全部，立刻推进生成。
+     *
+     * ── 与 [handleToolApproval] 的关系 ──
+     * **不修改**原方法的任何行为，只是把「重复 N 次」压成一次。
+     * 两者末尾的「还有 Pending 就不继续生成」判断逻辑保持一致，
+     * 以免出现"批量批准后生成没恢复"这种只在某条路径上出现的问题。
+     *
+     * @param onlyToolNames 只处理这些工具名的 Pending（空集 = 全部）。
+     *   例如用户只想批量允许所有「只读」类工具时可用；当前 UI 传空集即全部批准。
+     */
+    fun handleAllPendingApprovals(
+        conversationId: Uuid,
+        approved: Boolean,
+        reason: String = "",
+        onlyToolNames: Set<String> = emptySet(),
+    ) {
+        val session = getOrCreateSession(conversationId)
+        session.getJob()?.cancel()
+
+        val job = appScope.launch {
+            try {
+                val conversation = session.state.value
+                val targetState = if (approved) {
+                    ToolApprovalState.Approved
+                } else {
+                    ToolApprovalState.Denied(reason)
+                }
+
+                var changed = 0
+                val updatedNodes = conversation.messageNodes.map { node ->
+                    node.copy(
+                        messages = node.messages.map { msg ->
+                            msg.copy(
+                                parts = msg.parts.map { part ->
+                                    when {
+                                        part is UIMessagePart.Tool &&
+                                            part.isPending &&
+                                            (onlyToolNames.isEmpty() || part.toolName in onlyToolNames) -> {
+                                            changed++
+                                            part.copy(approvalState = targetState)
+                                        }
+
+                                        else -> part
+                                    }
+                                }
+                            )
+                        }
+                    )
+                }
+
+                // 一个都没匹配到就什么都不做 —— 避免无意义地写盘与推进生成。
+                // （例如用户连点两次「全部允许」，第二次时已经没有 Pending 了。）
+                if (changed == 0) return@launch
+
+                val updatedConversation = conversation.copy(messageNodes = updatedNodes)
+                saveConversation(conversationId, updatedConversation)
+
+                // 与 handleToolApproval 保持同样的判定：还有 Pending 就不继续生成。
+                // 批量处理后通常已经没有 Pending，但若 onlyToolNames 过滤后仍剩一些，
+                // 就该继续等待用户对剩余项的决定，而不是擅自推进。
+                val hasPendingTools = updatedNodes.any { node ->
+                    node.currentMessage.parts.any { part ->
+                        part is UIMessagePart.Tool && part.isPending
+                    }
+                }
+                if (!hasPendingTools) {
+                    handleMessageComplete(conversationId)
+                }
+
+                _generationDoneFlow.emit(conversationId)
+            } catch (e: Exception) {
+                addError(e, conversationId, title = context.getString(R.string.error_title_tool_approval))
+            }
+        }
+
+        session.setJob(job)
+    }
+
     // ---- 继续上一条回复（官方 /continue） ----
 
     /**

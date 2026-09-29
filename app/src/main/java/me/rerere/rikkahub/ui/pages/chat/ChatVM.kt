@@ -287,6 +287,17 @@ class ChatVM(
         chatService.handleToolApproval(_conversationId, toolCallId, approved, reason)
     }
 
+    /**
+     * 一次性批准/拒绝**所有**待确认的工具。
+     *
+     * 一批里有多个工具待批准时，逐个点「允许」在前 N-1 次都不会有可见反应
+     * （因为要全部处理完才继续生成）。这个方法让用户一次做完。
+     */
+    fun handleAllPendingApprovals(approved: Boolean) {
+        analytics.logEvent("ai_tool_approval_all", null)
+        chatService.handleAllPendingApprovals(_conversationId, approved)
+    }
+
     fun handleToolAnswer(
         toolCallId: String,
         answer: String,

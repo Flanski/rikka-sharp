@@ -400,11 +400,19 @@ private fun ChatPageContent(
     //
     // 取**最新**的一个待授权工具：旧实现允许同时堆多个 Pending，
     // 一个个弹也符合直觉（处理完一个，下一个自然成为"最新"）。
-    val pendingApprovalTool = conversation.currentMessages
+    // 把所有待确认的工具都取出来（**不只第一个**）。
+    //
+    // 为什么需要全部：生成要等**全部** Pending 处理完才继续
+    // （见 ChatService.handleToolApproval 结尾的 hasPendingTools 判断），
+    // 所以用户必须知道「还有几个」、并且能一次批准完 ——
+    // 否则逐个点时会觉得"点了没反应"。
+    val pendingApprovalTools = conversation.currentMessages
         .asReversed()
         .flatMap { message -> message.parts }
         .filterIsInstance<UIMessagePart.Tool>()
-        .firstOrNull { it.approvalState is ToolApprovalState.Pending }
+        .filter { it.approvalState is ToolApprovalState.Pending }
+
+    val pendingApprovalTool = pendingApprovalTools.firstOrNull()
 
     pendingApprovalTool?.let { tool ->
         // ★分流：`ask_user` 与普通工具虽然都走「Pending → 用户回应 → 恢复」这条链路，
@@ -447,6 +455,9 @@ private fun ChatPageContent(
                 argumentsPreview = tool.approvalArgumentsPreview(),
                 onApprove = { vm.handleToolApproval(tool.toolCallId, true, "") },
                 onDeny = { vm.handleToolApproval(tool.toolCallId, false, "") },
+                // 剩余数量 + 批量批准。≥2 时 UI 会显示「还有 N 个待确认」和「全部允许」。
+                pendingCount = pendingApprovalTools.size,
+                onApproveAll = { vm.handleAllPendingApprovals(true) },
             )
         }
     }

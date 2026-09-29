@@ -2062,4 +2062,8 @@
   <string name="ask_user_yes">Yes</string>
   <string name="ask_user_no">No</string>
   <string name="ask_user_missing_required">%1$d required question(s) still unanswered</string>
+
+  <!-- 工具授权：多个待确认时的提示 -->
+  <string name="tool_approval_pending_count">%1$d pending</string>
+  <string name="tool_approval_allow_all">Allow all</string>
 </resources>
